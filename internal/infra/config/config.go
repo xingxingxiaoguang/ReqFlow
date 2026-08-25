@@ -210,3 +210,62 @@ func (c *Config) LLMReady() bool       { return c.LLM.APIKey != "" && c.LLM.Base
 func (c *Config) PingCodeReady() bool  { return c.PingCode.ClientID != "" && c.PingCode.ClientSecret != "" }
 func (c *Config) EmbeddingReady() bool { return c.Embedding.APIKey != "" && c.Embedding.BaseURL != "" && c.Embedding.Model != "" }
 func (c *Config) MinerUReady() bool    { return c.Parser.MinerU.Enabled && c.Parser.MinerU.APIToken != "" }
+
+// FilledSecrets 列出已配置非空的敏感字段名（仅名称不含值，用于启动日志自检）。
+func (c *Config) FilledSecrets() []string {
+	var out []string
+	if c.LLM.APIKey != "" {
+		out = append(out, "llm.api_key")
+	}
+	if c.Embedding.APIKey != "" {
+		out = append(out, "embedding.api_key")
+	}
+	if c.PingCode.ClientSecret != "" {
+		out = append(out, "pingcode.client_secret")
+	}
+	if c.Parser.MinerU.APIToken != "" {
+		out = append(out, "parser.mineru.api_token")
+	}
+	if c.Security.EncryptionKey != "" {
+		out = append(out, "security.encryption_key")
+	}
+	return out
+}
+
+// CheckExampleLeak 检查示例模板文件是否被填入真实密钥（该文件设计为随代码入库分享）。
+// 返回被填写的敏感字段名列表；文件不存在、解析失败或全部为空时返回 nil。
+func CheckExampleLeak(path string) []string {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+	var probe struct {
+		LLM       struct{ APIKey string `yaml:"api_key"` }         `yaml:"llm"`
+		Embedding struct{ APIKey string `yaml:"api_key"` }         `yaml:"embedding"`
+		PingCode  struct{ ClientSecret string `yaml:"client_secret"` } `yaml:"pingcode"`
+		Parser    struct {
+			MinerU struct{ APIToken string `yaml:"api_token"` } `yaml:"mineru"`
+		} `yaml:"parser"`
+		Security struct{ EncryptionKey string `yaml:"encryption_key"` } `yaml:"security"`
+	}
+	if err := yaml.Unmarshal(raw, &probe); err != nil {
+		return nil
+	}
+	var out []string
+	if probe.LLM.APIKey != "" {
+		out = append(out, "llm.api_key")
+	}
+	if probe.Embedding.APIKey != "" {
+		out = append(out, "embedding.api_key")
+	}
+	if probe.PingCode.ClientSecret != "" {
+		out = append(out, "pingcode.client_secret")
+	}
+	if probe.Parser.MinerU.APIToken != "" {
+		out = append(out, "parser.mineru.api_token")
+	}
+	if probe.Security.EncryptionKey != "" {
+		out = append(out, "security.encryption_key")
+	}
+	return out
+}

@@ -80,10 +80,25 @@ make build        # → bin/reqflow
 ## 开发命令
 
 ```bash
-make test        # go vet + go test + 架构围栏 lint-arch
-make lint-arch   # 依赖方向白名单校验
-make build       # 前端构建 + embed 单二进制
+make setup          # clone 后执行一次：启用 git 钩子（密钥护栏 pre-commit）
+make test           # go vet + go test + 架构围栏 + 密钥扫描
+make lint-arch      # 依赖方向白名单校验
+make check-secrets  # 扫描 git 追踪文件中的疑似密钥
+make build          # 前端构建 + embed 单二进制
 ```
+
+## 密钥安全护栏（四道防线）
+
+真实密钥**只**放两处：本地 `config.yaml`（已 gitignore）或 `REQFLOW_*` 环境变量。防止密钥随代码分享的机制：
+
+| 防线 | 机制 |
+|------|------|
+| 1. gitignore | `config.yaml` / `config.*.yaml` 全部变体不入库（example 模板除外） |
+| 2. pre-commit 钩子 | 暂存内容密钥扫描 + 真实配置文件名直接拦截；钩子在 `.githooks/` 入库分享，`make setup` 启用（`git commit --no-verify` 为误报逃生通道） |
+| 3. `make check-secrets` | 仓库级扫描（敏感字段非空值 / 带密码 DSN），纳入 `make test` |
+| 4. 启动自检 | 后端启动时若发现 `config.example.yaml` 被填入真实密钥会 ERROR 告警并提示轮换；日志只打印已加载密钥的**名称**，绝不打印值 |
+
+检测规则与白名单（环境变量名引用、代码标识符、占位符、用户名=密码的本地 DSN）见 `scripts/secret-check.sh`。**一旦密钥已提交**：立即在对应平台轮换密钥，再用 `git filter-repo` 清理历史。
 
 ## 第二波路线图（扩展点已预留）
 

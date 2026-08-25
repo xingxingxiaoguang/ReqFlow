@@ -18,18 +18,28 @@ build:
 	go build -trimpath -ldflags "-s -w" -tags embed -o bin/reqflow ./cmd/reqflow
 	@ls -lh bin/reqflow
 
-# 测试 + 类型检查 + 架构围栏
+# 测试 + 类型检查 + 架构围栏 + 密钥护栏
 test:
 	go vet ./...
 	go test ./...
 	$(MAKE) lint-arch
+	$(MAKE) check-secrets
 
 # 架构围栏：依赖方向白名单校验（详见 scripts/arch-check.sh）
 lint-arch:
 	bash scripts/arch-check.sh
 
+# 密钥护栏：扫描 git 追踪文件中的疑似泄漏（敏感字段非空值 / 带密码 DSN）
+check-secrets:
+	bash scripts/secret-check.sh tracked
+
+# 一次性初始化（clone 后执行）：启用 git 钩子目录
+setup:
+	git config core.hooksPath .githooks
+	@echo "✓ pre-commit 密钥护栏已启用"
+
 clean:
 	rm -rf bin web/dist
 
 help:
-	@echo "dev | build | test | lint-arch | clean"
+	@echo "setup | dev | build | test | lint-arch | check-secrets | clean"

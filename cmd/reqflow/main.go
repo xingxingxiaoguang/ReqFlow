@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -59,6 +60,16 @@ func main() {
 		for _, w := range warns {
 			logger.Warn("配置提醒", "detail", w)
 		}
+	}
+
+	// 密钥安全自检：已加载的密钥只打名单不打印值；example 模板被填入真实密钥时醒目告警
+	if filled := cfg.FilledSecrets(); len(filled) > 0 {
+		logger.Info("已加载密钥（仅显示名称）", "keys", strings.Join(filled, ", "))
+	}
+	if leaked := checkExampleTemplate(); len(leaked) > 0 {
+		logger.Error("⚠️ 检测到 config.example.yaml 中被填入了真实密钥（该文件会随代码分享！）",
+			"fields", strings.Join(leaked, ", "),
+			"处理", "请立即将值清空并轮换已暴露的密钥；真实密钥只放 config.yaml 或环境变量")
 	}
 
 	/* ---- 数据库（Docker PG + pgvector，自动迁移） ---- */
@@ -162,6 +173,11 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+}
+
+// checkExampleTemplate 检查入库的示例模板是否被填入真实密钥（防止随代码分享泄漏）。
+func checkExampleTemplate() []string {
+	return config.CheckExampleLeak("config.example.yaml")
 }
 
 func parseLevel(s string) (lv slog.Level) {

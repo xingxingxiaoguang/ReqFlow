@@ -1,5 +1,7 @@
 # 运行时数据与本地配置（不入库，产物零硬编码）
 config.yaml
+config.*.yaml
+!config.example.yaml
 data/
 bin/
 dist/

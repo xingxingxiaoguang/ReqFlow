@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# pre-commit 护栏：
+#   1. 真实配置文件（config.yaml 及变体）禁止入库
+#   2. 暂存内容密钥扫描（scripts/secret-check.sh staged）
+# 误报逃生通道：git commit --no-verify（请先确认内容安全）
+set -uo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+fail=0
+
+# 1) 真实配置文件直接拦截（example 模板除外）
+while IFS= read -r f; do
+  [ -z "$f" ] && continue
+  case "$f" in
+    config.example.yaml|*/config.example.yaml) continue ;;
+    config.yaml|config.*.yaml|*/config.yaml|*/config.*.yaml|web/.env*|web/.env.*|.env|.env.*)
+      echo "✗ 禁止提交真实配置文件: ${f}（密钥风险；example 模板除外）" >&2
+      fail=1
+      ;;
+  esac
+done < <(git diff --cached --name-only --diff-filter=ACM)
+
+# 2) 暂存新增行的密钥扫描
+if ! bash scripts/secret-check.sh staged; then
+  fail=1
+fi
+
+exit $fail
