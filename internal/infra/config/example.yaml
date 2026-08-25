@@ -1,0 +1,67 @@
+# ReqFlow 配置文件
+# 复制为 config.yaml 后填写；环境变量（REQFLOW_ 前缀，全大写、层级用 _ 连接）可覆盖文件值。
+# 加载优先级：-config 指定路径 > $REQFLOW_CONFIG > ./config.yaml
+
+server:
+  port: 8080
+  log_level: info        # debug | info | warn | error
+  log_format: text       # text | json
+
+database:
+  dsn: postgres://reqflow:reqflow@127.0.0.1:5432/reqflow?sslmode=disable
+  auto_migrate: true     # 启动时自动执行内嵌迁移
+  retry_count: 5
+  retry_interval_ms: 2000
+
+# LLM（OpenAI 兼容协议：DeepSeek / GLM / Qwen / Kimi 等均适用）
+llm:
+  base_url: https://api.deepseek.com/v1
+  api_key: ""
+  model: deepseek-chat
+  temperature: 0.7
+  max_tokens: 8192
+  timeout_ms: 300000
+
+# 向量 embedding（OpenAI 兼容 /embeddings；不配置则语义匹配自动降级为仅精确匹配）
+embedding:
+  base_url: https://api.siliconflow.cn/v1
+  api_key: ""
+  model: BAAI/bge-m3
+  dimensions: 1024      # 第一波向量列固定 1024 维，如需其它维度须调整迁移
+  batch_size: 32
+  timeout_ms: 30000
+
+# PingCode 连接（第一波为企业授权 client_credentials；authorization_code 为预留扩展）
+pingcode:
+  host: https://open.pingcode.com
+  client_id: ""
+  client_secret: ""
+  grant_type: client_credentials
+  workload_unit: hour   # minute | hour | day（PingCode 企业工时单位）
+  import_concurrency: 3
+  sync_work_item_batch_size: 25
+  sync_batch_delay_ms: 500
+
+# 匹配
+match:
+  duplicate_threshold: 0.75   # 查重相似度阈值，低于视为新工作项
+  project_top_n: 5            # 项目推荐返回数
+
+parser:
+  max_file_mb: 200
+  mineru:
+    enabled: true             # false 时上传 PDF 直接报不支持
+    api_url: https://mineru.net
+    api_token: ""
+    model_version: vlm        # vlm(MinerU 2.5) | pipeline
+    timeout_ms: 600000
+    poll_interval_ms: 5000
+
+# 预留：第二波 OAuth 用户授权令牌入库时的字段加密密钥（64 位 hex = 32 字节）
+security:
+  encryption_key: ""
+
+workspace:
+  name: ReqFlow
+  upload_dir: ./data/uploads    # 上传文件暂存目录
+  demand_dir: ./data/demands    # 分析原文存档目录
