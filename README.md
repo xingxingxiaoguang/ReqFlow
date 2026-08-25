@@ -4,6 +4,8 @@
 > 技术栈：React 18 + Ant Design 5（前端）/ Go + Gin + GORM（后端）/ PostgreSQL 16 + pgvector（DB）。
 > 发布形态：`go:embed` 单二进制，配置全部本地 YAML，代码与产物零硬编码。
 
+📄 **文档**：[产品总纲](./docs/PRODUCT.md)（定位/功能全景/路线图） · [交接文档](./docs/HANDOVER.md)（架构/代码地图/流程/踩坑/第二波指南）
+
 ## 架构（四层，依赖只允许向内）
 
 ```
