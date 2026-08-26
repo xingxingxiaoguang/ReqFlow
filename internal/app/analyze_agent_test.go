@@ -8,7 +8,6 @@ import (
 	"testing"
 
 	"reqflow/internal/app/agent"
-	"reqflow/internal/domain/model"
 	"reqflow/internal/port"
 )
 
@@ -45,35 +44,6 @@ func (m *scriptedLLM) Complete(ctx context.Context, cc *port.Context) (*port.Mes
 }
 func (m *scriptedLLM) Ping(ctx context.Context) error { return nil }
 
-/* ---- mock ImportRepo：内存实现 ---- */
-
-type memRecords struct {
-	rec    *model.ImportRecord
-	items  []model.ImportRecordItem
-	failOn string // 非空时 CreateRecord 报错（触发降级路径）
-}
-
-func (r *memRecords) CreateRecord(ctx context.Context, rec *model.ImportRecord) error {
-	if rec.ID == "" {
-		rec.ID = "rec-1"
-	}
-	r.rec = rec
-	return nil
-}
-func (r *memRecords) UpdateRecord(ctx context.Context, rec *model.ImportRecord) error  { r.rec = rec; return nil }
-func (r *memRecords) ListRecords(ctx context.Context, limit int) ([]model.ImportRecord, error) { return nil, nil }
-func (r *memRecords) GetRecord(ctx context.Context, id string) (*model.ImportRecord, error)    { return r.rec, nil }
-func (r *memRecords) GetRecordItems(ctx context.Context, recordID string) ([]model.ImportRecordItem, error) {
-	return r.items, nil
-}
-func (r *memRecords) ReplaceRecordItems(ctx context.Context, recordID string, items []model.ImportRecordItem) error {
-	r.items = items
-	return nil
-}
-func (r *memRecords) UpdateItemResult(ctx context.Context, itemID, pid, ident, status, errMsg string) error {
-	return nil
-}
-
 /* ---- 桩工具 ---- */
 
 type stubTool struct {
@@ -107,8 +77,7 @@ func finalTextMsg(text string) *port.Message {
 func TestAnalyzeAgentModeFullFlow(t *testing.T) {
 	llm := &scriptedLLM{responses: []*port.Message{toolCallMsg(), finalTextMsg(testFinalJSON)}}
 	tool := &stubTool{}
-	records := &memRecords{}
-	svc := NewAnalyzeService(llm, records, "")
+	svc := NewAnalyzeService(llm, "")
 	svc.EnableAgentMode([]agent.Tool{tool}, 0)
 
 	var tools []AnalyzeToolEvent
@@ -144,9 +113,9 @@ func TestAnalyzeAgentModeFullFlow(t *testing.T) {
 	if len(res.Items) != 1 || res.Items[0].Title != "实现用户登录功能" {
 		t.Fatalf("items = %+v", res.Items)
 	}
-	// 会话落库：含系统提示（工具指南）、工具表、user/assistant/toolResult 消息
+	// 会话产出：含系统提示（工具指南）、工具表、user/assistant/toolResult 消息
 	var cc port.Context
-	if err := json.Unmarshal([]byte(records.rec.AgentContext), &cc); err != nil {
+	if err := json.Unmarshal([]byte(res.AgentContext), &cc); err != nil {
 		t.Fatalf("AgentContext 非法 JSON: %v", err)
 	}
 	if !strings.Contains(cc.SystemPrompt, "工具使用指南") {
@@ -179,8 +148,7 @@ func TestAnalyzeAgentModeDegradesToClassic(t *testing.T) {
 		finalTextMsg(testFinalJSON), // 降级后的单发调用
 	}}
 	tool := &stubTool{}
-	records := &memRecords{}
-	svc := NewAnalyzeService(llm, records, "")
+	svc := NewAnalyzeService(llm, "")
 	svc.EnableAgentMode([]agent.Tool{tool}, 0)
 
 	var messages []string
@@ -210,8 +178,7 @@ func TestAnalyzeAgentModeDegradesToClassic(t *testing.T) {
 
 func TestAnalyzeClassicPersistsSession(t *testing.T) {
 	llm := &scriptedLLM{responses: []*port.Message{finalTextMsg(testFinalJSON)}}
-	records := &memRecords{}
-	svc := NewAnalyzeService(llm, records, "")
+	svc := NewAnalyzeService(llm, "")
 
 	res, err := svc.Run(context.Background(), "需求.docx", testDoc, "", nil, nil, nil)
 	if err != nil {
@@ -221,8 +188,8 @@ func TestAnalyzeClassicPersistsSession(t *testing.T) {
 		t.Fatalf("items = %+v", res.Items)
 	}
 	var cc port.Context
-	if err := json.Unmarshal([]byte(records.rec.AgentContext), &cc); err != nil {
-		t.Fatalf("单发模式也应落库会话: %v", err)
+	if err := json.Unmarshal([]byte(res.AgentContext), &cc); err != nil {
+		t.Fatalf("单发模式也应产出会话: %v", err)
 	}
 	if len(cc.Messages) != 2 || cc.Messages[0].Role != port.RoleUser || cc.Messages[1].Role != port.RoleAssistant {
 		t.Fatalf("单发会话 = %d 条消息", len(cc.Messages))

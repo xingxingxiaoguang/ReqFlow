@@ -9,40 +9,50 @@ import (
 
 // Overview 仪表盘概览。
 type Overview struct {
-	Projects      int64                `json:"projects"`
-	WorkItems     int64                `json:"workItems"`
-	Records       int64                `json:"records"`
-	RecentRecords []model.ImportRecord `json:"recentRecords"`
+	Projects      int64        `json:"projects"`
+	WorkItems     int64        `json:"workItems"`
+	Datasets      int64        `json:"datasets"`
+	DatasetItems  int64        `json:"datasetItems"`
+	Tasks         int64        `json:"tasks"`
+	RecentTasks   []model.Task `json:"recentTasks"`
+	RecentDatasets []model.Dataset `json:"recentDatasets"`
 }
 
-// OverviewService 概览用例：本地缓存计数 + 最近导入记录。
+// OverviewService 概览用例：数据集/条目计数 + 最近任务。
 type OverviewService struct {
-	projects  port.ProjectRepo
-	workItems port.WorkItemRepo
-	records   port.ImportRepo
+	datasets port.DatasetRepo
+	tasks    port.TaskRepo
 }
 
 // NewOverviewService 构造用例。
-func NewOverviewService(projects port.ProjectRepo, workItems port.WorkItemRepo, records port.ImportRepo) *OverviewService {
-	return &OverviewService{projects: projects, workItems: workItems, records: records}
+func NewOverviewService(datasets port.DatasetRepo, tasks port.TaskRepo) *OverviewService {
+	return &OverviewService{datasets: datasets, tasks: tasks}
 }
 
 // Get 返回概览数据。
 func (s *OverviewService) Get(ctx context.Context) (*Overview, error) {
-	projects, err := s.projects.CountActive(ctx)
+	datasetCount, err := s.datasets.CountDatasets(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	workItems, err := s.workItems.CountActive(ctx)
+	itemCount, err := s.datasets.CountDatasetItems(ctx, "")
 	if err != nil {
 		return nil, err
 	}
-	recent, err := s.records.ListRecords(ctx, 5)
+	recentDatasets, err := s.datasets.ListDatasets(ctx, "", 5)
+	if err != nil {
+		return nil, err
+	}
+	taskCount, err := s.tasks.CountTasks(ctx)
+	if err != nil {
+		return nil, err
+	}
+	recent, err := s.tasks.ListTasks(ctx, port.TaskFilter{Limit: 5})
 	if err != nil {
 		return nil, err
 	}
 	return &Overview{
-		Projects: projects, WorkItems: workItems,
-		Records: int64(len(recent)), RecentRecords: recent,
+		Datasets: datasetCount, DatasetItems: itemCount, RecentDatasets: recentDatasets,
+		Tasks: taskCount, RecentTasks: recent,
 	}, nil
 }

@@ -10,84 +10,71 @@ import (
 
 /* ---- 表行结构（与 migrations 对齐；向量列用 pgvector 类型） ---- */
 
-type projectRow struct {
-	ID              string           `gorm:"column:id;primaryKey"`
-	Name            string           `gorm:"column:name"`
-	Description     string           `gorm:"column:description"`
-	RemoteUpdatedAt *string          `gorm:"column:remote_updated_at"`
-	IsArchived      bool             `gorm:"column:is_archived"`
-	Embedding       *pgvector.Vector `gorm:"column:embedding"`
-	SyncedAt        time.Time        `gorm:"column:synced_at"`
+type datasetRow struct {
+	ID           string    `gorm:"column:id;primaryKey"`
+	Type         string    `gorm:"column:type"`
+	Name         string    `gorm:"column:name"`
+	SourceTaskID *string   `gorm:"column:source_task_id"`
+	Status       string    `gorm:"column:status"`
+	ItemCount    int       `gorm:"column:item_count"`
+	CreatedAt    time.Time `gorm:"column:created_at"`
 }
 
-func (projectRow) TableName() string { return "projects" }
+func (datasetRow) TableName() string { return "datasets" }
 
-type workItemRow struct {
-	ID              string           `gorm:"column:id;primaryKey"`
-	ProjectID       string           `gorm:"column:project_id"`
-	Identifier      string           `gorm:"column:identifier"`
-	Title           string           `gorm:"column:title"`
-	Description     string           `gorm:"column:description"`
-	Kind            string           `gorm:"column:kind"`
-	TypeID          string           `gorm:"column:type_id"`
-	StateID         string           `gorm:"column:state_id"`
-	RemoteUpdatedAt *string          `gorm:"column:remote_updated_at"`
-	IsArchived      bool             `gorm:"column:is_archived"`
-	Embedding       *pgvector.Vector `gorm:"column:embedding"`
-	SyncedAt        time.Time        `gorm:"column:synced_at"`
+type datasetItemRow struct {
+	ID        string           `gorm:"column:id;primaryKey"`
+	DatasetID string           `gorm:"column:dataset_id;index"`
+	Fields    string           `gorm:"column:fields"`
+	Embedding *pgvector.Vector `gorm:"column:embedding"`
+	CreatedAt time.Time        `gorm:"column:created_at"`
 }
 
-func (workItemRow) TableName() string { return "work_items" }
+func (datasetItemRow) TableName() string { return "dataset_items" }
 
-type metaTypeRow struct {
-	ID        string `gorm:"column:id;primaryKey"`
-	ProjectID string `gorm:"column:project_id;primaryKey"`
-	Name      string `gorm:"column:name"`
-	Group     string `gorm:"column:group"`
-}
-
-func (metaTypeRow) TableName() string { return "work_item_types" }
-
-type metaStateRow struct {
-	ID             string `gorm:"column:id;primaryKey"`
-	ProjectID      string `gorm:"column:project_id;primaryKey"`
-	WorkItemTypeID string `gorm:"column:work_item_type_id;primaryKey"`
-	Name           string `gorm:"column:name"`
-	Type           string `gorm:"column:type"`
-	Color          string `gorm:"column:color"`
-}
-
-func (metaStateRow) TableName() string { return "work_item_states" }
-
-type metaPriorityRow struct {
-	ID        string `gorm:"column:id;primaryKey"`
-	ProjectID string `gorm:"column:project_id;primaryKey"`
-	Name      string `gorm:"column:name"`
-}
-
-func (metaPriorityRow) TableName() string { return "work_item_priorities" }
-
-type importRecordRow struct {
+type taskRow struct {
 	ID                string     `gorm:"column:id;primaryKey"`
-	FileName          string     `gorm:"column:file_name"`
-	OriginalFilePath  *string    `gorm:"column:original_file_path"`
+	Type              string     `gorm:"column:type"`
+	Title             string     `gorm:"column:title"`
 	Status            string     `gorm:"column:status"`
+	CurrentStep       int        `gorm:"column:current_step"`
+	Workflow          *string    `gorm:"column:workflow"`      // 工作流定义快照（JSON 文本）
+	Input             *string    `gorm:"column:input"`        // JSON 文本
+	Output            *string    `gorm:"column:output"`       // JSON 文本
+	AgentContext      *string    `gorm:"column:agent_context"` // 会话 JSON 文本（续跑载体）
 	ItemsCount        int        `gorm:"column:items_count"`
-	TargetProjectID   *string    `gorm:"column:target_project_id"`
-	TargetProjectName *string    `gorm:"column:target_project_name"`
 	ImportedCount     int        `gorm:"column:imported_count"`
 	FailedCount       int        `gorm:"column:failed_count"`
+	TargetProjectID   *string    `gorm:"column:target_project_id"`
+	TargetProjectName *string    `gorm:"column:target_project_name"`
+	OutputDatasetID   *string    `gorm:"column:output_dataset_id"`
+	InputDatasetID    *string    `gorm:"column:input_dataset_id"`
 	ErrorMessage      *string    `gorm:"column:error_message"`
-	AgentContext      *string    `gorm:"column:agent_context"` // 会话 JSON 文本（refine 载体）
 	CreatedAt         time.Time  `gorm:"column:created_at"`
 	UpdatedAt         time.Time  `gorm:"column:updated_at"`
+	StartedAt         *time.Time `gorm:"column:started_at"`
+	FinishedAt        *time.Time `gorm:"column:finished_at"`
 }
 
-func (importRecordRow) TableName() string { return "import_records" }
+func (taskRow) TableName() string { return "tasks" }
 
-type importRecordItemRow struct {
+type taskStepRow struct {
+	ID        string     `gorm:"column:id;primaryKey"`
+	TaskID    string     `gorm:"column:task_id;index"`
+	Seq       int        `gorm:"column:seq"`
+	Name      string     `gorm:"column:name"`
+	Status    string     `gorm:"column:status"`
+	Detail    string     `gorm:"column:detail"`
+	Data      *string    `gorm:"column:data"` // JSON 文本：工具轨迹/导入汇总
+	StartedAt *time.Time `gorm:"column:started_at"`
+	EndedAt   *time.Time `gorm:"column:ended_at"`
+}
+
+func (taskStepRow) TableName() string { return "task_steps" }
+
+type taskItemRow struct {
 	ID                  string    `gorm:"column:id;primaryKey"`
-	RecordID            string    `gorm:"column:record_id;index"`
+	TaskID              string    `gorm:"column:task_id;index"`
 	Title               string    `gorm:"column:title"`
 	Description         string    `gorm:"column:description"`
 	ProjectName         string    `gorm:"column:project_name"`
@@ -97,15 +84,14 @@ type importRecordItemRow struct {
 	StartAt             *string   `gorm:"column:start_at"`
 	EndAt               *string   `gorm:"column:end_at"`
 	AssigneeName        *string   `gorm:"column:assignee_name"`
+	State               string    `gorm:"column:state"`
 	SolutionSuggestion  string    `gorm:"column:solution_suggestion"`
-	PingCodeID          *string   `gorm:"column:pingcode_id"`
-	PingCodeIdentifier  *string   `gorm:"column:pingcode_identifier"`
 	Status              string    `gorm:"column:status"`
 	ErrorMessage        *string   `gorm:"column:error_message"`
 	CreatedAt           time.Time `gorm:"column:created_at"`
 }
 
-func (importRecordItemRow) TableName() string { return "import_record_items" }
+func (taskItemRow) TableName() string { return "task_items" }
 
 /* ---- 公共构造 ---- */
 

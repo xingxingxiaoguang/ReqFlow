@@ -54,20 +54,8 @@ type Config struct {
 		TimeoutMs int    `yaml:"timeout_ms" env:"REQFLOW_EMBEDDING_TIMEOUT_MS"`
 	} `yaml:"embedding"`
 
-	PingCode struct {
-		Host                    string `yaml:"host"                       env:"REQFLOW_PINGCODE_HOST"`
-		ClientID                string `yaml:"client_id"                  env:"REQFLOW_PINGCODE_CLIENT_ID"`
-		ClientSecret            string `yaml:"client_secret"              env:"REQFLOW_PINGCODE_CLIENT_SECRET"`
-		GrantType               string `yaml:"grant_type"                 env:"REQFLOW_PINGCODE_GRANT_TYPE"`
-		WorkloadUnit            string `yaml:"workload_unit"              env:"REQFLOW_PINGCODE_WORKLOAD_UNIT"`
-		ImportConcurrency       int    `yaml:"import_concurrency"         env:"REQFLOW_PINGCODE_IMPORT_CONCURRENCY"`
-		SyncWorkItemBatchSize   int    `yaml:"sync_work_item_batch_size"  env:"REQFLOW_PINGCODE_SYNC_WORK_ITEM_BATCH_SIZE"`
-		SyncBatchDelayMs        int    `yaml:"sync_batch_delay_ms"        env:"REQFLOW_PINGCODE_SYNC_BATCH_DELAY_MS"`
-	} `yaml:"pingcode"`
-
 	Match struct {
 		DuplicateThreshold float64 `yaml:"duplicate_threshold" env:"REQFLOW_MATCH_DUPLICATE_THRESHOLD"`
-		ProjectTopN        int     `yaml:"project_top_n"       env:"REQFLOW_MATCH_PROJECT_TOP_N"`
 	} `yaml:"match"`
 
 	Parser struct {
@@ -195,24 +183,17 @@ func (c *Config) Validate() (errs, warns []string) {
 	if c.LLM.APIKey == "" {
 		warns = append(warns, "llm.api_key 未配置：需求文档 LLM 分析不可用（其余功能不受影响）")
 	}
-	if c.PingCode.ClientID == "" || c.PingCode.ClientSecret == "" {
-		warns = append(warns, "pingcode.client_id/client_secret 未配置：PingCode 同步与导入不可用")
-	}
 	if c.Embedding.APIKey == "" {
-		warns = append(warns, "embedding.api_key 未配置：语义匹配降级为仅精确匹配，同步时不写入向量")
+		warns = append(warns, "embedding.api_key 未配置：语义匹配降级为仅精确匹配，生成数据集时不写入向量")
 	}
 	if c.Parser.MinerU.Enabled && c.Parser.MinerU.APIToken == "" {
 		warns = append(warns, "parser.mineru.api_token 未配置：PDF 解析不可用（docx/md/txt 不受影响）")
 	}
-	if c.PingCode.WorkloadUnit != "minute" && c.PingCode.WorkloadUnit != "hour" && c.PingCode.WorkloadUnit != "day" {
-		errs = append(errs, fmt.Sprintf("pingcode.workload_unit = %q 非法，必须为 minute/hour/day", c.PingCode.WorkloadUnit))
-	}
 	return errs, warns
 }
 
-// LLMReady / PingCodeReady / EmbeddingReady / MinerUReady 供运行时做功能可用性判断。
+// LLMReady / EmbeddingReady / MinerUReady 供运行时做功能可用性判断。
 func (c *Config) LLMReady() bool       { return c.LLM.APIKey != "" && c.LLM.BaseURL != "" && c.LLM.Model != "" }
-func (c *Config) PingCodeReady() bool  { return c.PingCode.ClientID != "" && c.PingCode.ClientSecret != "" }
 func (c *Config) EmbeddingReady() bool { return c.Embedding.APIKey != "" && c.Embedding.BaseURL != "" && c.Embedding.Model != "" }
 func (c *Config) MinerUReady() bool    { return c.Parser.MinerU.Enabled && c.Parser.MinerU.APIToken != "" }
 
@@ -224,9 +205,6 @@ func (c *Config) FilledSecrets() []string {
 	}
 	if c.Embedding.APIKey != "" {
 		out = append(out, "embedding.api_key")
-	}
-	if c.PingCode.ClientSecret != "" {
-		out = append(out, "pingcode.client_secret")
 	}
 	if c.Parser.MinerU.APIToken != "" {
 		out = append(out, "parser.mineru.api_token")
@@ -245,9 +223,8 @@ func CheckExampleLeak(path string) []string {
 		return nil
 	}
 	var probe struct {
-		LLM       struct{ APIKey string `yaml:"api_key"` }         `yaml:"llm"`
-		Embedding struct{ APIKey string `yaml:"api_key"` }         `yaml:"embedding"`
-		PingCode  struct{ ClientSecret string `yaml:"client_secret"` } `yaml:"pingcode"`
+		LLM       struct{ APIKey string `yaml:"api_key"` } `yaml:"llm"`
+		Embedding struct{ APIKey string `yaml:"api_key"` } `yaml:"embedding"`
 		Parser    struct {
 			MinerU struct{ APIToken string `yaml:"api_token"` } `yaml:"mineru"`
 		} `yaml:"parser"`
@@ -262,9 +239,6 @@ func CheckExampleLeak(path string) []string {
 	}
 	if probe.Embedding.APIKey != "" {
 		out = append(out, "embedding.api_key")
-	}
-	if probe.PingCode.ClientSecret != "" {
-		out = append(out, "pingcode.client_secret")
 	}
 	if probe.Parser.MinerU.APIToken != "" {
 		out = append(out, "parser.mineru.api_token")

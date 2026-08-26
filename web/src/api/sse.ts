@@ -38,7 +38,12 @@ export async function postSSE(
     try {
       parsed = JSON.parse(data)
     } catch { /* 保留原文 */ }
-    onEvent(event, parsed)
+    // 单帧解析/回调异常只丢该帧，绝不中断整个事件流（否则连接秒死、UI 永久失联）
+    try {
+      onEvent(event, parsed)
+    } catch (e) {
+      console.error('[SSE] 事件处理失败（已跳过该帧）:', event, e)
+    }
   }
 
   for (;;) {

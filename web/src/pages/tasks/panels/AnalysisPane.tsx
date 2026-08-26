@@ -1,25 +1,28 @@
-import { Card, Tag, Typography, Space, Tooltip } from 'antd'
+import { useEffect, useRef } from 'react'
+import { Card, Tag, Typography, Space, Tooltip, Button, App } from 'antd'
 import {
   LoadingOutlined, BulbOutlined, FileTextOutlined, ToolOutlined,
-  CheckCircleOutlined, CloseCircleOutlined,
+  CheckCircleOutlined, CloseCircleOutlined, PlayCircleOutlined,
 } from '@ant-design/icons'
-import { useEffect, useRef } from 'react'
-import { useImportWizard } from '../../stores/importWizard'
+import { useQueryClient } from '@tanstack/react-query'
+import { tasksApi } from '../../../api/tasks'
+import type { Task } from '../../../api/types'
+import type { TaskStream } from '../../../hooks/useTaskEvents'
 
-const { Text } = Typography;
+const { Text } = Typography
 
 /** 工具名 → 人读标签（与后端 tools.Build 清单对齐） */
 const TOOL_LABELS: Record<string, string> = {
-  search_projects: '搜索项目',
-  search_work_items: '查重搜索',
-  get_work_item_types: '核实类型',
-  get_project_members: '核实成员',
-  list_recent_work_items: '查看近期工作项',
+  search_requirements: '需求查重',
+  list_recent_requirements: '查看近期需求',
+  search_datasets: '查看数据集',
 }
 
-/** 阶段 3：AI 流式分析面板 —— 思考/正文双区实时滚动 + agent 工具轨迹 + 实时计数 */
-export default function Analyzing() {
-  const { analyzing, analyzeMessage, elapsedSec, phase, thinkingTail, answerTail, answerCount, toolTrace } = useImportWizard()
+/** AI 分析工作区：思考/正文双区实时滚动 + agent 工具轨迹 + 实时计数（暂停时遮罩可继续） */
+export default function AnalysisPane({ task, stream }: { task: Task; stream: TaskStream }) {
+  const qc = useQueryClient()
+  const { message } = App.useApp()
+  const { thinkingTail, answerTail, answerCount, phase, elapsedSec, analyzeMessage, toolTrace } = stream
   const thinkRef = useRef<HTMLDivElement>(null)
   const answerRef = useRef<HTMLDivElement>(null)
   const traceRef = useRef<HTMLDivElement>(null)
@@ -34,16 +37,24 @@ export default function Analyzing() {
     traceRef.current?.scrollTo({ top: traceRef.current.scrollHeight })
   }, [toolTrace])
 
-  if (!analyzing) return null
-
+  const paused = task.Status === 'paused'
   const running = toolTrace.filter((t) => t.status === 'running').length
+
+  const onResume = async () => {
+    try {
+      await tasksApi.resume(task.ID)
+      qc.invalidateQueries({ queryKey: ['task', task.ID] })
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
 
   return (
     <Card
       title={
         <Space>
-          <LoadingOutlined spin style={{ color: '#4F46E5' }} />
-          <Text strong>AI 分析中</Text>
+          {paused ? <PlayCircleOutlined style={{ color: '#f59e0b' }} /> : <LoadingOutlined spin style={{ color: '#4F46E5' }} />}
+          <Text strong>{paused ? '分析已暂停' : 'AI 分析中'}</Text>
           <Tag color="geekblue">{elapsedSec > 0 ? `${elapsedSec}s` : '启动中'}</Tag>
           {answerCount > 0 && <Tag color="green">已生成 {answerCount} 项</Tag>}
           {toolTrace.length > 0 && (
@@ -53,7 +64,16 @@ export default function Analyzing() {
           )}
         </Space>
       }
-      extra={<Text type="secondary">{analyzeMessage}</Text>}
+      extra={
+        paused ? (
+          <Space>
+            <Text type="secondary">{analyzeMessage}</Text>
+            <Button type="primary" size="small" icon={<PlayCircleOutlined />} onClick={onResume}>继续分析</Button>
+          </Space>
+        ) : (
+          <Text type="secondary">{analyzeMessage}</Text>
+        )
+      }
     >
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
         <div>

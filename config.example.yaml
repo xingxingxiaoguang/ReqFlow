@@ -35,21 +35,8 @@ embedding:
   batch_size: 32
   timeout_ms: 30000
 
-# PingCode 连接（第一波为企业授权 client_credentials；authorization_code 为预留扩展）
-pingcode:
-  host: https://open.pingcode.com
-  client_id: ""
-  client_secret: ""
-  grant_type: client_credentials
-  workload_unit: hour   # minute | hour | day（PingCode 企业工时单位）
-  import_concurrency: 3
-  sync_work_item_batch_size: 25
-  sync_batch_delay_ms: 500
-
-# 匹配
 match:
   duplicate_threshold: 0.75   # 查重相似度阈值，低于视为新工作项
-  project_top_n: 5            # 项目推荐返回数
 
 parser:
   max_file_mb: 200

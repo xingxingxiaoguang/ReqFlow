@@ -21,7 +21,7 @@ export default function Bugs() {
           { title: '双层匹配需求', description: '有编号 → 与已同步工作项编号精确匹配；无编号 → 语义匹配取 top3 候选' },
           { title: '人工确认关联', description: 'top3 候选人工确认或否决；匹配度过低的行标记为无效 bug' },
           { title: 'AI 批量定级', description: 'LLM 按 P0（阻塞性）/ P1（核心功能性）/ P2（次要功能性）/ P3（边缘性）定档，并给出理由' },
-          { title: '同步到平台', description: '确认关联的 bug 以缺陷类型建到 PingCode，关联需求写入描述（平台暂无关联 API）' },
+          { title: '生成 Bug 数据集', description: '确认关联的 bug 写入 Bug 数据集，关联需求（来自需求数据集）写入字段' },
         ]}
       />
 

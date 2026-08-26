@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -15,6 +16,10 @@ import (
 	"reqflow/internal/domain/model"
 	"reqflow/internal/port"
 )
+
+// ErrTaskPaused 步骤被暂停（工作 ctx 取消）——TaskManager 据此把任务标为 paused，
+// 产出携带已积累的会话检查点（AgentContext）供续跑。
+var ErrTaskPaused = errors.New("任务已暂停")
 
 // AnalyzeProgress 分析阶段进度。
 type AnalyzeProgress struct {
@@ -40,13 +45,14 @@ type AnalyzeToolEvent struct {
 	IsError bool   `json:"is_error,omitempty"`
 }
 
-// AnalyzeResult 一轮分析的产出：导入记录 + 结构化草稿明细。
-type AnalyzeResult struct {
-	Record *model.ImportRecord
-	Items  []model.ImportRecordItem
+// AnalyzeOutcome 一轮分析的产出（不含持久化——由 TaskManager 落库）。
+type AnalyzeOutcome struct {
+	Items        []model.TaskItem // 归一化后的草稿明细（status=pending）
+	AgentContext string           // 会话 JSON（port.Context 序列化；暂停时即检查点）
+	SourcePath   string           // 原文存档路径（仅成功产出时非空）
 }
 
-// AnalyzeService 需求文档 LLM 分析用例：流式输出 → 宽松恢复 → 白名单归一化 → 落库。
+// AnalyzeService 需求文档 LLM 分析用例：流式输出 → 宽松恢复 → 白名单归一化。
 //
 // 解析降级链（对齐 PingCraft 实践，避免整段重跑的 token 成本翻倍）：
 // 标准解析 → 剥围栏/截取数组/修复截断的宽松恢复 → 非流式回退。
@@ -56,18 +62,18 @@ type AnalyzeResult struct {
 // 分析从单发直调升级为「分析 → 自主查证 → 终稿」的 agent.Loop；
 // loop 失败且无任何输出时降级回单发直调，保证功能可用性优先。
 //
-// 扩展点：微调重分析（refine）以落库的 AgentContext（Context 的 JSON 序列化）
-// 为载体追加消息重放实现，第一波不开放。
+// 持久化职责已移交 TaskManager（任务步骤/明细/会话落库）；本用例只产出
+// AnalyzeOutcome。暂停（ctx 取消）时返回 ErrTaskPaused + 已积累会话检查点，
+// TaskManager 落库后经 Resume 续跑。
 type AnalyzeService struct {
 	llm       port.LLMClient
-	records   port.ImportRepo
 	demandDir string
 	loop      *agent.Loop // nil = 单发直调
 }
 
 // NewAnalyzeService 构造用例。demandDir 为分析原文存档目录。
-func NewAnalyzeService(llm port.LLMClient, records port.ImportRepo, demandDir string) *AnalyzeService {
-	return &AnalyzeService{llm: llm, records: records, demandDir: demandDir}
+func NewAnalyzeService(llm port.LLMClient, demandDir string) *AnalyzeService {
+	return &AnalyzeService{llm: llm, demandDir: demandDir}
 }
 
 // EnableAgentMode 注入 agent loop 工具集（llm.agent_mode 开启时由组装点调用）。
@@ -84,7 +90,7 @@ func (s *AnalyzeService) Run(
 	onProgress func(AnalyzeProgress),
 	onToken func(AnalyzeDelta),
 	onTool func(AnalyzeToolEvent),
-) (*AnalyzeResult, error) {
+) (*AnalyzeOutcome, error) {
 	if onProgress == nil {
 		onProgress = func(AnalyzeProgress) {}
 	}
@@ -94,27 +100,92 @@ func (s *AnalyzeService) Run(
 
 	now := time.Now()
 
-	done := func(res *AnalyzeResult, err error) (*AnalyzeResult, error) {
-		if err == nil {
-			onProgress(AnalyzeProgress{Stage: "done", Message: fmt.Sprintf("分析完成，共 %d 个工作项", len(res.Items))})
-		}
-		return res, err
-	}
-
 	if s.loop != nil {
-		res, handled, err := s.runAgent(ctx, fileName, text, specialReqs, now, onProgress, onToken, onTool)
+		out, handled, err := s.runAgent(ctx, fileName, text, specialReqs, now, onProgress, onToken, onTool)
 		if handled {
-			return done(res, err)
+			return s.done(out, err, onProgress)
 		}
 		// agent 链路失败且无任何可恢复输出：降级单发直调
 		onProgress(AnalyzeProgress{Stage: "analyzing", Message: "agent 分析链路失败，已回退单发直调…"})
 	}
 
-	return done(s.runClassic(ctx, fileName, text, specialReqs, now, onProgress, onToken))
+	out, err := s.runClassic(ctx, fileName, text, specialReqs, now, onProgress, onToken)
+	return s.done(out, err, onProgress)
+}
+
+// Resume 从已落库会话（检查点）续跑分析。cc 由 TaskManager 从 task.AgentContext
+// 反序列化：agent 模式从检查点继续 loop；单发模式重放流式调用（幂等）。
+// 续跑彻底失败（无输出）时与 Run 同构降级单发。
+func (s *AnalyzeService) Resume(
+	ctx context.Context,
+	cc *port.Context,
+	fileName, text, specialReqs string,
+	onProgress func(AnalyzeProgress),
+	onToken func(AnalyzeDelta),
+	onTool func(AnalyzeToolEvent),
+) (*AnalyzeOutcome, error) {
+	if onProgress == nil {
+		onProgress = func(AnalyzeProgress) {}
+	}
+	if cc == nil {
+		return s.Run(ctx, fileName, text, specialReqs, onProgress, onToken, onTool)
+	}
+	if strings.TrimSpace(text) == "" {
+		return nil, fmt.Errorf("待分析文本为空")
+	}
+
+	now := time.Now()
+
+	if s.loop != nil {
+		onProgress(AnalyzeProgress{Stage: "analyzing", Message: "AI 正在继续拆解需求功能点…"})
+		finalCtx, runErr := s.loop.Run(ctx, cc, tokenMapper(onToken), toolEventMapper(onTool))
+		out, handled, err := s.loopTail(ctx, finalCtx, runErr, fileName, text, now, onProgress)
+		if handled {
+			return s.done(out, err, onProgress)
+		}
+		onProgress(AnalyzeProgress{Stage: "analyzing", Message: "agent 续跑失败，已回退单发直调…"})
+		out, err = s.runClassic(ctx, fileName, text, specialReqs, now, onProgress, onToken)
+		return s.done(out, err, onProgress)
+	}
+
+	// 单发模式：检查点会话（含完整 prompt）重放
+	onProgress(AnalyzeProgress{Stage: "analyzing", Message: "AI 正在拆解需求功能点…"})
+	msg, streamErr := s.llm.Stream(ctx, cc, tokenMapper(onToken))
+	raw := ""
+	if msg != nil {
+		raw = msg.Text()
+		cc.Messages = append(cc.Messages, *msg)
+	}
+	drafts := parseDrafts(raw)
+	if drafts == nil {
+		if streamErr != nil {
+			if ctx.Err() != nil {
+				return s.checkpoint(fileName, text, now, cc)
+			}
+			return nil, fmt.Errorf("LLM 流式分析失败: %w", streamErr)
+		}
+		onProgress(AnalyzeProgress{Stage: "analyzing", Message: "流式输出解析失败，正在回退非流式调用…"})
+		fallback, err := s.llm.Complete(ctx, cc)
+		if err != nil {
+			if ctx.Err() != nil {
+				return s.checkpoint(fileName, text, now, cc)
+			}
+			return nil, fmt.Errorf("LLM 分析失败: %w", err)
+		}
+		raw = fallback.Text()
+		drafts = parseDrafts(raw)
+		if drafts == nil {
+			return nil, fmt.Errorf("LLM 输出无法解析为工作项数组（原始输出前 200 字: %s）", truncateStr(raw, 200))
+		}
+		cc.Messages = append(cc.Messages, *fallback)
+	} else if streamErr != nil {
+		onProgress(AnalyzeProgress{Stage: "analyzing", Message: fmt.Sprintf("流式中断，已从部分输出恢复 %d 个工作项", len(drafts))})
+	}
+	return s.finalize(fileName, text, drafts, now, cc)
 }
 
 // runAgent agent 模式主路径。handled=false 表示链路彻底失败应降级单发；
-// 其余情况（成功 / 部分恢复 / 可回退的解析失败）由本路径自行收束。
+// 其余情况（成功 / 部分恢复 / 暂停检查点 / 可回退的解析失败）由本路径自行收束。
 func (s *AnalyzeService) runAgent(
 	ctx context.Context,
 	fileName, text, specialReqs string,
@@ -122,7 +193,7 @@ func (s *AnalyzeService) runAgent(
 	onProgress func(AnalyzeProgress),
 	onToken func(AnalyzeDelta),
 	onTool func(AnalyzeToolEvent),
-) (*AnalyzeResult, bool, error) {
+) (*AnalyzeOutcome, bool, error) {
 	llmCtx := &port.Context{
 		SystemPrompt: renderAgentSystem(now, specialReqs),
 		Messages:     []port.Message{port.NewUserMessage(renderDocMessage(text))},
@@ -130,6 +201,27 @@ func (s *AnalyzeService) runAgent(
 
 	onProgress(AnalyzeProgress{Stage: "analyzing", Message: "AI 正在拆解需求功能点（agent 模式：可自主查证项目与工作项）…"})
 	finalCtx, runErr := s.loop.Run(ctx, llmCtx, tokenMapper(onToken), toolEventMapper(onTool))
+	return s.loopTail(ctx, finalCtx, runErr, fileName, text, now, onProgress)
+}
+
+// loopTail agent loop 后的统一收尾：解析终稿 → 失败时非流式回退一次 → 组装产出。
+// 暂停（ctx 取消）时返回检查点产出 + ErrTaskPaused；无任何输出时 handled=false 交外层降级。
+func (s *AnalyzeService) loopTail(
+	ctx context.Context,
+	finalCtx *port.Context,
+	runErr error,
+	fileName, text string,
+	now time.Time,
+	onProgress func(AnalyzeProgress),
+) (*AnalyzeOutcome, bool, error) {
+	if ctx.Err() != nil {
+		// 暂停检查点：会话已积累（消息只在完整轮次后追加），序列化供续跑
+		out, err := s.finalize(fileName, text, nil, now, finalCtx)
+		if err != nil {
+			return nil, true, err
+		}
+		return out, true, ErrTaskPaused
+	}
 
 	raw := lastAssistantText(finalCtx)
 	drafts := parseDrafts(raw)
@@ -142,6 +234,13 @@ func (s *AnalyzeService) runAgent(
 			onProgress(AnalyzeProgress{Stage: "analyzing", Message: "流式输出解析失败，正在回退非流式调用…"})
 			fallback, err := s.llm.Complete(ctx, finalCtx)
 			if err != nil {
+				if ctx.Err() != nil {
+					out, err := s.finalize(fileName, text, nil, now, finalCtx)
+					if err != nil {
+						return nil, true, err
+					}
+					return out, true, ErrTaskPaused
+				}
 				return nil, true, fmt.Errorf("LLM 分析失败: %w", err)
 			}
 			drafts = parseDrafts(fallback.Text())
@@ -158,8 +257,8 @@ func (s *AnalyzeService) runAgent(
 		onProgress(AnalyzeProgress{Stage: "analyzing", Message: fmt.Sprintf("agent 链路中断，已从部分输出恢复 %d 个工作项", len(drafts))})
 	}
 
-	res, err := s.persistResult(ctx, fileName, text, drafts, now, finalCtx)
-	return res, true, err
+	out, err := s.finalize(fileName, text, drafts, now, finalCtx)
+	return out, true, err
 }
 
 // runClassic 单发直调主路径（默认模式，也是 agent 链路失败时的降级目标）。
@@ -169,8 +268,8 @@ func (s *AnalyzeService) runClassic(
 	now time.Time,
 	onProgress func(AnalyzeProgress),
 	onToken func(AnalyzeDelta),
-) (*AnalyzeResult, error) {
-	// pi Context：单发提取 = 一条 user 消息；会话同样落库（refine 的载体）
+) (*AnalyzeOutcome, error) {
+	// pi Context：单发提取 = 一条 user 消息；会话同样产出（续跑/refine 的载体）
 	llmCtx := &port.Context{Messages: []port.Message{port.NewUserMessage(renderAnalyzePrompt(text, now, specialReqs))}}
 
 	onProgress(AnalyzeProgress{Stage: "analyzing", Message: "AI 正在拆解需求功能点…"})
@@ -185,12 +284,18 @@ func (s *AnalyzeService) runClassic(
 	drafts := parseDrafts(raw)
 	if drafts == nil {
 		if streamErr != nil {
+			if ctx.Err() != nil {
+				return s.checkpoint(fileName, text, now, llmCtx)
+			}
 			return nil, fmt.Errorf("LLM 流式分析失败: %w", streamErr)
 		}
 		// 流式输出解析失败：同一提示词回退非流式一次
 		onProgress(AnalyzeProgress{Stage: "analyzing", Message: "流式输出解析失败，正在回退非流式调用…"})
 		fallback, err := s.llm.Complete(ctx, llmCtx)
 		if err != nil {
+			if ctx.Err() != nil {
+				return s.checkpoint(fileName, text, now, llmCtx)
+			}
 			return nil, fmt.Errorf("LLM 分析失败: %w", err)
 		}
 		raw = fallback.Text()
@@ -204,47 +309,49 @@ func (s *AnalyzeService) runClassic(
 		onProgress(AnalyzeProgress{Stage: "analyzing", Message: fmt.Sprintf("流式中断，已从部分输出恢复 %d 个工作项", len(drafts))})
 	}
 
-	return s.persistResult(ctx, fileName, text, drafts, now, llmCtx)
+	return s.finalize(fileName, text, drafts, now, llmCtx)
 }
 
-// persistResult 白名单归一化 → 原文存档 → 记录（含会话序列化）与明细落库。
-func (s *AnalyzeService) persistResult(
-	ctx context.Context,
-	fileName, text string,
-	drafts []any,
-	now time.Time,
-	llmCtx *port.Context,
-) (*AnalyzeResult, error) {
-	items := make([]model.ImportRecordItem, len(drafts))
-	for i, d := range logic.NormalizeDrafts(drafts, now) {
-		items[i] = model.ImportRecordItem{DraftItem: d, Status: model.ItemStatusPending}
-	}
-
-	// 原文存档 + 记录落库
-	sourcePath, err := s.saveDemand(fileName, text)
+// checkpoint 暂停检查点产出：序列化已积累会话（续跑载体），不解析草稿。
+func (s *AnalyzeService) checkpoint(fileName, text string, now time.Time, llmCtx *port.Context) (*AnalyzeOutcome, error) {
+	out, err := s.finalize(fileName, text, nil, now, llmCtx)
 	if err != nil {
 		return nil, err
 	}
-	rec := &model.ImportRecord{
-		FileName:         fileName,
-		OriginalFilePath: sourcePath,
-		Status:           model.RecordStatusAnalyzed,
-		ItemsCount:       len(items),
+	return out, ErrTaskPaused
+}
+
+// finalize 白名单归一化 → 原文存档 → 组装产出（不落库；由 TaskManager 持久化）。
+func (s *AnalyzeService) finalize(fileName, text string, drafts []any, now time.Time, llmCtx *port.Context) (*AnalyzeOutcome, error) {
+	items := make([]model.TaskItem, len(drafts))
+	for i, d := range logic.NormalizeDrafts(drafts, now) {
+		items[i] = model.TaskItem{DraftItem: d, Status: model.ItemStatusPending}
 	}
-	// 会话序列化（Context 即会话）：refine 微调与换模型续跑的统一载体
+
+	// 原文存档只在成功产出时落盘（检查点不写，避免暂停产生孤儿文件）
+	sourcePath := ""
+	if len(drafts) > 0 {
+		sp, err := s.saveDemand(fileName, text)
+		if err != nil {
+			return nil, err
+		}
+		sourcePath = sp
+	}
+
+	// 会话序列化（Context 即会话）：暂停续跑与 refine 微调的统一载体
+	out := &AnalyzeOutcome{Items: items, SourcePath: sourcePath}
 	if sessionJSON, err := json.Marshal(llmCtx); err == nil {
-		rec.AgentContext = string(sessionJSON)
+		out.AgentContext = string(sessionJSON)
 	}
-	if err := s.records.CreateRecord(ctx, rec); err != nil {
-		return nil, err
+	return out, nil
+}
+
+// done 成功收尾的统一进度上报。
+func (s *AnalyzeService) done(out *AnalyzeOutcome, err error, onProgress func(AnalyzeProgress)) (*AnalyzeOutcome, error) {
+	if err == nil && out != nil {
+		onProgress(AnalyzeProgress{Stage: "done", Message: fmt.Sprintf("分析完成，共 %d 个工作项", len(out.Items))})
 	}
-	for i := range items {
-		items[i].RecordID = rec.ID
-	}
-	if err := s.records.ReplaceRecordItems(ctx, rec.ID, items); err != nil {
-		return nil, err
-	}
-	return &AnalyzeResult{Record: rec, Items: items}, nil
+	return out, err
 }
 
 /* ---- 私有 ---- */

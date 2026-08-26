@@ -23,16 +23,15 @@ check "port 不依赖 infra/app"         internal/port  'infra|app'
 # domain 零内部依赖
 check "domain 不依赖任何内部包"       internal/domain '.*internal'
 # 入站适配只准进业务用例层（不摸仓储/三方客户端/基建/端口/领域）
-check "httpgin 只依赖 app" internal/infra/httpgin 'infra/(repository|llm|embedding|pingcode|parser|config|database|crypto)|port|domain'
+check "httpgin 只依赖 app" internal/infra/httpgin 'infra/(repository|llm|embedding|parser|config|database|crypto)|port|domain'
 # 出站实现只准依赖 port/domain，不得反向触达业务用例
 check "仓储不依赖 app"                internal/infra/repository 'app'
 check "llm 不依赖 app"                internal/infra/llm        'app'
 check "embedding 不依赖 app"          internal/infra/embedding  'app'
-check "pingcode 不依赖 app"           internal/infra/pingcode   'app'
 check "parser 不依赖 app"             internal/infra/parser     'app'
 # 基建不感知业务
-check "config 不依赖内部包"           internal/infra/config     '.*internal/(app|port|domain|infra/(repository|llm|embedding|pingcode|parser|httpgin))'
-check "database 不依赖内部包"         internal/infra/database   '.*internal/(app|port|domain|infra/(repository|llm|embedding|pingcode|parser|httpgin))'
+check "config 不依赖内部包"           internal/infra/config     '.*internal/(app|port|domain|infra/(repository|llm|embedding|parser|httpgin))'
+check "database 不依赖内部包"         internal/infra/database   '.*internal/(app|port|domain|infra/(repository|llm|embedding|parser|httpgin))'
 check "log 不依赖内部包"              internal/infra/log        '.*internal/(app|port|domain)'
 
 # domain 零三方依赖（仅标准库）

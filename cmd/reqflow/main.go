@@ -24,7 +24,6 @@ import (
 	"reqflow/internal/infra/httpgin"
 	"reqflow/internal/infra/llm"
 	"reqflow/internal/infra/parser"
-	"reqflow/internal/infra/pingcode"
 	"reqflow/internal/infra/repository"
 )
 
@@ -87,11 +86,6 @@ func main() {
 	}
 
 	/* ---- infra 实现 ---- */
-	pcClient := pingcode.New(pingcode.Options{
-		Host:         cfg.PingCode.Host,
-		ClientID:     cfg.PingCode.ClientID,
-		ClientSecret: cfg.PingCode.ClientSecret,
-	})
 	llmClient := llm.New(llm.Options{
 		Provider:    cfg.LLM.Provider,
 		BaseURL:     cfg.LLM.BaseURL,
@@ -120,45 +114,37 @@ func main() {
 		},
 	})
 
-	projectRepo := repository.NewProjectRepo(db)
-	workItemRepo := repository.NewWorkItemRepo(db)
-	metaRepo := repository.NewMetaRepo(db)
-	importRepo := repository.NewImportRepo(db)
+	datasetRepo := repository.NewDatasetRepo(db)
+	taskRepo := repository.NewTaskRepo(db)
 
 	/* ---- app 用例 ---- */
-	syncSvc := app.NewSyncService(pcClient, embedClient, projectRepo, workItemRepo, metaRepo,
-		3, cfg.PingCode.SyncWorkItemBatchSize, time.Duration(cfg.PingCode.SyncBatchDelayMs)*time.Millisecond)
 	parseSvc := app.NewParseService(docParser)
-	analyzeSvc := app.NewAnalyzeService(llmClient, importRepo, cfg.Workspace.DemandDir)
+	analyzeSvc := app.NewAnalyzeService(llmClient, cfg.Workspace.DemandDir)
 	if cfg.LLM.AgentMode {
-		// agent 模式（HANDOVER §12）：只读工具接入 agent.Loop，分析从单发提取
-		// 升级为「分析 → 自主查证 → 终稿」；导入仍走人工确认的既有流程
-		analyzeSvc.EnableAgentMode(tools.Build(tools.Deps{
-			Projects: projectRepo, WorkItems: workItemRepo, Meta: metaRepo, Platform: pcClient,
-		}), 0)
-		logger.Info("agent 模式已启用", "tools", "search_projects/search_work_items/get_work_item_types/get_project_members/list_recent_work_items")
+		// agent 模式：只读工具（需求数据集查重/语料/数据集格局）接入 agent.Loop，
+		// 分析升级为「分析 → 自主查证 → 终稿」；数据集生成仍走人工确认的任务步骤
+		analyzeSvc.EnableAgentMode(tools.Build(tools.Deps{Datasets: datasetRepo}), 0)
+		logger.Info("agent 模式已启用", "tools", "search_requirements/list_recent_requirements/search_datasets")
 	}
-	matchSvc := app.NewMatchService(projectRepo, workItemRepo, embedClient,
-		cfg.Match.ProjectTopN, cfg.Match.DuplicateThreshold)
-	importSvc := app.NewImportService(pcClient, metaRepo, importRepo, projectRepo,
-		cfg.PingCode.WorkloadUnit, cfg.PingCode.ImportConcurrency)
-	recordSvc := app.NewRecordService(importRepo)
-	browseSvc := app.NewBrowseService(projectRepo, workItemRepo)
-	overviewSvc := app.NewOverviewService(projectRepo, workItemRepo, importRepo)
+	matchSvc := app.NewMatchService(datasetRepo, embedClient, cfg.Match.DuplicateThreshold)
+	datasetWriter := app.NewDatasetWriter(embedClient, datasetRepo, cfg.Embedding.BatchSize)
+	overviewSvc := app.NewOverviewService(datasetRepo, taskRepo)
+	taskMgr := app.NewTaskManager(taskRepo, parseSvc, analyzeSvc, datasetRepo, datasetWriter)
+	// 服务重启恢复：把中断在 running 的任务/步骤标为 paused（用户手动继续）
+	if err := taskMgr.Recover(context.Background()); err != nil {
+		logger.Warn("任务恢复失败", "err", err)
+	}
 
 	var settingsView app.SettingsView
 	settingsView.WorkspaceName = cfg.Workspace.Name
 	settingsView.LLM.BaseURL, settingsView.LLM.Model, settingsView.LLM.Configured = cfg.LLM.BaseURL, cfg.LLM.Model, cfg.LLMReady()
 	settingsView.Embedding.BaseURL, settingsView.Embedding.Model, settingsView.Embedding.Configured = cfg.Embedding.BaseURL, cfg.Embedding.Model, cfg.EmbeddingReady()
-	settingsView.PingCode.Host, settingsView.PingCode.Configured = cfg.PingCode.Host, cfg.PingCodeReady()
 	settingsView.MinerU.Enabled, settingsView.MinerU.Configured = cfg.Parser.MinerU.Enabled, cfg.MinerUReady()
-	settingsSvc := app.NewSettingsService(settingsView, llmClient, pcClient)
+	settingsSvc := app.NewSettingsService(settingsView, llmClient)
 
 	/* ---- HTTP ---- */
 	engine := httpgin.New(httpgin.Services{
-		Sync: syncSvc, Parse: parseSvc, Analyze: analyzeSvc, Match: matchSvc,
-		Import: importSvc, Record: recordSvc, Settings: settingsSvc,
-		Overview: overviewSvc, Browse: browseSvc,
+		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
 		UploadDir: cfg.Workspace.UploadDir,
 		MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})

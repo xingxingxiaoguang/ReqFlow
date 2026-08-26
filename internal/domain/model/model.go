@@ -1,59 +1,45 @@
 // Package model 定义 ReqFlow 的领域实体与值。
-// 本包仅依赖标准库，承载同步缓存、分析草稿、导入记录三块核心状态。
+// 本包仅依赖标准库，承载数据集、分析草稿、任务三块核心状态。
 package model
 
 import "time"
 
-/* ---- 同步缓存（来自协作平台） ---- */
+/* ---- 数据集（任务产出的结果集，任务间衔接的载体） ---- */
 
-// Project 已同步的平台项目。
-type Project struct {
-	ID              string
-	Name            string
-	Description     string
-	RemoteUpdatedAt string // 平台侧最后更新时间原样字符串，增量比对用
-	IsArchived      bool
+// Dataset 结果集：任务（如需求导入）产出的结构化数据集合，
+// 也是后续任务（如 bug 分析）的输入底料——任务 + 数据驱动的业务闭环。
+type Dataset struct {
+	ID           string
+	Type         string // requirement | bug | …
+	Name         string
+	SourceTaskID string // 产生该数据集的任务（可选）
+	Status       string // ready | building（写入中，未发布）
+	ItemCount    int
+	CreatedAt    time.Time
 }
 
-// WorkItem 已同步的平台工作项（需求语料库，也是 bug 匹配的底料）。
-type WorkItem struct {
-	ID              string
-	ProjectID       string
-	Identifier      string // 平台编号，如 WI-123
-	Title           string
-	Description     string
-	Kind            string // 类型 group：story/task/bug…
-	TypeID          string
-	StateID         string
-	RemoteUpdatedAt string
-	IsArchived      bool
-}
-
-/* ---- 平台元数据（名称 → UUID 映射） ---- */
-
-type MetaType struct {
+// DatasetItem 数据集条目（fields 为类型化字段的 JSON 文本，
+// 需求集为草稿形状 title/description/priority/estimated_hours/…）。
+type DatasetItem struct {
 	ID        string
-	ProjectID string
-	Name      string
-	Group     string
+	DatasetID string
+	Fields    string // JSON 文本
+	CreatedAt time.Time
 }
 
-type MetaState struct {
-	ID            string
-	ProjectID     string
-	WorkItemTypeID string
-	Name          string
-	Type          string // pending | doing | done
-	Color         string
-}
+// 数据集类型。
+const (
+	DatasetTypeRequirement = "requirement"
+	DatasetTypeBug         = "bug"
+)
 
-type MetaPriority struct {
-	ID        string
-	ProjectID string
-	Name      string
-}
+// 数据集状态。
+const (
+	DatasetStatusReady    = "ready"
+	DatasetStatusBuilding = "building"
+)
 
-/* ---- 分析草稿与导入记录 ---- */
+/* ---- 分析草稿与任务 ---- */
 
 // DraftItem LLM 分析产出的工作项草稿（导入前可被用户编辑）。
 type DraftItem struct {
@@ -71,43 +57,116 @@ type DraftItem struct {
 	SolutionSuggestion string `json:"solution_suggestion"`
 }
 
-// ImportRecord 一轮「文档 → 分析 → 导入」的记录。
-type ImportRecord struct {
+// Task 一轮长程流程（需求导入/bug…）的生命周期载体。
+// 状态机：pending → running → awaiting(人工门) | paused → running → succeeded | failed（终态）。
+type Task struct {
 	ID                string
-	FileName          string
-	OriginalFilePath  string
+	Type              string // requirement_import | bug_*（第二波）
+	Title             string
 	Status            string
+	CurrentStep       int // 当前步骤序号（0=未开始；与 TaskStep.Seq 对应）
+	Workflow          string // 工作流定义快照（JSON 文本：步骤链 + 依赖声明，创建时从注册表写入）
+	Input             string // JSON 文本：文件信息/解析文本/附加要求
+	Output            string // JSON 文本：统计/数据集引用等
+	// AgentContext 分析会话的 JSON 序列化（port.Context：系统提示 + 消息序列 + 工具表）。
+	// 暂停时落库、继续时回放——换模型续跑与 refine 微调的统一载体；空 = 未记录。
+	AgentContext      string
 	ItemsCount        int
-	TargetProjectID   string
-	TargetProjectName string
 	ImportedCount     int
 	FailedCount       int
-	ErrorMessage      string
-	// AgentContext 分析会话的 JSON 序列化（port.Context：系统提示 + 消息序列 + 工具表）。
-	// 单发与 agent 模式均落库，是 refine 微调与换模型续跑的统一载体；空 = 未记录。
-	AgentContext string
-	CreatedAt    time.Time
-	UpdatedAt    time.Time
+	TargetProjectID   string
+	TargetProjectName string
+	// OutputDatasetID 本任务产出的数据集（如需求导入 → 需求数据集）。
+	OutputDatasetID string
+	// InputDatasetID 本任务消费的数据集（如 bug 分析 → 需求数据集，关联匹配底料）。
+	InputDatasetID string
+	ErrorMessage   string
+	CreatedAt         time.Time
+	UpdatedAt         time.Time
+	StartedAt         time.Time // 零值 = 未开始
+	FinishedAt        time.Time // 零值 = 未终态
 }
 
-// ImportRecordItem 导入明细（与 DraftItem 一一对应，含导入结果）。
-type ImportRecordItem struct {
-	ID                  string
-	RecordID            string
+// TaskStep 任务步骤（执行轨迹，逐条落库供详情页时间线与重放）。
+type TaskStep struct {
+	ID        string
+	TaskID    string
+	Seq       int
+	Name      string
+	Status    string // pending | running | succeeded | failed | awaiting
+	Detail    string // 最新进度消息
+	Data      string // JSON 文本：工具轨迹/导入汇总等
+	StartedAt time.Time
+	EndedAt   time.Time
+}
+
+// TaskItem 任务明细草稿（AI 分析产物，生成数据集前的编辑缓冲）。
+type TaskItem struct {
+	ID           string
+	TaskID       string
 	DraftItem
-	PingCodeID         string
-	PingCodeIdentifier string
-	Status             string // pending | success | failed
-	ErrorMessage       string
+	Status       string // pending | success | failed
+	ErrorMessage string
 }
 
-// 导入记录状态机。
+// 任务类型。
 const (
-	RecordStatusAnalyzed        = "analyzed"
-	RecordStatusImporting       = "importing"
-	RecordStatusSuccess         = "success"
-	RecordStatusPartialSuccess  = "partial_success"
-	RecordStatusFailed          = "failed"
+	TaskTypeRequirementImport = "requirement_import"
+)
+
+/* ---- 工作流元数据（半元数据驱动：定义即数据，执行器按 StepKind 注册分发） ---- */
+
+// StepKind 步骤执行类型（执行器注册表键；human 为纯人工门，无执行器）。
+type StepKind string
+
+const (
+	StepKindParse    StepKind = "parse"    // 文档解析（DocParser）
+	StepKindHuman    StepKind = "human"    // 人工确认门（无执行器，等待人工操作）
+	StepKindAnalyze  StepKind = "analyze"  // AI agent 分析（agent loop + 任务专属工具）
+	StepKindDataset  StepKind = "dataset"  // 生成数据集（向量化写入，任务产出）
+)
+
+// StepDependency 步骤依赖声明（元数据展示用：步骤依赖什么数据与工具）。
+type StepDependency struct {
+	Data string `json:"data"` // 数据依赖：task.input 字段 / 前序步骤产物（file/parsed_text/items/project…）
+	Tool string `json:"tool"` // 工具依赖：doc_parser / human / agent_loop(工具清单) / dataset_writer / embedder…
+}
+
+// WorkflowStep 工作流步骤定义（元数据）。
+type WorkflowStep struct {
+	Seq  int              `json:"seq"`
+	Name string           `json:"name"`
+	Kind StepKind         `json:"kind"`
+	Deps []StepDependency `json:"deps"`
+}
+
+// Workflow 任务类型的工作流定义。创建任务时快照进 tasks.workflow（任务自描述，
+// 不受定义演进影响）；执行引擎按 Step.Kind 查找注册的执行器。
+type Workflow struct {
+	Type  string         `json:"type"`
+	Name  string         `json:"name"`
+	Desc  string         `json:"desc"`
+	Steps []WorkflowStep `json:"steps"`
+}
+
+// 任务状态机。
+const (
+	TaskStatusPending   = "pending"
+	TaskStatusRunning   = "running"
+	TaskStatusAwaiting  = "awaiting" // 等待人工操作（确认门）
+	TaskStatusPaused    = "paused"   // 用户暂停 / 服务重启中断
+	TaskStatusSucceeded = "succeeded"
+	TaskStatusFailed    = "failed"
+)
+
+// 步骤状态。
+const (
+	StepStatusPending   = "pending"
+	StepStatusRunning   = "running"
+	StepStatusSucceeded = "succeeded"
+	StepStatusFailed    = "failed"
+	StepStatusAwaiting  = "awaiting"
+	StepStatusPaused    = "paused"
 )
 
 // 明细条目状态。

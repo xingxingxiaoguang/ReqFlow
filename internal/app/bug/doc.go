@@ -17,5 +17,5 @@
 //   3. ConfirmMatch: 人工确认/否决候选关联（human_decision）
 //   4. Prioritize:   批量 LLM 定级 p0(阻塞性)/p1(核心功能性)/p2(次要功能性)/p3(边缘性趋近无效)
 //   5. Sync:         确认关联的 bug 以 type_id=bug 建到平台，关联关系写入描述
-//                    （PingCode 6.13.5 无关联 API：描述内标注「关联需求: <identifier> <标题>」，parent_id 备选）
+//                    （关联需求写入字段「关联需求: <标题>」，以需求数据集为匹配底料）
 package bug

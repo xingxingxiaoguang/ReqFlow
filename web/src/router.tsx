@@ -1,17 +1,14 @@
 import { createBrowserRouter, Navigate } from 'react-router-dom'
 import AppLayout from './layouts/AppLayout'
 import Overview from './pages/Overview'
-import ImportLayout from './pages/import/ImportLayout'
-import Upload from './pages/import/Upload'
-import Review from './pages/import/Review'
-import Analyzing from './pages/import/Analyzing'
-import Result from './pages/import/Result'
+import Tasks from './pages/Tasks'
+import TaskNew from './pages/tasks/TaskNew'
+import TaskDetail from './pages/tasks/TaskDetail'
 import Bugs from './pages/Bugs'
-import Sync from './pages/Sync'
-import Records from './pages/Records'
+import Datasets from './pages/Datasets'
 import Settings from './pages/Settings'
 
-/** URL 驱动的向导阶段：刷新/回退/分享不丢状态 */
+/** 任务中心路由：列表 / 新建 / 详情（详情页承载全部阶段工作区） */
 export const router = createBrowserRouter([
   {
     path: '/',
@@ -19,20 +16,11 @@ export const router = createBrowserRouter([
     children: [
       { index: true, element: <Navigate to="/overview" replace /> },
       { path: 'overview', element: <Overview /> },
-      {
-        path: 'import',
-        element: <ImportLayout />,
-        children: [
-          { index: true, element: <Navigate to="/import/upload" replace /> },
-          { path: 'upload', element: <Upload /> },
-          { path: 'review', element: <Review /> },
-          { path: 'analyzing', element: <Analyzing /> },
-          { path: 'result', element: <Result /> },
-        ],
-      },
+      { path: 'tasks', element: <Tasks /> },
+      { path: 'tasks/new', element: <TaskNew /> },
+      { path: 'tasks/:id', element: <TaskDetail /> },
       { path: 'bugs', element: <Bugs /> },
-      { path: 'sync', element: <Sync /> },
-      { path: 'records', element: <Records /> },
+      { path: 'datasets', element: <Datasets /> },
       { path: 'settings', element: <Settings /> },
     ],
   },

@@ -1,5 +1,5 @@
 import { Card, Descriptions, Button, Space, Tag, Typography, App } from 'antd'
-import { ApiOutlined, CloudServerOutlined, ExperimentOutlined } from '@ant-design/icons'
+import { ApiOutlined, ExperimentOutlined } from '@ant-design/icons'
 import { useQuery } from '@tanstack/react-query'
 import { api } from '../api/client'
 import type { SettingsView } from '../api/types'
@@ -11,15 +11,13 @@ export default function Settings() {
   const { message } = App.useApp()
   const { data, refetch } = useQuery({ queryKey: ['settings'], queryFn: () => api.get<SettingsView>('/api/settings') })
 
-  const test = async (kind: 'llm' | 'pingcode') => {
-    const key = ['test', kind]
+  const test = async (kind: 'llm') => {
     try {
       await api.post(`/api/settings/test-${kind}`)
-      message.success(kind === 'llm' ? 'LLM 连接正常' : 'PingCode 连接正常')
+      message.success('LLM 连接正常')
     } catch (e) {
       message.error((e as Error).message)
     }
-    void key
     refetch()
   }
 
@@ -44,14 +42,7 @@ export default function Settings() {
         <Descriptions.Item label="状态">{data.embedding.configured ? <Tag color="green">已配置</Tag> : <Tag color="default">未启用 · 仅精确匹配</Tag>}</Descriptions.Item>
         <Descriptions.Item label="Base URL">{data.embedding.baseUrl}</Descriptions.Item>
         <Descriptions.Item label="模型">{data.embedding.model}</Descriptions.Item>
-        <Descriptions.Item label="说明">未配置不影响主流程，语义查重与项目推荐自动降级</Descriptions.Item>
-      </Descriptions>
-
-      <Descriptions title="PingCode 连接" bordered size="small" column={2} style={{ marginTop: 24 }}
-        extra={<Button size="small" icon={<CloudServerOutlined />} onClick={() => test('pingcode')}>测试连接</Button>}>
-        <Descriptions.Item label="状态">{data.pingcode.configured ? <Tag color="green">已配置</Tag> : <Tag color="orange">未配置</Tag>}</Descriptions.Item>
-        <Descriptions.Item label="授权方式">企业授权（client_credentials）</Descriptions.Item>
-        <Descriptions.Item label="Host" span={2}>{data.pingcode.host}</Descriptions.Item>
+        <Descriptions.Item label="说明">未配置不影响主流程，语义查重与 agent 查证自动降级为仅精确匹配</Descriptions.Item>
       </Descriptions>
 
       <Descriptions title="PDF 云端解析（MinerU）" bordered size="small" column={2} style={{ marginTop: 24 }}>

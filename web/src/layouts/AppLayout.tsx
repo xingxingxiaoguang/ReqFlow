@@ -1,8 +1,8 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { ProLayout } from '@ant-design/pro-components'
 import {
-  DashboardOutlined, FileAddOutlined, BugOutlined,
-  CloudSyncOutlined, HistoryOutlined, SettingOutlined, ThunderboltFilled,
+  DashboardOutlined, PlusCircleOutlined, FileAddOutlined, BugOutlined,
+  DatabaseOutlined, UnorderedListOutlined, SettingOutlined, ThunderboltFilled,
 } from '@ant-design/icons'
 import type React from 'react'
 import { Badge, Tooltip, Typography } from 'antd'
@@ -14,10 +14,17 @@ const menu = {
   path: '/',
   routes: [
     { path: '/overview', name: '概览', icon: <DashboardOutlined /> },
-    { path: '/import', name: '需求导入', icon: <FileAddOutlined /> },
-    { path: '/bugs', name: 'Bug 处理', icon: <BugOutlined /> },
-    { path: '/sync', name: '数据同步', icon: <CloudSyncOutlined /> },
-    { path: '/records', name: '导入记录', icon: <HistoryOutlined /> },
+    {
+      path: '/tasks/new',
+      name: '开始任务',
+      icon: <PlusCircleOutlined />,
+      routes: [
+        { path: '/tasks/new', name: '需求导入', icon: <FileAddOutlined /> },
+        { path: '/bugs', name: 'Bug 分析', icon: <BugOutlined /> },
+      ],
+    },
+    { path: '/tasks', name: '任务管理', icon: <UnorderedListOutlined /> },
+    { path: '/datasets', name: '数据集', icon: <DatabaseOutlined /> },
     { path: '/settings', name: '设置', icon: <SettingOutlined /> },
   ],
 }
@@ -32,8 +39,8 @@ export default function AppLayout() {
   })
 
   const okCount =
-    settings ? [settings.llm.configured, settings.pingcode.configured, settings.embedding.configured].filter(Boolean).length : 0
-  const allOk = okCount === 3
+    settings ? [settings.llm.configured, settings.embedding.configured].filter(Boolean).length : 0
+  const allOk = okCount === 2
 
   return (
     <ProLayout
