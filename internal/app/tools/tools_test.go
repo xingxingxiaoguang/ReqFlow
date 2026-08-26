@@ -260,7 +260,7 @@ func TestDraftSinkReplayFrom(t *testing.T) {
 			`{"project_name":"Q","title":"T2"}`)),
 		toolCallAsst("c4", "write_work_items", writeArgs(`{"title":""}`)), // 非法：重放同样跳过
 	}
-	sink.ReplayFrom(msgs)
+	sink.ReplayFrom(msgs, WriteSpec{}) // 零值 → requirement 默认绑定
 
 	if sink.Len() != 2 {
 		t.Fatalf("重放条数 = %d", sink.Len())

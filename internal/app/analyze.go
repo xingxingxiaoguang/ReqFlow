@@ -60,6 +60,7 @@ type AnalyzeOutcome struct {
 // AnalyzeInput 一次分析的完整入参（TaskManager 从任务状态组装）。
 type AnalyzeInput struct {
 	TaskID   string
+	TaskType string // 任务类型 → AnalyzeProfileOf 装配（提示词/工具/校验）；空回退 requirement
 	FileName string
 	Text     string           // 待分析全文（agent 模式下原文不进上下文，经工具阅读）
 	Special  string           // 用户附加要求
@@ -153,10 +154,15 @@ func (s *AnalyzeService) Resume(
 
 	now := time.Now()
 
+	profile, err := profileFor(in.TaskType)
+	if err != nil {
+		return nil, err
+	}
+
 	if s.agentCfg != nil {
 		sink := tools.NewDraftSink()
-		sink.ReplayFrom(cc.Messages) // 会话即事实源：重放全部写入调用重建草稿状态
-		toolset := buildToolset(in, sink)
+		sink.ReplayFrom(cc.Messages, profile.Write) // 会话即事实源：重放全部写入调用重建草稿状态
+		toolset := buildToolset(in, sink, profile)
 		onProgress(AnalyzeProgress{Stage: "analyzing", Message: "AI 正在继续拆解需求功能点…"})
 		loop := agent.New(s.llm, toolset, *s.agentCfg)
 		finalCtx, runErr := loop.Run(ctx, cc, tokenMapper(onToken), toolEventMapper(onTool))
@@ -215,10 +221,14 @@ func (s *AnalyzeService) runAgent(
 	onToken func(AnalyzeDelta),
 	onTool func(AnalyzeToolEvent),
 ) (*AnalyzeOutcome, bool, error) {
+	profile, err := profileFor(in.TaskType)
+	if err != nil {
+		return nil, true, err
+	}
 	sink := tools.NewDraftSink()
-	toolset := buildToolset(in, sink)
+	toolset := buildToolset(in, sink, profile)
 	cc := &port.Context{
-		SystemPrompt: renderAgentSystem(now, in.Special, toolset),
+		SystemPrompt: renderAgentSystem(now, in.Special, toolset, profile),
 		Messages:     []port.Message{port.NewUserMessage(renderDocManifest(tools.DocSource{FileName: in.FileName, Text: in.Text}))},
 	}
 
@@ -228,13 +238,15 @@ func (s *AnalyzeService) runAgent(
 	return s.sinkTail(ctx, finalCtx, runErr, sink, in, now, onProgress)
 }
 
-// buildToolset 构造本次运行的工具集（文档/草稿 sink/交互桥均按运行注入）。
-func buildToolset(in AnalyzeInput, sink *tools.DraftSink) []agent.Tool {
+// buildToolset 构造本次运行的工具集（文档/草稿 sink/交互桥按运行注入；
+// 写入工具按 profile 的产出 schema 绑定）。
+func buildToolset(in AnalyzeInput, sink *tools.DraftSink, profile AnalyzeProfile) []agent.Tool {
 	return tools.BuildForRun(tools.RunDeps{
 		Doc:    tools.DocSource{FileName: in.FileName, Text: in.Text},
 		Sink:   sink,
 		TaskID: in.TaskID,
 		Ask:    in.Dialog,
+		Write:  profile.Write,
 	})
 }
 
@@ -283,8 +295,12 @@ func (s *AnalyzeService) runClassic(
 	onProgress func(AnalyzeProgress),
 	onToken func(AnalyzeDelta),
 ) (*AnalyzeOutcome, error) {
+	profile, err := profileFor(in.TaskType)
+	if err != nil {
+		return nil, err
+	}
 	// pi Context：单发提取 = 一条 user 消息；会话同样产出（续跑/refine 的载体）
-	llmCtx := &port.Context{Messages: []port.Message{port.NewUserMessage(renderAnalyzePrompt(in.Text, now, in.Special))}}
+	llmCtx := &port.Context{Messages: []port.Message{port.NewUserMessage(renderAnalyzePrompt(in.Text, now, in.Special, profile))}}
 
 	onProgress(AnalyzeProgress{Stage: "analyzing", Message: "AI 正在拆解需求功能点…"})
 	msg, streamErr := s.llm.Stream(ctx, llmCtx, tokenMapper(onToken))

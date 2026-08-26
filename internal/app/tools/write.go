@@ -16,9 +16,33 @@ import (
 
 /* ---- DraftSink：草稿累积器 ---- */
 
+// WriteSpec 写入工具与任务产出 schema 的绑定（按任务类型的 profile 实例化）。
+// 校验（ValidateValues）与归一化都由此驱动——写入契约与 schema 同源。
+type WriteSpec struct {
+	Name      string                                          // 工具名（会话重放识别）
+	Schema    model.DatasetSchema                             // 产出 schema（校验 + 提示词渲染）
+	Normalize func(map[string]any, time.Time) model.DraftItem // schema 校验后的草稿归一化
+}
+
+// DefaultWriteSpec requirement 默认绑定（RunDeps/ReplayFrom 零值兜底）。
+func DefaultWriteSpec() WriteSpec {
+	return WriteSpec{
+		Name:      "write_work_items",
+		Schema:    model.RequirementSchema(),
+		Normalize: logic.NormalizeDraft,
+	}
+}
+
+func (w WriteSpec) orDefault() WriteSpec {
+	if w.Name == "" || w.Schema.Type == "" || w.Normalize == nil {
+		return DefaultWriteSpec()
+	}
+	return w
+}
+
 // DraftSink write_work_items 的写入目标（内存态，不落任何持久存储）。
-// key = 归一化 title + 归一化 project_name（对齐数据集 ItemKey 语义：同组同名视为同一条），
-// 同 key 覆盖早前写入（模型可修订），首插顺序保留。会话重放可完整重建（ReplayFrom）。
+// key = 主键字段归一化拼接（对齐数据集 ItemKey 语义），同 key 覆盖早前写入
+// （模型可修订），首插顺序保留。会话重放可完整重建（ReplayFrom）。
 type DraftSink struct {
 	order []string
 	items map[string]model.DraftItem
@@ -28,6 +52,8 @@ func NewDraftSink() *DraftSink {
 	return &DraftSink{items: map[string]model.DraftItem{}}
 }
 
+// draftKey 归一化 title + project_name（与数据集 ItemKey 语义对齐：同组同名视为
+// 同一条）。草稿字段袋化后改为由 schema 的 InKey 字段驱动，此处保持 requirement 管线。
 func draftKey(d model.DraftItem) string {
 	return logic.NormalizeForExactMatch(d.Title) + "\x1f" + logic.NormalizeForExactMatch(d.ProjectName)
 }
@@ -64,18 +90,20 @@ func (s *DraftSink) Items() []model.DraftItem {
 
 func (s *DraftSink) Len() int { return len(s.order) }
 
-// ReplayFrom 按发生顺序重放会话中全部 write_work_items 调用，重建草稿状态。
+// ReplayFrom 按发生顺序重放会话中全部写入调用，重建草稿状态。
 // 会话即事实源：assistant 消息的 toolCall 块携带完整参数，重放确定性成立。
-func (s *DraftSink) ReplayFrom(msgs []port.Message) {
+// w 为该任务的写入绑定（工具名/schema/归一化，与执行时同一 profile）。
+func (s *DraftSink) ReplayFrom(msgs []port.Message, w WriteSpec) {
+	w = w.orDefault()
 	for _, m := range msgs {
 		if m.Role != port.RoleAssistant {
 			continue
 		}
 		for _, b := range m.Content {
-			if b.Type != port.BlockToolCall || b.ToolCall == nil || b.ToolCall.Name != "write_work_items" {
+			if b.Type != port.BlockToolCall || b.ToolCall == nil || b.ToolCall.Name != w.Name {
 				continue
 			}
-			s.applyArgs(b.ToolCall.Arguments, time.Now())
+			s.applyArgs(b.ToolCall.Arguments, w, time.Now())
 		}
 	}
 }
@@ -83,7 +111,10 @@ func (s *DraftSink) ReplayFrom(msgs []port.Message) {
 /* ---- 写入工具 ---- */
 
 // writeWorkItemsTool 分批产出结构化草稿（本次分析的最终产出全部经此工具提交）。
-type writeWorkItemsTool struct{ sink *DraftSink }
+type writeWorkItemsTool struct {
+	sink *DraftSink
+	spec WriteSpec
+}
 
 type writeReceipt struct {
 	Accepted     int            `json:"accepted"`
@@ -98,11 +129,12 @@ type rejectDetail struct {
 }
 
 func (t *writeWorkItemsTool) Spec() port.ToolSpec {
+	schema := t.spec.Schema
 	return port.ToolSpec{
-		Name:        "write_work_items",
-		Description: "分批写入工作项草稿（本次分析的最终产出全部经此工具提交，不要在最终回复里输出 JSON）。items 为草稿对象数组，字段遵循系统提示的输出要求；同一批可包含多条。回执报告每条的接受/修订/拒绝情况，被拒条目修正后重新提交即可（同项目同名的草稿再次写入会覆盖早前版本）。",
+		Name:        t.spec.Name,
+		Description: "分批写入工作项草稿（本次分析的最终产出全部经此工具提交，不要在最终回复里输出 JSON）。items 为草稿对象数组，字段遵循系统提示的草稿字段规范（产出 schema：" + schema.Label + "）；同一批可包含多条。回执报告每条的接受/修订/拒绝情况，被拒条目修正后重新提交即可（主键字段相同的草稿再次写入会覆盖早前版本）。",
 		Parameters: json.RawMessage(`{"type":"object","properties":{` +
-			`"items":{"type":"array","description":"工作项草稿数组（字段见系统提示的输出要求）","items":{"type":"object"}},` +
+			`"items":{"type":"array","description":"工作项草稿数组（字段见系统提示的草稿字段规范）","items":{"type":"object"}},` +
 			`"replace_all":{"type":"boolean","description":"true 时先清空已写入的全部草稿再写入本批（整体重写）"}` +
 			`,"required":["items"]}}`),
 	}
@@ -112,12 +144,12 @@ func (t *writeWorkItemsTool) Execute(_ context.Context, call port.ToolCall, _ fu
 	if t.sink == nil {
 		return errOutput("草稿累积器未初始化")
 	}
-	r, err := applyWriteArgs(t.sink, call.Arguments, time.Now())
+	r, err := applyWriteArgs(t.sink, call.Arguments, time.Now(), t.spec)
 	if err != nil {
 		return errOutput("%v", err)
 	}
 	isErr := len(r.Rejected) > 0 && r.Accepted+r.Updated == 0 // 全拒才算失败；部分拒绝靠回执引导修正
-	detail := fmt.Sprintf("write_work_items：新增 %d、修订 %d（累计 %d）", r.Accepted, r.Updated, r.TotalInDraft)
+	detail := fmt.Sprintf("%s：新增 %d、修订 %d（累计 %d）", t.spec.Name, r.Accepted, r.Updated, r.TotalInDraft)
 	if len(r.Rejected) > 0 {
 		detail += fmt.Sprintf("，被拒 %d", len(r.Rejected))
 	}
@@ -125,19 +157,20 @@ func (t *writeWorkItemsTool) Execute(_ context.Context, call port.ToolCall, _ fu
 }
 
 func (t *writeWorkItemsTool) PromptSnippet() string {
-	return "write_work_items：分批写入工作项草稿（本次分析的最终产出全部经此工具提交）"
+	return t.spec.Name + "：分批写入工作项草稿（本次分析的最终产出全部经此工具提交）"
 }
 
 func (t *writeWorkItemsTool) PromptGuidelines() []string {
 	return []string{
 		"边读边写：消化一批就写入一批，避免拖到最后一次性输出超长内容",
-		"回执中 rejected 的条目须修正后重新提交；同项目同名的草稿再次写入会覆盖早前版本，可用于修订",
+		"回执中 rejected 的条目须修正后重新提交；主键字段相同的草稿再次写入会覆盖早前版本，可用于修订",
 		"全部草稿写入完成后，最终回复只需简短总结（条数、项目分组、存疑点），不要再输出 JSON",
 	}
 }
 
 // applyWriteArgs 解析并应用一次写入调用（工具执行与会话重放共用）。
-func applyWriteArgs(sink *DraftSink, raw json.RawMessage, now time.Time) (*writeReceipt, error) {
+func applyWriteArgs(sink *DraftSink, raw json.RawMessage, now time.Time, w WriteSpec) (*writeReceipt, error) {
+	w = w.orDefault()
 	var args struct {
 		Items      []map[string]any `json:"items"`
 		ReplaceAll bool             `json:"replace_all"`
@@ -155,11 +188,11 @@ func applyWriteArgs(sink *DraftSink, raw json.RawMessage, now time.Time) (*write
 	}
 	r := &writeReceipt{}
 	for i, item := range args.Items {
-		if err := validateDraft(item); err != nil {
+		if err := validateDraft(item, w.Schema); err != nil {
 			r.Rejected = append(r.Rejected, rejectDetail{Index: i, Error: err.Error()})
 			continue
 		}
-		if sink.Upsert(logic.NormalizeDraft(item, now)) {
+		if sink.Upsert(w.Normalize(item, now)) {
 			r.Accepted++
 		} else {
 			r.Updated++
@@ -169,18 +202,23 @@ func applyWriteArgs(sink *DraftSink, raw json.RawMessage, now time.Time) (*write
 	return r, nil
 }
 
-func (s *DraftSink) applyArgs(raw json.RawMessage, now time.Time) {
-	_, _ = applyWriteArgs(s, raw, now) // 重放：忽略回执与参数级错误（与执行时一致地跳过）
+func (s *DraftSink) applyArgs(raw json.RawMessage, w WriteSpec, now time.Time) {
+	_, _ = applyWriteArgs(s, raw, now, w) // 重放：忽略回执与参数级错误（与执行时一致地跳过）
 }
 
-// validateDraft 写入前校验（复用数据集 schema 的必填/枚举规则，给模型即时反馈）。
-func validateDraft(item map[string]any) error {
-	if err := logic.ValidateValues(model.RequirementSchema(), item); err != nil {
+// validateDraft 写入前校验（按任务产出 schema 的必填/枚举/数值规则，给模型即时反馈）。
+func validateDraft(item map[string]any, schema model.DatasetSchema) error {
+	if err := logic.ValidateValues(schema, item); err != nil {
 		return err
 	}
-	if v, ok := item["estimated_hours"]; ok && v != nil {
-		if n, parsed := asNumber(v); !parsed || math.IsNaN(n) || math.IsInf(n, 0) || n <= 0 {
-			return fmt.Errorf("estimated_hours 必须为正数（小时）")
+	for _, f := range schema.Fields {
+		if f.Type != model.FieldNumber {
+			continue
+		}
+		if v, ok := item[f.Key]; ok && v != nil {
+			if n, parsed := asNumber(v); !parsed || math.IsNaN(n) || math.IsInf(n, 0) || n <= 0 {
+				return fmt.Errorf("%s 必须为正数", f.Label)
+			}
 		}
 	}
 	return nil

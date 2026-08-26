@@ -16,9 +16,9 @@ type SettingsView struct {
 		AgentMode  bool   `json:"agentMode"` // 分析步骤的执行模式（前端步骤标签如实展示）
 	} `json:"llm"`
 	Embedding struct {
-		BaseURL   string `json:"baseUrl"`
-		Model     string `json:"model"`
-		Configured bool  `json:"configured"`
+		BaseURL    string `json:"baseUrl"`
+		Model      string `json:"model"`
+		Configured bool   `json:"configured"`
 	} `json:"embedding"`
 	MinerU struct {
 		Enabled    bool `json:"enabled"`

@@ -6,7 +6,10 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
+	"reqflow/internal/app/tools"
+	"reqflow/internal/domain/model"
 	"reqflow/internal/port"
 )
 
@@ -321,5 +324,80 @@ func TestAnalyzeClassicPersistsSession(t *testing.T) {
 	prompt := cc.Messages[0].Text()
 	if !strings.Contains(prompt, "只输出 JSON 数组") || !strings.Contains(prompt, "用户中心需要实现登录功能") {
 		t.Fatalf("单发 prompt 形状异常: %.200s", prompt)
+	}
+}
+
+/* ---- 提示词动态装配（profile 注册表 + schema 同源渲染）---- */
+
+func TestPromptAssembledFromProfileAndSchema(t *testing.T) {
+	profile, ok := AnalyzeProfileOf(model.TaskTypeRequirementImport)
+	if !ok {
+		t.Fatal("requirement_import 应已注册 profile")
+	}
+	now := time.Now()
+
+	// 指令头：字段规范段来自 schema 渲染（字段名/枚举值域/必填标注/提取说明/时间占位）
+	head := renderAnalyzeHead(now, profile)
+	for _, want := range []string{
+		"草稿字段规范",
+		"**title** (string，必填)",
+		`**priority** (string，必须为 "High"/"Medium"/"Low" 之一)`,
+		"estimated_hours",
+		"动宾结构",                   // FieldSpec.Prompt 的提取说明
+		now.Format(time.RFC3339), // {current_time} 已填充
+	} {
+		if !strings.Contains(head, want) {
+			t.Fatalf("指令头缺 %q:\n%s", want, head)
+		}
+	}
+
+	// agent SystemPrompt：指令头 + 工具指南同源组装
+	toolset := buildToolset(analyzeInput(testDoc), tools.NewDraftSink(), profile)
+	sys := renderAgentSystem(now, "", toolset, profile)
+	if !strings.Contains(sys, "工具使用指南") || !strings.Contains(sys, "read_document") {
+		t.Fatalf("SystemPrompt = %.300s", sys)
+	}
+
+	// 单发契约：通用契约文本 + profile 富示例
+	classic := renderClassicOutputFormat(now, profile)
+	if !strings.Contains(classic, "只输出 JSON 数组") || !strings.Contains(classic, "实现用户注册功能") {
+		t.Fatalf("单发契约 = %.200s", classic)
+	}
+
+	// profile 解析：空类型回退默认；未注册类型报错
+	if _, err := profileFor(""); err != nil {
+		t.Fatalf("空类型应回退默认: %v", err)
+	}
+	if _, err := profileFor("no_such_type"); err == nil {
+		t.Fatal("未注册类型应报错")
+	}
+}
+
+func TestPromptExampleSkeletonFromSchema(t *testing.T) {
+	// 无 Example 的 profile：示例骨架从 schema 生成（必填字段占位、选填省略）
+	profile := AnalyzeProfile{
+		Role: "R\n\n{field_spec}",
+		Schema: func() model.DatasetSchema {
+			return model.DatasetSchema{Type: "demo", Fields: []model.FieldSpec{
+				{Key: "title", Label: "标题", Type: model.FieldString, Required: true},
+				{Key: "level", Label: "级别", Type: model.FieldEnum, Enum: []string{"p0", "p1"}, Required: true},
+				{Key: "hours", Label: "工时", Type: model.FieldNumber, Required: true},
+				{Key: "opt", Label: "选填", Type: model.FieldString},
+			}}
+		},
+	}
+	ex := renderClassicOutputFormat(time.Now(), profile)
+	for _, want := range []string{`"title"`, `"level": "p0"`, `"hours": 1`} {
+		if !strings.Contains(ex, want) {
+			t.Fatalf("骨架缺 %s: %s", want, ex)
+		}
+	}
+	if strings.Contains(ex, `"opt"`) {
+		t.Fatal("选填字段不应进骨架")
+	}
+	// 字段规范段同样由该 schema 渲染（提示词与写入校验同一事实源）
+	head := renderAnalyzeHead(time.Now(), profile)
+	if !strings.Contains(head, "**hours** (number") || !strings.Contains(head, "**title** (string，必填)") {
+		t.Fatalf("字段规范段 = %s", head)
 	}
 }

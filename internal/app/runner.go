@@ -436,7 +436,7 @@ func (m *TaskManager) execAnalyzeStep(workCtx, pc context.Context, task *model.T
 	var out *AnalyzeOutcome
 	var err error
 	ain := AnalyzeInput{
-		TaskID: task.ID, FileName: task.Title,
+		TaskID: task.ID, TaskType: task.Type, FileName: task.Title,
 		Text: in.ParsedText, Special: in.SpecialRequirements,
 		Dialog: m.dialogs,
 	}

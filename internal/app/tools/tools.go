@@ -46,14 +46,18 @@ type RunDeps struct {
 	Sink   *DraftSink
 	TaskID string
 	Ask    HumanAsker // nil 时 ask_human 返回不可用回执（模型按默认规则继续）
+	Write  WriteSpec  // 写入工具的 schema 绑定（零值 → requirement 默认）
 }
 
 // BuildForRun 构造分析过程工具集（顺序即注入 Context.Tools 的顺序）。
+// 写入工具按 Write 绑定的任务产出 schema 实例化——不同任务类型的字段合同
+// 由此注入，读取/检索/问人三工具对语料形态无感、各类任务通用。
 func BuildForRun(d RunDeps) []agent.Tool {
+	d.Write = d.Write.orDefault()
 	return []agent.Tool{
 		&readDocumentTool{doc: d.Doc},
 		&searchDocumentTool{doc: d.Doc},
-		&writeWorkItemsTool{sink: d.Sink},
+		&writeWorkItemsTool{sink: d.Sink, spec: d.Write},
 		&askHumanTool{taskID: d.TaskID, ask: d.Ask},
 	}
 }
