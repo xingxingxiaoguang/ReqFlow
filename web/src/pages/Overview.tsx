@@ -29,7 +29,7 @@ export default function Overview() {
   const issues: string[] = []
   if (settings) {
     if (!settings.llm.configured) issues.push('LLM 未配置 —— 需求分析不可用')
-    if (!settings.embedding.configured) issues.push('Embedding 未配置 —— 语义查重与 agent 查证降级为仅精确匹配')
+    if (!settings.embedding.configured) issues.push('Embedding 未配置 —— 语义查重与语义检索降级为仅精确匹配')
     if (!settings.mineru.configured) issues.push('MinerU 未配置 —— PDF 解析不可用')
   }
 

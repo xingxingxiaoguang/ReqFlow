@@ -47,7 +47,7 @@ export default function Settings() {
         <Descriptions.Item label="状态">{data.embedding.configured ? <Tag color="green">已配置</Tag> : <Tag color="default">未启用 · 仅精确匹配</Tag>}</Descriptions.Item>
         <Descriptions.Item label="Base URL">{data.embedding.baseUrl}</Descriptions.Item>
         <Descriptions.Item label="模型">{data.embedding.model}</Descriptions.Item>
-        <Descriptions.Item label="说明">未配置不影响主流程，语义查重与 agent 查证自动降级为仅精确匹配</Descriptions.Item>
+        <Descriptions.Item label="说明">未配置不影响主流程，语义查重与语义检索自动降级为仅精确匹配</Descriptions.Item>
       </Descriptions>
 
       <Descriptions title="PDF 云端解析（MinerU）" bordered size="small" column={2} style={{ marginTop: 24 }}>

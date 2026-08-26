@@ -274,7 +274,7 @@ export default function MatchImportPanel({
         >
           {settings && !settings.embedding.configured && (
             <Alert type="warning" showIcon style={{ marginBottom: 12 }}
-              message="Embedding 未配置：数据集照常写入，但语义查重与 agent 查证降级为仅精确匹配。" />
+              message="Embedding 未配置：数据集照常写入，但语义查重降级为仅精确匹配。" />
           )}
           {preview ? (
             <Space size={24} wrap style={{ marginBottom: 4 }}>

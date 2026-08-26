@@ -172,7 +172,7 @@ export function useTaskEvents(taskId: string | undefined): TaskStream {
   return stream
 }
 
-/** 从正文流尾部按 "title": 出现次数实时计数（对齐 PingCraft 的轻量做法） */
+/** 从正文流尾部按 "title": 出现次数实时计数（轻量做法，不解析 JSON） */
 function countTitles(answerTail: string): number {
   const m = answerTail.match(/"title"\s*:/g)
   return m ? m.length : 0
