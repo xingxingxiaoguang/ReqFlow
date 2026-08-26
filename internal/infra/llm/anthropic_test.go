@@ -16,7 +16,7 @@ import (
 func anthropicSSE(t *testing.T, frames ...[2]string) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if got := r.Header.Get("x-api-key"); got != "test-key" {
+		if got := r.Header.Get("x-api-key"); got != "your-test-key" {
 			t.Errorf("x-api-key = %q", got)
 		}
 		if got := r.Header.Get("anthropic-version"); got == "" {
@@ -32,7 +32,7 @@ func anthropicSSE(t *testing.T, frames ...[2]string) *httptest.Server {
 }
 
 func anthropicOptions(baseURL string) Options {
-	return Options{Provider: ProviderAnthropic, BaseURL: baseURL, APIKey: "test-key", Model: "claude-test", MaxTokens: 512}
+	return Options{Provider: ProviderAnthropic, BaseURL: baseURL, APIKey: "your-test-key", Model: "claude-test", MaxTokens: 512}
 }
 
 func TestAnthropicStreamFullSequence(t *testing.T) {

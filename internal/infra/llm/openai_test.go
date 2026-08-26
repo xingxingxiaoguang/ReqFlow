@@ -15,7 +15,7 @@ func testOptions(baseURL string) Options {
 	return Options{
 		Provider:    ProviderOpenAI,
 		BaseURL:     baseURL,
-		APIKey:      "test-key",
+		APIKey:      "your-test-key",
 		Model:       "test-model",
 		Temperature: 0.7,
 		MaxTokens:   1024,
