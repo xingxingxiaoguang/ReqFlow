@@ -11,23 +11,33 @@ import (
 /* ---- 表行结构（与 migrations 对齐；向量列用 pgvector 类型） ---- */
 
 type datasetRow struct {
-	ID           string    `gorm:"column:id;primaryKey"`
-	Type         string    `gorm:"column:type"`
-	Name         string    `gorm:"column:name"`
-	SourceTaskID *string   `gorm:"column:source_task_id"`
-	Status       string    `gorm:"column:status"`
-	ItemCount    int       `gorm:"column:item_count"`
-	CreatedAt    time.Time `gorm:"column:created_at"`
+	ID            string    `gorm:"column:id;primaryKey"`
+	Type          string    `gorm:"column:type"`
+	Name          string    `gorm:"column:name"`
+	Description   string    `gorm:"column:description"`
+	Tags          string    `gorm:"column:tags"` // JSON 数组文本
+	SourceTaskID  *string   `gorm:"column:source_task_id"`
+	Status        string    `gorm:"column:status"`
+	ItemCount     int       `gorm:"column:item_count"`
+	SchemaVersion int       `gorm:"column:schema_version"`
+	Extra         string    `gorm:"column:extra"` // JSON 文本
+	CreatedAt     time.Time `gorm:"column:created_at"`
+	UpdatedAt     time.Time `gorm:"column:updated_at"`
 }
 
 func (datasetRow) TableName() string { return "datasets" }
 
 type datasetItemRow struct {
-	ID        string           `gorm:"column:id;primaryKey"`
-	DatasetID string           `gorm:"column:dataset_id;index"`
-	Fields    string           `gorm:"column:fields"`
-	Embedding *pgvector.Vector `gorm:"column:embedding"`
-	CreatedAt time.Time        `gorm:"column:created_at"`
+	ID           string           `gorm:"column:id;primaryKey"`
+	DatasetID    string           `gorm:"column:dataset_id;index"`
+	Fields       string           `gorm:"column:fields"`
+	ItemKey      string           `gorm:"column:item_key"`
+	Fingerprint  string           `gorm:"column:fingerprint"`
+	Metadata     string           `gorm:"column:metadata"` // JSON 文本
+	SourceTaskID *string          `gorm:"column:source_task_id"`
+	Embedding    *pgvector.Vector `gorm:"column:embedding"`
+	CreatedAt    time.Time        `gorm:"column:created_at"`
+	UpdatedAt    time.Time        `gorm:"column:updated_at"`
 }
 
 func (datasetItemRow) TableName() string { return "dataset_items" }

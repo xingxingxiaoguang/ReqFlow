@@ -34,8 +34,10 @@ check "config 不依赖内部包"           internal/infra/config     '.*interna
 check "database 不依赖内部包"         internal/infra/database   '.*internal/(app|port|domain|infra/(repository|llm|embedding|parser|httpgin))'
 check "log 不依赖内部包"              internal/infra/log        '.*internal/(app|port|domain)'
 
-# domain 零三方依赖（仅标准库）
-dom_deps=$(go list -deps ./internal/domain/... | grep -v '^reqflow/internal/domain' | grep '\.' | grep -v '^internal/' || true)
+# domain 零三方依赖（仅标准库）。以 `go list std` 全集做差集判定：
+# Go 1.25 起标准库自带版本化内部包（如 crypto/internal/entropy/v1.0.0），
+# 按路径含点判三方会误伤，差集是精确解。
+dom_deps=$(go list -deps ./internal/domain/... | grep -v '^reqflow/internal/domain' | sort -u | comm -23 - <(go list std | sort -u) || true)
 if [ -n "$dom_deps" ]; then
   echo "✗ 架构违规：domain 引入三方依赖：$dom_deps"
   fail=1

@@ -20,3 +20,6 @@ web/dist/
 .idea/
 .vscode/
 .DS_Store
+
+# CodeGraph 本地索引
+.codegraph/

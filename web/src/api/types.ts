@@ -52,6 +52,51 @@ export type TaskType = 'requirement_import'
 /** 数据集类型（任务产出的结果集） */
 export type DatasetType = 'requirement'
 
+/** 数据集写入模式（任务 → 数据集的标准化接缝） */
+export type WriteMode = 'create' | 'merge' | 'upsert' | 'replace'
+
+/** 写入声明：模式 + 目标数据集 */
+export interface DatasetTarget {
+  mode: WriteMode
+  dataset_id?: string
+  dataset_name?: string
+}
+
+/** 写入预览（冲突分桶） */
+export interface WritePreview {
+  mode: WriteMode
+  dataset_id?: string
+  dataset_name?: string
+  insert: number
+  update: number
+  unchanged: number
+  invalid: number
+  total: number
+  errors?: string[]
+}
+
+/** 数据集 schema（字段合同：表格列/筛选器/向量组装的驱动源） */
+export type FieldType = 'string' | 'text' | 'number' | 'enum' | 'date'
+export type VectorRole = 'none' | 'title' | 'body'
+
+export interface FieldSpec {
+  key: string
+  label: string
+  type: FieldType
+  required?: boolean
+  enum?: string[]
+  filterable?: boolean
+  in_vector?: VectorRole
+  in_key?: boolean
+}
+
+export interface DatasetSchema {
+  type: string
+  label: string
+  version: number
+  fields: FieldSpec[]
+}
+
 /** 任务（长程流程生命周期载体；Workflow/Input/Output 为 JSON 文本） */
 export interface Task {
   ID: string
@@ -82,26 +127,59 @@ export interface Dataset {
   ID: string
   Type: DatasetType
   Name: string
+  Description: string
+  Tags: string[]
   SourceTaskID: string
   Status: 'ready' | 'building'
   ItemCount: number
+  SchemaVersion: number
   CreatedAt: string
+  UpdatedAt: string
 }
 
-/** 数据集条目（fields 为草稿形状 JSON 文本） */
+/** 数据集条目（fields 为 schema 类型化字段 JSON 文本） */
 export interface DatasetItem {
   ID: string
   DatasetID: string
   Fields: string
+  ItemKey: string
+  Fingerprint: string
+  SourceTaskID: string
   CreatedAt: string
+  UpdatedAt: string
 }
 
-/** 解析数据集条目字段（草稿形状） */
-export function parseDatasetItemFields(fields: string): DraftItem {
+/** 语义查询命中（score/match_type 仅语义命中附带） */
+export interface QueryHit extends DatasetItem {
+  Score?: number
+  MatchType?: 'semantic'
+}
+
+/** 归档种类 */
+export type ArchiveKind = 'task' | 'dataset'
+
+/** 归档任务（含步骤/明细快照，恢复后可继续流程） */
+export interface ArchivedTask extends Task {
+  ArchivedAt: string
+}
+
+/** 归档数据集（条目随行归档，含向量） */
+export interface ArchivedDataset extends Dataset {
+  ArchivedAt: string
+}
+
+/** 归档列表视图（两个集合按需取用） */
+export interface ArchiveView {
+  tasks: ArchivedTask[] | null
+  datasets: ArchivedDataset[] | null
+}
+
+/** 解析数据集条目字段（通用 map 形状；表格渲染按 schema 取值） */
+export function parseDatasetItemFields(fields: string): Record<string, any> {
   try {
-    return JSON.parse(fields) as DraftItem
+    return JSON.parse(fields) as Record<string, any>
   } catch {
-    return {} as DraftItem
+    return {}
   }
 }
 
@@ -144,6 +222,8 @@ export interface TaskInput {
   original_file_path?: string
   parsed_text?: string
   special_requirements?: string
+  dataset_name?: string
+  dataset_target?: DatasetTarget
 }
 
 export type TaskStepStatus = 'pending' | 'running' | 'succeeded' | 'failed' | 'awaiting' | 'paused'

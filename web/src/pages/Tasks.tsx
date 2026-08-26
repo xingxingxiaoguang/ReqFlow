@@ -1,6 +1,6 @@
 import { useState } from 'react'
-import { Card, Table, Tag, Button, Space, Typography, Segmented, App } from 'antd'
-import { FileAddOutlined, FileSearchOutlined, PauseCircleOutlined, PlayCircleOutlined, CheckCircleOutlined } from '@ant-design/icons'
+import { Card, Table, Tag, Button, Space, Typography, Segmented, App, Popconfirm } from 'antd'
+import { FileAddOutlined, FileSearchOutlined, PauseCircleOutlined, PlayCircleOutlined, CheckCircleOutlined, InboxOutlined } from '@ant-design/icons'
 import { useNavigate } from 'react-router-dom'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../api/tasks'
@@ -34,6 +34,17 @@ export default function Tasks() {
       await fn()
       qc.invalidateQueries({ queryKey: ['tasks'] })
       if (okMsg) message.success(okMsg)
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+
+  const onArchive = async (id: string, title: string) => {
+    try {
+      await tasksApi.archiveTask(id)
+      qc.invalidateQueries({ queryKey: ['tasks'] })
+      qc.invalidateQueries({ queryKey: ['archives'] })
+      message.success(`「${title}」已归档（可在归档页恢复）`)
     } catch (e) {
       message.error((e as Error).message)
     }
@@ -101,6 +112,17 @@ export default function Tasks() {
                 )}
                 {r.Status === 'awaiting' && (
                   <Button size="small" icon={<CheckCircleOutlined />} onClick={() => lifecycle(() => tasksApi.complete(r.ID), '已完成')}>完成</Button>
+                )}
+                {r.Status !== 'running' && (
+                  <Popconfirm
+                    title="归档该任务？"
+                    description="任务将移出主列表（含明细快照），不影响其已产出的数据集；可在归档页恢复。"
+                    okText="归档"
+                    okButtonProps={{ danger: true }}
+                    onConfirm={() => onArchive(r.ID, r.Title)}
+                  >
+                    <Button size="small" danger type="text" icon={<InboxOutlined />}>归档</Button>
+                  </Popconfirm>
                 )}
               </Space>
             ),

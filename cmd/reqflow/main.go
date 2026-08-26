@@ -116,6 +116,7 @@ func main() {
 
 	datasetRepo := repository.NewDatasetRepo(db)
 	taskRepo := repository.NewTaskRepo(db)
+	archiveRepo := repository.NewArchiveRepo(db)
 
 	/* ---- app 用例 ---- */
 	parseSvc := app.NewParseService(docParser)
@@ -128,6 +129,8 @@ func main() {
 	}
 	matchSvc := app.NewMatchService(datasetRepo, embedClient, cfg.Match.DuplicateThreshold)
 	datasetWriter := app.NewDatasetWriter(embedClient, datasetRepo, cfg.Embedding.BatchSize)
+	datasetQuery := app.NewDatasetQueryService(datasetRepo, embedClient)
+	archiveSvc := app.NewArchiveService(taskRepo, datasetRepo, archiveRepo)
 	overviewSvc := app.NewOverviewService(datasetRepo, taskRepo)
 	taskMgr := app.NewTaskManager(taskRepo, parseSvc, analyzeSvc, datasetRepo, datasetWriter)
 	// 服务重启恢复：把中断在 running 的任务/步骤标为 paused（用户手动继续）
@@ -145,8 +148,9 @@ func main() {
 	/* ---- HTTP ---- */
 	engine := httpgin.New(httpgin.Services{
 		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
-		UploadDir: cfg.Workspace.UploadDir,
-		MaxFileMB: int64(cfg.Parser.MaxFileMB),
+		DatasetQuery: datasetQuery, Archive: archiveSvc,
+		UploadDir:    cfg.Workspace.UploadDir,
+		MaxFileMB:    int64(cfg.Parser.MaxFileMB),
 	})
 	mountStatic(engine)
 

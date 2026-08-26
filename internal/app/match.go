@@ -37,9 +37,9 @@ func NewMatchService(datasets port.DatasetRepo, embedder port.Embedder, threshol
 }
 
 // CheckDuplicates 批量查重：
-// 1. 精确层：归一化精确匹配（保护版本号/工单号等关键 token），命中 score=1；
-// 2. 语义层：仅对未命中项批量 embedding → SearchSimilarDatasetItems（cosine 距离换算分数），
-//    达到阈值判为疑似重复。embedding 未配置时精确层照跑（降级）。
+//  1. 精确层：归一化精确匹配（保护版本号/工单号等关键 token），命中 score=1；
+//  2. 语义层：仅对未命中项批量 embedding → SearchSimilarDatasetItems（cosine 距离换算分数），
+//     达到阈值判为疑似重复。embedding 未配置时精确层照跑（降级）。
 func (s *MatchService) CheckDuplicates(ctx context.Context, items []DraftInput) ([]DuplicateResult, error) {
 	corpus, err := s.datasets.ListDatasetItemsByType(ctx, model.DatasetTypeRequirement)
 	if err != nil {
@@ -70,9 +70,14 @@ func (s *MatchService) CheckDuplicates(ctx context.Context, items []DraftInput) 
 	}
 
 	if s.embedder.Available() && len(pending) > 0 {
+		schema, ok := model.SchemaOf(model.DatasetTypeRequirement)
+		if !ok {
+			return nil, fmt.Errorf("requirement schema 未注册")
+		}
 		texts := make([]string, len(pending))
 		for k, i := range pending {
-			texts[k] = fmt.Sprintf(datasetItemVectorDocFmt, items[i].Title, truncateRunes(items[i].Description, 500))
+			// 与写入侧同一 schema 组装规则（VectorDocOf），保证向量空间对齐
+			texts[k] = logic.VectorDocOf(schema, draftValuesOf(items[i].toModel()), vectorBodyLimit)
 		}
 		embs, err := s.embedder.Generate(ctx, texts)
 		if err != nil {

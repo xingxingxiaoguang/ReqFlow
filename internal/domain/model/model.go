@@ -9,22 +9,32 @@ import "time"
 // Dataset 结果集：任务（如需求导入）产出的结构化数据集合，
 // 也是后续任务（如 bug 分析）的输入底料——任务 + 数据驱动的业务闭环。
 type Dataset struct {
-	ID           string
-	Type         string // requirement | bug | …
-	Name         string
-	SourceTaskID string // 产生该数据集的任务（可选）
-	Status       string // ready | building（写入中，未发布）
-	ItemCount    int
-	CreatedAt    time.Time
+	ID            string
+	Type          string // requirement | bug | …（对应 DatasetSchema.Type）
+	Name          string
+	Description   string // 人类可读说明（列表页展示）
+	Tags          []string
+	SourceTaskID  string // 产生该数据集的任务（可选；merge/upsert 写入不改变来源）
+	Status        string // ready | building（写入中，未发布）
+	ItemCount     int
+	SchemaVersion int // 创建时 schema 版本（演进依据）
+	Extra         string
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
-// DatasetItem 数据集条目（fields 为类型化字段的 JSON 文本，
-// 需求集为草稿形状 title/description/priority/estimated_hours/…）。
+// DatasetItem 数据集条目（fields 为 schema 类型化字段的 JSON 文本）。
+// ItemKey 为条目业务主键（schema KeyFields 归一化拼接，upsert/去重基准）；
+// Fingerprint 为内容哈希（相同则跳过更新与重嵌）；均为空表示迁移前的存量条目。
 type DatasetItem struct {
-	ID        string
-	DatasetID string
-	Fields    string // JSON 文本
-	CreatedAt time.Time
+	ID           string
+	DatasetID    string
+	Fields       string // JSON 文本
+	ItemKey      string
+	Fingerprint  string
+	SourceTaskID string
+	UpdatedAt    time.Time
+	CreatedAt    time.Time
 }
 
 // 数据集类型。

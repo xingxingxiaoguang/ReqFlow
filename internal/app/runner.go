@@ -29,7 +29,11 @@ type analyzeStepRunner interface {
 }
 
 type datasetStepRunner interface {
-	Write(ctx context.Context, datasetID string, items []model.TaskItem, report func(DatasetWriteProgress)) (int, error)
+	// Prepare 预览写入效果（分桶），Write 执行写入（两阶段共享分桶）。
+	Prepare(ctx context.Context, schema model.DatasetSchema, target DatasetTarget,
+		taskID string, values []map[string]any) (*PreparedWrite, error)
+	Write(ctx context.Context, datasetID, taskID string, prepared *PreparedWrite,
+		report func(DatasetWriteProgress)) (WriteStats, error)
 }
 
 /* ---- 运行登记 ---- */
@@ -100,6 +104,7 @@ func (m *TaskManager) triggerStep(ctx context.Context, id string, kind model.Ste
 	task.Status = model.TaskStatusRunning
 	task.CurrentStep = def.Seq
 	task.ErrorMessage = ""
+	task.FinishedAt = time.Time{} // 终态重写场景：重新进入执行态
 	if err := m.tasks.UpdateTask(ctx, task); err != nil {
 		return err
 	}
@@ -117,7 +122,8 @@ func (m *TaskManager) triggerStep(ctx context.Context, id string, kind model.Ste
 
 // canTriggerStep 目标步骤可触发判定（元数据驱动，不感知类型）：
 // pending 且为首步；或任务正停留在该步骤（awaiting 门内 / paused 中断）；
-// 或任务停留在前一门步骤（awaiting 于 human 门，触发下一机器步骤，如分析）。
+// 或任务停留在前一门步骤（awaiting 于 human 门，触发下一机器步骤，如分析）；
+// 或任务已终态成功且停留于数据集步骤（幂等写入策略下可重写数据集）。
 func canTriggerStep(task *model.Task, def model.WorkflowStep) bool {
 	switch {
 	case task.Status == model.TaskStatusPending:
@@ -126,6 +132,8 @@ func canTriggerStep(task *model.Task, def model.WorkflowStep) bool {
 		return task.CurrentStep == def.Seq || task.CurrentStep == def.Seq-1
 	case task.Status == model.TaskStatusPaused:
 		return task.CurrentStep == def.Seq
+	case task.Status == model.TaskStatusSucceeded:
+		return def.Kind == model.StepKindDataset && task.CurrentStep == def.Seq
 	}
 	return false
 }
@@ -468,11 +476,12 @@ func (m *TaskManager) execAnalyzeStep(workCtx, pc context.Context, task *model.T
 	m.publishItems(pc, task.ID)
 }
 
-// execDatasetStep 生成数据集：草稿 → 向量化（分批）→ 幂等写入数据集 → 任务终态。
-// 断点续跑/失败重试复用同一数据集（building 态），条目全量重建；完成后数据集 ready。
+// execDatasetStep 写入数据集：Prepare 分桶（预览同一逻辑）→ 仅变化条目向量化 →
+// 按模式幂等写入（create 全量重建 / merge 跳过 / upsert 更新 / replace 同源覆盖）→ 发布。
+// 断点续跑/失败重试复用同一 building 数据集；终态任务可换目标重写（幂等安全）。
 func (m *TaskManager) execDatasetStep(workCtx, pc context.Context, task *model.Task, steps []model.TaskStep, def model.WorkflowStep) {
 	step := stepBySeq(steps, def.Seq)
-	m.beginStep(pc, task, step, "开始生成数据集…")
+	m.beginStep(pc, task, step, "开始写入数据集…")
 
 	items, err := m.tasks.GetTaskItems(pc, task.ID)
 	if err != nil {
@@ -482,39 +491,48 @@ func (m *TaskManager) execDatasetStep(workCtx, pc context.Context, task *model.T
 		return
 	}
 	if len(items) == 0 {
-		m.failStep(pc, step, "没有可生成的需求")
-		m.enterGate(pc, task, step, "没有可生成的需求（请先完成 AI 分析）", "没有可生成的需求")
-		m.publishError(task.ID, "没有可生成的需求")
+		m.failStep(pc, step, "没有可写入的条目")
+		m.enterGate(pc, task, step, "没有可写入的条目（请先完成 AI 分析）", "没有可写入的条目")
+		m.publishError(task.ID, "没有可写入的条目")
 		return
 	}
 
-	// 数据集（building）创建或复用：暂停续跑/失败重试幂等重建
-	dsID := task.OutputDatasetID
-	var ds *model.Dataset
-	if dsID == "" {
-		ds = &model.Dataset{
-			Type: model.DatasetTypeRequirement, Name: datasetNameOf(task),
-			SourceTaskID: task.ID, Status: model.DatasetStatusBuilding,
-		}
-		if err := m.datasets.CreateDataset(pc, ds); err != nil {
-			m.failStep(pc, step, "创建数据集失败: "+err.Error())
-			m.enterGate(pc, task, step, "创建数据集失败，可重试", err.Error())
-			m.publishError(task.ID, err.Error())
-			return
-		}
-		task.OutputDatasetID = ds.ID
-		m.saveTask(pc, task)
-	} else {
-		ds, err = m.datasets.GetDataset(pc, dsID)
-		if err != nil {
-			m.failStep(pc, step, "读取数据集失败: "+err.Error())
-			m.enterGate(pc, task, step, "读取数据集失败，可重试", err.Error())
-			m.publishError(task.ID, err.Error())
-			return
-		}
+	target, schema, err := datasetWritePlan(task)
+	if err != nil {
+		m.failStep(pc, step, "写入声明无效: "+err.Error())
+		m.enterGate(pc, task, step, "写入声明无效，可调整后重试", err.Error())
+		m.publishError(task.ID, err.Error())
+		return
+	}
+	values := make([]map[string]any, len(items))
+	for i := range items {
+		values[i] = draftValuesOf(items[i].DraftItem)
+	}
+	prepared, err := m.datasetWriter.Prepare(pc, schema, target, task.ID, values)
+	if err != nil {
+		m.failStep(pc, step, "写入预检失败: "+err.Error())
+		m.enterGate(pc, task, step, "写入预检失败，可调整后重试", err.Error())
+		m.publishError(task.ID, err.Error())
+		return
+	}
+	// 全部非法（如整批缺标题）：写入无意义，直接回门
+	if prepared.Preview().Insert+prepared.Preview().Update == 0 {
+		msg := "没有可写入的新内容（全部跳过或非法）"
+		m.failStep(pc, step, msg)
+		m.enterGate(pc, task, step, msg+"，请修正草稿后重试", msg)
+		m.publishError(task.ID, msg)
+		return
 	}
 
-	count, err := m.datasetWriter.Write(workCtx, ds.ID, items, func(p DatasetWriteProgress) {
+	datasetID, err := m.resolveWriteTarget(pc, task, target, schema)
+	if err != nil {
+		m.failStep(pc, step, "定位目标数据集失败: "+err.Error())
+		m.enterGate(pc, task, step, "定位目标数据集失败，可重试", err.Error())
+		m.publishError(task.ID, err.Error())
+		return
+	}
+
+	stats, err := m.datasetWriter.Write(workCtx, datasetID, task.ID, prepared, func(p DatasetWriteProgress) {
 		step.Detail = fmt.Sprintf("已写入 %d/%d", p.Current, p.Total)
 		m.broker.Publish(task.ID, Event{Type: "progress", TaskID: task.ID, Data: map[string]any{
 			"current": p.Current, "total": p.Total,
@@ -523,40 +541,103 @@ func (m *TaskManager) execDatasetStep(workCtx, pc context.Context, task *model.T
 	})
 	if err != nil {
 		if workCtx.Err() != nil {
-			m.pauseTask(pc, task, step, "数据集生成已暂停")
+			m.pauseTask(pc, task, step, "数据集写入已暂停")
 			return
 		}
-		m.failStep(pc, step, "数据集生成失败: "+err.Error())
-		m.enterGate(pc, task, step, "数据集生成失败，可重试", err.Error())
+		m.failStep(pc, step, "数据集写入失败: "+err.Error())
+		m.enterGate(pc, task, step, "数据集写入失败，可重试", err.Error())
 		m.publishError(task.ID, err.Error())
 		return
 	}
 
+	// 发布：item_count 取数据集真实条目数（merge/upsert 后不等于本次写入量）
+	n, err := m.datasets.CountDatasetItemsOfDataset(pc, datasetID)
+	if err != nil {
+		n = int64(stats.Written)
+	}
+	ds, err := m.datasets.GetDataset(pc, datasetID)
+	if err != nil {
+		m.failStep(pc, step, "读取数据集失败: "+err.Error())
+		m.enterGate(pc, task, step, "读取数据集失败，可重试", err.Error())
+		m.publishError(task.ID, err.Error())
+		return
+	}
 	ds.Status = model.DatasetStatusReady
-	ds.ItemCount = count
+	ds.ItemCount = int(n)
 	if err := m.datasets.UpdateDataset(pc, ds); err != nil {
 		m.failStep(pc, step, "数据集发布失败: "+err.Error())
 		m.enterGate(pc, task, step, "数据集发布失败，可重试", err.Error())
 		m.publishError(task.ID, err.Error())
 		return
 	}
-	// 草稿标记成功（UI 展示）
-	for i := range items {
-		_ = m.tasks.UpdateItemResult(pc, items[i].ID, model.ItemStatusSuccess, "")
+	// 草稿状态回写（prepared.Items 与 items 一一对应）
+	for i, it := range prepared.Items {
+		status, errMsg := model.ItemStatusSuccess, ""
+		if it.Action == ActionInvalid {
+			status, errMsg = model.ItemStatusFailed, it.InvalidMsg
+		}
+		_ = m.tasks.UpdateItemResult(pc, items[i].ID, status, errMsg)
 	}
-	m.finishStep(pc, task, step, fmt.Sprintf("数据集「%s」生成完成，共 %d 条需求", ds.Name, count))
+	pv := prepared.Preview()
+	detail := fmt.Sprintf("数据集「%s」写入完成：新增 %d、更新 %d、跳过 %d（共 %d 条）",
+		ds.Name, pv.Insert, pv.Update, pv.Unchanged+pv.Invalid, n)
+	m.finishStep(pc, task, step, detail)
 	m.advanceGate(pc, task, steps, ParseWorkflow(task).Steps, def.Seq, "")
 	m.publishItems(pc, task.ID)
 }
 
-// datasetNameOf 取任务输入中的数据集命名（生成数据集步骤的人工输入）。
-func datasetNameOf(task *model.Task) string {
-	in := taskInputOf(task)
-	name := strings.TrimSpace(in.DatasetName)
-	if name == "" {
-		name = task.Title
+// resolveWriteTarget 定位写入目标：create 复用 building 数据集（断点续跑/失败重试）或新建；
+// merge/upsert/replace 校验目标存在后直接采用。
+func (m *TaskManager) resolveWriteTarget(pc context.Context, task *model.Task,
+	target DatasetTarget, schema model.DatasetSchema) (string, error) {
+	if target.Mode != WriteModeCreate {
+		return target.DatasetID, nil
 	}
-	return name
+	// create + 已有产出数据集：building 态复用（续跑），ready 态视为换目标重建（终态重写）
+	if task.OutputDatasetID != "" {
+		if ds, err := m.datasets.GetDataset(pc, task.OutputDatasetID); err == nil &&
+			ds.Status == model.DatasetStatusBuilding {
+			return ds.ID, nil
+		}
+	}
+	ds := &model.Dataset{
+		Type: schema.Type, Name: target.Name,
+		SourceTaskID: task.ID, Status: model.DatasetStatusBuilding,
+		SchemaVersion: schema.Version,
+	}
+	if err := m.datasets.CreateDataset(pc, ds); err != nil {
+		return "", err
+	}
+	task.OutputDatasetID = ds.ID
+	m.saveTask(pc, task)
+	return ds.ID, nil
+}
+
+// datasetWritePlan 解析任务的写入声明（兼容旧 dataset_name）与产出 schema。
+func datasetWritePlan(task *model.Task) (DatasetTarget, model.DatasetSchema, error) {
+	in := taskInputOf(task)
+	target := in.DatasetTarget
+	if target == nil {
+		target = &DatasetTarget{Mode: WriteModeCreate, Name: in.DatasetName}
+	}
+	return datasetWritePlanFor(task, *target)
+}
+
+// datasetWritePlanFor 以显式声明（预览请求/任务输入）解析写入计划。
+func datasetWritePlanFor(task *model.Task, target DatasetTarget) (DatasetTarget, model.DatasetSchema, error) {
+	t, err := target.Normalize()
+	if err != nil {
+		return t, model.DatasetSchema{}, err
+	}
+	dsType, ok := model.DatasetTypeOfTask(task.Type)
+	if !ok {
+		return t, model.DatasetSchema{}, fmt.Errorf("任务类型 %s 未注册产出数据集类型", task.Type)
+	}
+	schema, ok := model.SchemaOf(dsType)
+	if !ok {
+		return t, model.DatasetSchema{}, fmt.Errorf("数据集类型 %s 未注册 schema", dsType)
+	}
+	return t, schema, nil
 }
 
 /* ---- 小工具 ---- */

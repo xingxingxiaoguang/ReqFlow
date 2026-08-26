@@ -135,20 +135,40 @@ func (h *handlers) taskAnalyze(c *gin.Context) {
 	ok(c, gin.H{"task_id": c.Param("id")})
 }
 
-// taskGenerateDataset POST /api/tasks/:id/dataset {dataset_name} → fire-and-forget 生成数据集步骤。
+// taskGenerateDataset POST /api/tasks/:id/dataset {mode, dataset_id?, dataset_name?}
+// → fire-and-forget 写入数据集步骤（写入声明见 app.DatasetTarget）。
 func (h *handlers) taskGenerateDataset(c *gin.Context) {
-	var req struct {
-		DatasetName string `json:"dataset_name" binding:"required"`
-	}
+	var req app.DatasetTarget
 	if err := c.ShouldBindJSON(&req); err != nil {
 		fail(c, 400, "参数不完整")
 		return
 	}
-	if err := h.svc.Tasks.TriggerGenerateDataset(c.Request.Context(), c.Param("id"), req.DatasetName); err != nil {
+	if err := h.svc.Tasks.TriggerGenerateDataset(c.Request.Context(), c.Param("id"), req); err != nil {
 		fail(c, 409, err.Error())
 		return
 	}
 	ok(c, gin.H{"task_id": c.Param("id")})
+}
+
+// taskDatasetPreview POST /api/tasks/:id/dataset/preview {mode, dataset_id?, dataset_name?}
+// → 写入预览：新增/更新/无变化/非法分桶（不落库）。
+func (h *handlers) taskDatasetPreview(c *gin.Context) {
+	var req app.DatasetTarget
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, "参数不完整")
+		return
+	}
+	preview, err := h.svc.Tasks.PreviewDatasetWrite(c.Request.Context(), c.Param("id"), req)
+	if err != nil {
+		fail(c, 409, err.Error())
+		return
+	}
+	ok(c, gin.H{"preview": preview})
+}
+
+// listDatasetSchemas GET /api/datasets/schemas → schema 目录（表格列/筛选器驱动）。
+func (h *handlers) listDatasetSchemas(c *gin.Context) {
+	ok(c, gin.H{"schemas": h.svc.Tasks.Schemas()})
 }
 
 // listDatasets GET /api/datasets?type=&limit= → 数据集列表（任务产出的结果集浏览）。

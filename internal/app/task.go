@@ -13,11 +13,12 @@ import (
 
 // taskInputPayload 任务输入（task.Input 的 JSON 结构，按类型可选填充）。
 type taskInputPayload struct {
-	FileName            string `json:"file_name"`
-	OriginalFilePath    string `json:"original_file_path"` // 解析步骤：上传暂存；分析后：原文存档
-	ParsedText          string `json:"parsed_text"`
-	SpecialRequirements string `json:"special_requirements"`
-	DatasetName         string `json:"dataset_name"` // 生成数据集步骤：人工命名的数据集名称
+	FileName            string         `json:"file_name"`
+	OriginalFilePath    string         `json:"original_file_path"` // 解析步骤：上传暂存；分析后：原文存档
+	ParsedText          string         `json:"parsed_text"`
+	SpecialRequirements string         `json:"special_requirements"`
+	DatasetName         string         `json:"dataset_name"`         // 旧版兼容：生成数据集步骤的命名
+	DatasetTarget       *DatasetTarget `json:"dataset_target,omitempty"` // 写入声明：模式 + 目标数据集
 }
 
 // TaskManager 任务门面：CRUD + 人工门操作 + 生命周期触发（httpgin 的唯一入口）。
@@ -88,6 +89,11 @@ func (m *TaskManager) Workflows() []model.Workflow {
 	return Workflows()
 }
 
+// Schemas 数据集 schema 目录（前端表格/筛选与任务输入选择用，httpgin 经此暴露）。
+func (m *TaskManager) Schemas() []model.DatasetSchema {
+	return model.Schemas()
+}
+
 // ListDatasets 数据集列表（结果集浏览）。
 func (m *TaskManager) ListDatasets(ctx context.Context, typ string, limit int) ([]model.Dataset, error) {
 	return m.datasets.ListDatasets(ctx, typ, limit)
@@ -104,6 +110,11 @@ func (m *TaskManager) GetDataset(ctx context.Context, id string) (*model.Dataset
 		return nil, nil, err
 	}
 	return ds, items, nil
+}
+
+// GetDatasetHeader 仅取数据集头信息（条目查询前的类型定位）。
+func (m *TaskManager) GetDatasetHeader(ctx context.Context, id string) (*model.Dataset, error) {
+	return m.datasets.GetDataset(ctx, id)
 }
 
 // List 任务列表（status/type 为空 = 不过滤）。
@@ -190,14 +201,46 @@ func (m *TaskManager) TriggerAnalyze(ctx context.Context, id string) error {
 	return m.triggerStep(ctx, id, model.StepKindAnalyze, nil)
 }
 
-// TriggerGenerateDataset 生成数据集步骤（查重确认后触发；datasetName 为人工命名的数据集名称）。
-func (m *TaskManager) TriggerGenerateDataset(ctx context.Context, id, datasetName string) error {
+// TriggerGenerateDataset 写入数据集步骤（查重确认后触发；target 为写入声明：模式 + 目标）。
+// 终态任务停留于本步骤时也可重触发（幂等写入策略下重写安全）。
+func (m *TaskManager) TriggerGenerateDataset(ctx context.Context, id string, target DatasetTarget) error {
+	target, err := target.Normalize()
+	if err != nil {
+		return err
+	}
 	return m.triggerStep(ctx, id, model.StepKindDataset, func(task *model.Task, _ model.WorkflowStep) error {
 		in := taskInputOf(task)
-		in.DatasetName = strings.TrimSpace(datasetName)
+		in.DatasetTarget = &target
+		in.DatasetName = target.Name
 		task.Input = marshalJSON(in)
 		return m.tasks.UpdateTask(ctx, task)
 	})
+}
+
+// PreviewDatasetWrite 落库前的写入预览（生成数据集门展示冲突分桶；不写入）。
+func (m *TaskManager) PreviewDatasetWrite(ctx context.Context, id string, target DatasetTarget) (*WritePreview, error) {
+	task, _, err := m.load(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	items, err := m.tasks.GetTaskItems(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	t, schema, err := datasetWritePlanFor(task, target)
+	if err != nil {
+		return nil, err
+	}
+	values := make([]map[string]any, len(items))
+	for i := range items {
+		values[i] = draftValuesOf(items[i].DraftItem)
+	}
+	prepared, err := m.datasetWriter.Prepare(ctx, schema, t, task.ID, values)
+	if err != nil {
+		return nil, err
+	}
+	pv := prepared.Preview()
+	return &pv, nil
 }
 
 /* ---- 生命周期 ---- */

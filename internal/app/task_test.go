@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"reqflow/internal/app/agent"
+	"reqflow/internal/domain/logic"
 	"reqflow/internal/domain/model"
 	"reqflow/internal/port"
 )
@@ -227,8 +228,10 @@ func newMemDatasets() *memDatasets {
 func (r *memDatasets) CreateDataset(ctx context.Context, d *model.Dataset) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.seq++
-	d.ID = fmt.Sprintf("ds-%d", r.seq)
+	if d.ID == "" { // 显式指定 ID（测试预置）时保留
+		r.seq++
+		d.ID = fmt.Sprintf("ds-%d", r.seq)
+	}
 	d.CreatedAt = time.Now()
 	r.datasets = append(r.datasets, *d)
 	return nil
@@ -301,26 +304,140 @@ func (r *memDatasets) SearchSimilarDatasetItems(ctx context.Context, vec []float
 	return nil, nil
 }
 
+func (r *memDatasets) UpsertDatasetItems(ctx context.Context, datasetID, sourceTaskID string,
+	items []port.DatasetItemVector, mode port.UpsertMode) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	list := r.items[datasetID]
+	for _, it := range items {
+		idx := -1
+		for i := range list {
+			if list[i].ItemKey != "" && list[i].ItemKey == it.ItemKey {
+				idx = i
+				break
+			}
+		}
+		switch {
+		case idx < 0:
+			r.seq++
+			list = append(list, model.DatasetItem{
+				ID: fmt.Sprintf("di-%d", r.seq), DatasetID: datasetID,
+				Fields: it.Fields, ItemKey: it.ItemKey,
+				Fingerprint: it.Fingerprint, SourceTaskID: sourceTaskID,
+			})
+		case mode == port.UpsertUpdateExisting && list[idx].Fingerprint != it.Fingerprint:
+			list[idx].Fields = it.Fields
+			list[idx].Fingerprint = it.Fingerprint
+			list[idx].SourceTaskID = sourceTaskID
+		}
+	}
+	r.items[datasetID] = list
+	return nil
+}
+
+func (r *memDatasets) DeleteDatasetItemsBySource(ctx context.Context, datasetID, sourceTaskID string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var kept, removed []model.DatasetItem
+	for _, it := range r.items[datasetID] {
+		if it.SourceTaskID == sourceTaskID {
+			removed = append(removed, it)
+		} else {
+			kept = append(kept, it)
+		}
+	}
+	r.items[datasetID] = kept
+	return int64(len(removed)), nil
+}
+
+func (r *memDatasets) GetDatasetItemKeyMap(ctx context.Context, datasetID string) (map[string]port.DatasetItemKeyInfo, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	out := make(map[string]port.DatasetItemKeyInfo)
+	for _, it := range r.items[datasetID] {
+		if it.ItemKey != "" {
+			out[it.ItemKey] = port.DatasetItemKeyInfo{ID: it.ID, Fingerprint: it.Fingerprint, SourceTaskID: it.SourceTaskID}
+		}
+	}
+	return out, nil
+}
+
+func (r *memDatasets) CountDatasetItemsOfDataset(ctx context.Context, datasetID string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return int64(len(r.items[datasetID])), nil
+}
+
+func (r *memDatasets) ListDatasetItemsFiltered(ctx context.Context, f port.ItemFilter) ([]model.DatasetItem, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []model.DatasetItem
+	for _, items := range r.items {
+		for _, it := range items {
+			if f.DatasetID != "" && it.DatasetID != f.DatasetID {
+				continue
+			}
+			out = append(out, it)
+		}
+	}
+	if len(out) > f.Limit && f.Limit > 0 {
+		out = out[:f.Limit]
+	}
+	return out, nil
+}
+
+func (r *memDatasets) SearchSimilarDatasetItemsFiltered(ctx context.Context, vec []float32, f port.ItemFilter, n int) ([]port.SimilarDatasetItem, error) {
+	return nil, nil
+}
+
+/* ---- 假写入器（生命周期测试：不关心分桶细节，全量 insert） ---- */
+
 type fakeDatasetWriter struct {
-	datasets port.DatasetRepo
-	written  []model.TaskItem
+	datasets port.DatasetRepo // 模拟落库（item_count 回填依赖真实条目数）
+	written  int
 	err      error
 	block    bool // 阻塞等待 ctx 取消（暂停测试）
 }
 
-func (f *fakeDatasetWriter) Write(ctx context.Context, datasetID string, items []model.TaskItem,
-	report func(DatasetWriteProgress)) (int, error) {
+func (f *fakeDatasetWriter) Prepare(ctx context.Context, schema model.DatasetSchema, target DatasetTarget,
+	taskID string, values []map[string]any) (*PreparedWrite, error) {
+	target, err := target.Normalize()
+	if err != nil {
+		return nil, err
+	}
+	p := &PreparedWrite{Target: target, Schema: schema, Fresh: target.Mode == WriteModeCreate,
+		preview: WritePreview{Mode: target.Mode, Total: len(values), Insert: len(values)}}
+	for _, v := range values {
+		p.Items = append(p.Items, PreparedItem{Values: v, Fields: marshalJSON(v), Action: ActionInsert})
+	}
+	return p, nil
+}
+
+func (f *fakeDatasetWriter) Write(ctx context.Context, datasetID, taskID string, prepared *PreparedWrite,
+	report func(DatasetWriteProgress)) (WriteStats, error) {
 	if f.block {
 		<-ctx.Done()
-		return 0, ctx.Err()
+		return WriteStats{}, ctx.Err()
 	}
 	if f.err != nil {
-		return 0, f.err
+		return WriteStats{}, f.err
 	}
-	f.written = append(f.written, items...)
-	_ = f.datasets.ReplaceDatasetItems(ctx, datasetID, nil) // 由测试断言写入内容
-	return len(items), nil
+	f.written = len(prepared.Items)
+	if f.datasets != nil { // 模拟条目落库（count 回填走仓储）
+		vecs := make([]port.DatasetItemVector, 0, len(prepared.Items))
+		for _, it := range prepared.Items {
+			vecs = append(vecs, port.DatasetItemVector{DatasetItem: model.DatasetItem{Fields: it.Fields}})
+		}
+		_ = f.datasets.ReplaceDatasetItems(ctx, datasetID, vecs)
+	}
+	return WriteStats{Written: f.written}, nil
 }
+
+// fakeEmbedder 不可用态的向量化桩（写入降级纯精确匹配路径）。
+type fakeEmbedder struct{}
+
+func (f *fakeEmbedder) Generate(ctx context.Context, texts []string) ([][]float32, error) { return nil, nil }
+func (f *fakeEmbedder) Available() bool                                                 { return false }
 
 /* ---- 阻塞型 scripted LLM（第二轮调用挂起，模拟分析进行中） ---- */
 
@@ -589,7 +706,7 @@ func TestTaskGenerateDataset(t *testing.T) {
 	task.CurrentStep = 4
 	_ = repo.UpdateTask(ctx, task)
 
-	if err := mgr.TriggerGenerateDataset(ctx, task.ID, "订单中心需求集"); err != nil {
+	if err := mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeCreate, Name: "订单中心需求集"}); err != nil {
 		t.Fatalf("TriggerGenerateDataset: %v", err)
 	}
 	got := waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusSucceeded })
@@ -604,8 +721,8 @@ func TestTaskGenerateDataset(t *testing.T) {
 	if ds.Name != "订单中心需求集" || ds.Status != model.DatasetStatusReady || ds.ItemCount != 2 {
 		t.Fatalf("数据集状态 = %+v", ds)
 	}
-	if len(writer.written) != 2 {
-		t.Fatalf("写入条目 = %d", len(writer.written))
+	if writer.written != 2 {
+		t.Fatalf("写入条目 = %d", writer.written)
 	}
 	steps := mustSteps(t, repo, task.ID)
 	if steps[3].Status != model.StepStatusSucceeded {
@@ -635,7 +752,7 @@ func TestTaskGenerateDatasetFailureRetry(t *testing.T) {
 	task.CurrentStep = 4
 	_ = repo.UpdateTask(ctx, task)
 
-	_ = mgr.TriggerGenerateDataset(ctx, task.ID, "订单中心需求集")
+	_ = mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeCreate, Name: "订单中心需求集"})
 	got := waitStepStatus(t, repo, task.ID, 4, model.StepStatusFailed) // 生成失败 → 门步骤 failed
 	if got.Status != model.TaskStatusAwaiting || got.CurrentStep != 4 {
 		t.Fatalf("失败后应回到生成数据集门: %s step=%d", got.Status, got.CurrentStep)
@@ -646,7 +763,7 @@ func TestTaskGenerateDatasetFailureRetry(t *testing.T) {
 
 	// 重试成功：复用同一数据集
 	writer.err = nil
-	_ = mgr.TriggerGenerateDataset(ctx, task.ID, "订单中心需求集")
+	_ = mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeCreate, Name: "订单中心需求集"})
 	got2 := waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusSucceeded })
 	if got2.OutputDatasetID != got.OutputDatasetID {
 		t.Fatal("重试应复用同一数据集")
@@ -671,7 +788,7 @@ func TestTaskGenerateDatasetPauseResume(t *testing.T) {
 	task.CurrentStep = 4
 	_ = repo.UpdateTask(ctx, task)
 
-	_ = mgr.TriggerGenerateDataset(ctx, task.ID, "订单中心需求集")
+	_ = mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeCreate, Name: "订单中心需求集"})
 	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusRunning })
 	paused, err := mgr.Pause(ctx, task.ID)
 	if err != nil {
@@ -735,6 +852,168 @@ func TestTaskRecoverStuck(t *testing.T) {
 	got := mustTask(t, repo, task.ID)
 	if got.Status != model.TaskStatusPaused {
 		t.Fatalf("重启后状态 = %s", got.Status)
+	}
+}
+
+/* ---- 写入策略：分桶与幂等写入 ---- */
+
+// seedTargetDataset 预置目标数据集：k1（task-9 写入，内容 A）、k2（他人写入，内容 B）。
+func seedTargetDataset(t *testing.T, datasets *memDatasets) model.DatasetSchema {
+	t.Helper()
+	ctx := context.Background()
+	_ = datasets.CreateDataset(ctx, &model.Dataset{ID: "ds-x", Type: model.DatasetTypeRequirement,
+		Name: "已有需求集", Status: model.DatasetStatusReady})
+	schema, ok := model.SchemaOf(model.DatasetTypeRequirement)
+	if !ok {
+		t.Fatal("requirement schema 未注册")
+	}
+	valuesA := map[string]any{"title": "需求A"}
+	valuesB := map[string]any{"title": "需求B", "description": "原始描述"}
+	_ = datasets.UpsertDatasetItems(ctx, "ds-x", "task-9", []port.DatasetItemVector{
+		{DatasetItem: model.DatasetItem{Fields: marshalJSON(valuesA),
+			ItemKey: logic.ItemKeyOf(schema, valuesA), Fingerprint: logic.FingerprintOf(schema, valuesA)}},
+	}, port.UpsertInsertMissing)
+	_ = datasets.UpsertDatasetItems(ctx, "ds-x", "task-other", []port.DatasetItemVector{
+		{DatasetItem: model.DatasetItem{Fields: marshalJSON(valuesB),
+			ItemKey: logic.ItemKeyOf(schema, valuesB), Fingerprint: logic.FingerprintOf(schema, valuesB)}},
+	}, port.UpsertInsertMissing)
+	return schema
+}
+
+func TestDatasetWriterUpsertBuckets(t *testing.T) {
+	datasets := newMemDatasets()
+	schema := seedTargetDataset(t, datasets)
+	writer := NewDatasetWriter(&fakeEmbedder{}, datasets, 10)
+
+	ctx := context.Background()
+	// 待写：A（同 key 同内容）、B（同 key 新内容）、C（新 key）、空标题（非法）
+	values := []map[string]any{
+		{"title": "需求A"},
+		{"title": "需求B", "description": "更新后的描述"},
+		{"title": "需求C"},
+		{"title": "", "priority": "High"},
+	}
+
+	prepared, err := writer.Prepare(ctx, schema, DatasetTarget{Mode: WriteModeUpsert, DatasetID: "ds-x"}, "task-10", values)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	pv := prepared.Preview()
+	if pv.Insert != 1 || pv.Update != 1 || pv.Unchanged != 1 || pv.Invalid != 1 {
+		t.Fatalf("upsert 分桶 = %+v", pv)
+	}
+	if _, err := writer.Write(ctx, "ds-x", "task-10", prepared, nil); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	if items := datasets.items["ds-x"]; len(items) != 3 {
+		t.Fatalf("写入后条目 = %d（应为 3）", len(items))
+	}
+}
+
+func TestDatasetWriterMergeSkipsConflicts(t *testing.T) {
+	datasets := newMemDatasets()
+	schema := seedTargetDataset(t, datasets)
+	writer := NewDatasetWriter(&fakeEmbedder{}, datasets, 10)
+
+	ctx := context.Background()
+	values := []map[string]any{
+		{"title": "需求A"},                             // 已存在 → 跳过
+		{"title": "需求B", "description": "更新的描述"}, // 已存在 → 跳过（merge 不更新）
+		{"title": "需求C"},                             // 新增
+	}
+	prepared, err := writer.Prepare(ctx, schema, DatasetTarget{Mode: WriteModeMerge, DatasetID: "ds-x"}, "task-10", values)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	pv := prepared.Preview()
+	if pv.Insert != 1 || pv.Unchanged != 2 {
+		t.Fatalf("merge 分桶 = %+v", pv)
+	}
+}
+
+func TestDatasetWriterReplaceScope(t *testing.T) {
+	datasets := newMemDatasets()
+	schema := seedTargetDataset(t, datasets)
+	writer := NewDatasetWriter(&fakeEmbedder{}, datasets, 10)
+
+	ctx := context.Background()
+	// task-9 重跑：k1（本任务旧条目）视同不存在 → insert；k2（他人条目）内容变化 → update
+	values := []map[string]any{
+		{"title": "需求A", "description": "重跑修订"},
+		{"title": "需求B", "description": "也改了"},
+	}
+	prepared, err := writer.Prepare(ctx, schema, DatasetTarget{Mode: WriteModeReplace, DatasetID: "ds-x"}, "task-9", values)
+	if err != nil {
+		t.Fatalf("Prepare: %v", err)
+	}
+	pv := prepared.Preview()
+	if pv.Insert != 1 || pv.Update != 1 {
+		t.Fatalf("replace 分桶 = %+v", pv)
+	}
+	if _, err := writer.Write(ctx, "ds-x", "task-9", prepared, nil); err != nil {
+		t.Fatalf("Write: %v", err)
+	}
+	items := datasets.items["ds-x"]
+	if len(items) != 2 {
+		t.Fatalf("replace 后条目 = %d（应为 2）", len(items))
+	}
+}
+
+func TestTaskRewriteDatasetAfterSucceeded(t *testing.T) {
+	repo := newMemTasks()
+	datasets := newMemDatasets()
+	writer := &fakeDatasetWriter{datasets: datasets}
+	mgr := newTestManager(repo, &fakeParse{text: testDoc}, nil, datasets, writer)
+
+	ctx := context.Background()
+	task, _ := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
+	_ = mgr.TriggerParse(ctx, task.ID, "/tmp/x.docx")
+	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusAwaiting })
+
+	_ = repo.ReplaceTaskItems(ctx, task.ID, []model.TaskItem{
+		{DraftItem: model.DraftItem{Title: "A"}, Status: model.ItemStatusPending},
+	})
+	task.Status = model.TaskStatusAwaiting
+	task.CurrentStep = 4
+	_ = repo.UpdateTask(ctx, task)
+
+	_ = mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeCreate, Name: "需求集 v1"})
+	got := waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusSucceeded })
+
+	// 终态任务停留于数据集步骤：可换策略重写（幂等安全）
+	target := DatasetTarget{Mode: WriteModeUpsert, DatasetID: got.OutputDatasetID}
+	if err := mgr.TriggerGenerateDataset(ctx, task.ID, target); err != nil {
+		t.Fatalf("终态重写应被允许: %v", err)
+	}
+	got2 := waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusSucceeded })
+	if got2.OutputDatasetID != got.OutputDatasetID {
+		t.Fatalf("upsert 目标应写入原数据集: %s", got2.OutputDatasetID)
+	}
+	if got2.FinishedAt.IsZero() {
+		t.Fatal("重写完成后应回填完成时间")
+	}
+}
+
+func TestTaskDatasetPreview(t *testing.T) {
+	repo := newMemTasks()
+	datasets := newMemDatasets()
+	seedTargetDataset(t, datasets)
+	writer := NewDatasetWriter(&fakeEmbedder{}, datasets, 10)
+	mgr := newTestManager(repo, &fakeParse{text: testDoc}, nil, datasets, writer)
+
+	ctx := context.Background()
+	task, _ := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
+	_ = repo.ReplaceTaskItems(ctx, task.ID, []model.TaskItem{
+		{DraftItem: model.DraftItem{Title: "需求A"}, Status: model.ItemStatusPending},
+		{DraftItem: model.DraftItem{Title: "需求D"}, Status: model.ItemStatusPending},
+	})
+
+	pv, err := mgr.PreviewDatasetWrite(ctx, task.ID, DatasetTarget{Mode: WriteModeMerge, DatasetID: "ds-x"})
+	if err != nil {
+		t.Fatalf("PreviewDatasetWrite: %v", err)
+	}
+	if pv.Insert != 1 || pv.Unchanged != 1 || pv.DatasetName != "已有需求集" {
+		t.Fatalf("预览 = %+v", pv)
 	}
 }
 

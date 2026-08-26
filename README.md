@@ -69,15 +69,32 @@ make build        # → bin/reqflow
 
 | 方法 | 路径 | 说明 |
 |------|------|------|
-| POST | `/api/parse` | multipart 上传 → SSE `progress`/`parsed`（解析确认门） |
-| POST | `/api/analyze` | `{text, file_name, special_requirements}` → SSE `token(delta,phase)`/`tool`(agent 模式工具轨迹)/`complete` |
-| POST | `/api/sync` | SSE 增量同步平台项目/工作项/元数据并写入向量 |
-| POST | `/api/match/projects` | 项目名 → 推荐 top N（精确前置 + 语义兜底） |
+| POST | `/api/tasks/:id/parse` | multipart 上传 → fire-and-forget 解析步骤（进度走 SSE） |
+| POST | `/api/tasks/:id/analyze` | fire-and-forget AI 分析步骤（agent 模式带只读工具查证） |
+| POST | `/api/tasks/:id/dataset` | fire-and-forget 写入数据集：`{mode: create\|merge\|upsert\|replace, dataset_id?, dataset_name?}`（写入声明见下） |
+| POST | `/api/tasks/:id/dataset/preview` | 写入预览：新增/更新/无变化/非法 分桶（不落库） |
+| GET/POST/PATCH | `/api/tasks`（`/:id`、`/:id/items`、`/:id/pause`、`/:id/resume`、`/:id/complete`、`/:id/events`） | 任务生命周期 + 门内草稿 + SSE 事件流 |
+| DELETE | `/api/tasks/:id` · `/api/datasets/:id` | 归档（移入独立归档表，可恢复，退出主业务循环） |
+| GET | `/api/archives?kind=task\|dataset&type=` | 归档列表（任务含明细快照；数据集含条目与向量） |
+| POST | `/api/archives/:kind/:id/restore` | 归档恢复到主表（数据集恢复后查重/检索语料随之生效） |
 | POST | `/api/match/duplicates` | 同项目查重（标题精确 / 语义阈值） |
-| POST | `/api/import` | SSE 批量建单（含 `new:项目名` 自动建项目） |
-| GET | `/api/records` `/api/records/:id` `/api/records/:id/source` | 导入记录、明细、原文 |
-| GET | `/api/overview` `/api/projects` `/api/work-items` | 概览与已同步数据浏览 |
-| GET/POST | `/api/settings` `/api/settings/test-llm` `/api/settings/test-pingcode` | 脱敏配置与连通性测试 |
+| GET | `/api/datasets` `/api/datasets/:id` | 数据集与条目浏览 |
+| GET | `/api/datasets/schemas` | 数据集 schema 目录（字段合同：表格/筛选/向量组装驱动） |
+| GET | `/api/datasets/:id/items` | 条目查询：`q=` 语义检索 + `f[字段]=值`（`|` 分隔为 in）筛选叠加 |
+| GET/POST | `/api/settings` `/api/settings/test-llm` | 脱敏配置与连通性测试 |
+
+## 通用数据集（任务间衔接的标准化接缝）
+
+- **Schema 注册表**（`internal/domain/model/dataset_schema.go`）：数据集类型 = 声明式字段合同（类型/枚举/必填/可筛/向量角色/主键参与）。写入校验、语义向量文档组装、明细表格渲染、条目主键全部 schema 驱动——新任务类型只需注册 schema。
+- **条目身份**：`item_key`（schema 主键字段归一化拼接，同 key = 同一条目）+ `fingerprint`（内容哈希，相同则跳过更新与重嵌）。
+- **写入策略**（`POST /api/tasks/:id/dataset` 的 `mode`）：
+  - `create` 新建数据集（断点续跑为同集全量重建）
+  - `merge` 并入：仅插入新条目，已存在跳过
+  - `upsert` 并入并更新：新条目插入，已存在按内容更新
+  - `replace` 覆盖本任务此前写入的条目（同源重跑；其他来源数据不动）
+- **终态可重写**：已完成的任务停留在数据集步骤时可换策略再次写入（幂等，不产生重复条目）。
+- **统一查询**：字段过滤（filterable 字段 SQL 下推）+ 语义检索叠加，数据集浏览、agent 工具、后续任务输入共用。
+- **归档**：任务与数据集的删除不是物理删除，而是事务性搬入独立归档表（`archived_*`，与主表同构直搬，不带索引不占检索成本）。已归档数据物理离开主表——列表、查重语料、语义检索、统计自动不再触达；归档页可查看、可原样恢复（数据集条目向量原生保留，任务含步骤/明细快照，恢复后可继续未走完的流程）。运行中任务与被进行中任务引用的数据集拒绝归档。
 
 ## 开发命令
 

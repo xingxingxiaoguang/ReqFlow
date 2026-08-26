@@ -61,6 +61,25 @@ func (f *fakeDatasets) SearchSimilarDatasetItems(ctx context.Context, vec []floa
 	return nil, nil
 }
 
+func (f *fakeDatasets) UpsertDatasetItems(ctx context.Context, datasetID, sourceTaskID string, items []port.DatasetItemVector, mode port.UpsertMode) error {
+	return nil
+}
+func (f *fakeDatasets) DeleteDatasetItemsBySource(ctx context.Context, datasetID, sourceTaskID string) (int64, error) {
+	return 0, nil
+}
+func (f *fakeDatasets) GetDatasetItemKeyMap(ctx context.Context, datasetID string) (map[string]port.DatasetItemKeyInfo, error) {
+	return map[string]port.DatasetItemKeyInfo{}, nil
+}
+func (f *fakeDatasets) CountDatasetItemsOfDataset(ctx context.Context, datasetID string) (int64, error) {
+	return 0, nil
+}
+func (f *fakeDatasets) ListDatasetItemsFiltered(ctx context.Context, f2 port.ItemFilter) ([]model.DatasetItem, error) {
+	return nil, nil
+}
+func (f *fakeDatasets) SearchSimilarDatasetItemsFiltered(ctx context.Context, vec []float32, f2 port.ItemFilter, n int) ([]port.SimilarDatasetItem, error) {
+	return nil, nil
+}
+
 /* ---- 桩 ---- */
 
 type stubTool struct {
