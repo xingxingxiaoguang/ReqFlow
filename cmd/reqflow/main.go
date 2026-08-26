@@ -92,6 +92,7 @@ func main() {
 		ClientSecret: cfg.PingCode.ClientSecret,
 	})
 	llmClient := llm.New(llm.Options{
+		Provider:    cfg.LLM.Provider,
 		BaseURL:     cfg.LLM.BaseURL,
 		APIKey:      cfg.LLM.APIKey,
 		Model:       cfg.LLM.Model,

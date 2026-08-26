@@ -35,12 +35,13 @@ type Config struct {
 	} `yaml:"database"`
 
 	LLM struct {
-		BaseURL      string  `yaml:"base_url"    env:"REQFLOW_LLM_BASE_URL"`
-		APIKey       string  `yaml:"api_key"     env:"REQFLOW_LLM_API_KEY"`
-		Model        string  `yaml:"model"       env:"REQFLOW_LLM_MODEL"`
-		Temperature  float64 `yaml:"temperature" env:"REQFLOW_LLM_TEMPERATURE"`
-		MaxTokens    int     `yaml:"max_tokens"  env:"REQFLOW_LLM_MAX_TOKENS"`
-		TimeoutMs    int     `yaml:"timeout_ms"  env:"REQFLOW_LLM_TIMEOUT_MS"`
+		Provider    string  `yaml:"provider"    env:"REQFLOW_LLM_PROVIDER"`
+		BaseURL     string  `yaml:"base_url"    env:"REQFLOW_LLM_BASE_URL"`
+		APIKey      string  `yaml:"api_key"     env:"REQFLOW_LLM_API_KEY"`
+		Model       string  `yaml:"model"       env:"REQFLOW_LLM_MODEL"`
+		Temperature float64 `yaml:"temperature" env:"REQFLOW_LLM_TEMPERATURE"`
+		MaxTokens   int     `yaml:"max_tokens"  env:"REQFLOW_LLM_MAX_TOKENS"`
+		TimeoutMs   int     `yaml:"timeout_ms"  env:"REQFLOW_LLM_TIMEOUT_MS"`
 	} `yaml:"llm"`
 
 	Embedding struct {
@@ -186,6 +187,9 @@ func (c *Config) Validate() (errs, warns []string) {
 	if c.Embedding.APIKey != "" && c.Embedding.Dimensions != 1024 {
 		errs = append(errs, fmt.Sprintf(
 			"embedding.dimensions = %d，但当前向量列固定 1024 维；请改用 1024 维模型（如 BAAI/bge-m3）或调整迁移后重建库", c.Embedding.Dimensions))
+	}
+	if c.LLM.Provider != "" && c.LLM.Provider != "openai" && c.LLM.Provider != "anthropic" {
+		errs = append(errs, fmt.Sprintf("llm.provider = %q 非法，必须为 openai 或 anthropic", c.LLM.Provider))
 	}
 	if c.LLM.APIKey == "" {
 		warns = append(warns, "llm.api_key 未配置：需求文档 LLM 分析不可用（其余功能不受影响）")

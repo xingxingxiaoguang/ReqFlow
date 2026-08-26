@@ -13,8 +13,10 @@ database:
   retry_count: 5
   retry_interval_ms: 2000
 
-# LLM（OpenAI 兼容协议：DeepSeek / GLM / Qwen / Kimi 等均适用）
+# LLM 协议（provider: openai = OpenAI 兼容 /chat/completions，DeepSeek / GLM / Qwen / Kimi
+# 等均适用，默认；anthropic = Anthropic Messages 协议）
 llm:
+  provider: openai
   base_url: https://api.deepseek.com/v1
   api_key: ""
   model: deepseek-chat

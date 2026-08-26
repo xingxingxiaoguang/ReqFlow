@@ -70,13 +70,25 @@ func (s *AnalyzeService) Run(
 
 	now := time.Now()
 	prompt := renderAnalyzePrompt(text, now, specialReqs)
+	// pi Context：单发提取 = 一条 user 消息；后续 refine 微调在同一 Context 上追加
+	llmCtx := &port.Context{Messages: []port.Message{port.NewUserMessage(prompt)}}
 
 	onProgress(AnalyzeProgress{Stage: "analyzing", Message: "AI 正在拆解需求功能点…"})
-	raw, streamErr := s.llm.StreamChat(ctx, prompt, func(d port.StreamDelta) {
-		if onToken != nil {
-			onToken(AnalyzeDelta{Phase: string(d.Phase), Text: d.Text})
+	msg, streamErr := s.llm.Stream(ctx, llmCtx, func(ev port.AssistantEvent) {
+		if onToken == nil {
+			return
+		}
+		switch ev.Type {
+		case port.EventThinkingDelta:
+			onToken(AnalyzeDelta{Phase: "thinking", Text: ev.Delta})
+		case port.EventTextDelta:
+			onToken(AnalyzeDelta{Phase: "answer", Text: ev.Delta})
 		}
 	})
+	raw := ""
+	if msg != nil {
+		raw = msg.Text()
+	}
 
 	// 解析（流失败但有部分输出时先尝试宽松恢复部分结果）
 	drafts := parseDrafts(raw)
@@ -86,12 +98,12 @@ func (s *AnalyzeService) Run(
 		}
 		// 流式输出解析失败：同一提示词回退非流式一次
 		onProgress(AnalyzeProgress{Stage: "analyzing", Message: "流式输出解析失败，正在回退非流式调用…"})
-		fallback, err := s.llm.Chat(ctx, prompt)
+		fallback, err := s.llm.Complete(ctx, llmCtx)
 		if err != nil {
 			return nil, fmt.Errorf("LLM 分析失败: %w", err)
 		}
-		raw = fallback
-		drafts = parseDrafts(fallback)
+		raw = fallback.Text()
+		drafts = parseDrafts(raw)
 		if drafts == nil {
 			return nil, fmt.Errorf("LLM 输出无法解析为工作项数组（原始输出前 200 字: %s）", truncateStr(raw, 200))
 		}
