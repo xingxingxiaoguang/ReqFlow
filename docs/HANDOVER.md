@@ -82,12 +82,17 @@ internal/domain/
 
 internal/port/
   repo.go            ProjectRepo/WorkItemRepo/MetaRepo/ImportRepo + 向量 DTO（ProjectVector 等，Score→Distance）
-  llm.go             LLMClient（StreamChat/Chat/Ping）+ StreamPhase(thinking/answer)
+  llm.go             LLMClient（Stream/Complete/Ping）+ pi 式消息模型（Context/Message/内容块/ToolSpec
+                     全可 JSON 序列化——Context 即会话，refine/落库以它为单位）
+                     + 流事件协议（start/text_delta/thinking_delta/toolcall_*/done/error）
   platform.go        PlatformClient（平台无关 DTO + 全部平台操作）
   embedding.go       Embedder（Available() 驱动降级）
   parser.go          DocParser
 
 internal/app/        用例层；全部依赖构造注入，进度用回调上报（httpgin 转 SSE）
+  agent/loop.go      ⭐ pi 式 agent loop 骨架（Tool 接口 + 自然终止 + MaxIterations 安全阀 +
+                     length 截断整批 fail + ToolOutput 的 output/details 拆分）；v1 未接入
+                     主链路，analyze 仍单发直调——引入工具（如 PingCode API 包装）后切换
   sync.go            三态增量同步 + 元数据（并发3）+ 向量写入（批次/延迟）
   analyze.go         流式分析编排：prompt 渲染→流式→宽松恢复→非流式回退→落库
   prompt.go          需求分析 Prompt 模板（占位符 {current_time}/{special_requirements_section}/{text}）
@@ -103,7 +108,11 @@ internal/infra/
     database.go      GORM 连接（重试）+ 手写迁移器（内嵌 SQL，schema_migrations 表，幂等）
     migrations/      0001_init.up/down.sql（9 张表 + pgvector HNSW 索引）
   repository/        四个仓储实现（GORM + pgvector；Raw SQL 做向量检索返回 Distance）
-  llm/client.go      OpenAI 兼容 /chat/completions：StreamChat（SSE 解析，reasoning_content→thinking）+ Chat 回退
+  llm/               双协议适配器（均移植自 pi，见 §8.5）：client.go 工厂按 llm.provider 分发
+                     openai.go——OpenAI 兼容 /chat/completions（reasoning 三字段防重复、
+                       tool_calls 流式增量聚合、缺 finish_reason 时推断）
+                     anthropic.go——Anthropic Messages 协议（SSE 状态机、thinking 签名回放、
+                       连续 toolResult 合并为单条 user 消息）
   embedding/         OpenAI 兼容 /embeddings（批量、按 index 归位）
   pingcode/          client.go（token 缓存 5min 提前量/重试/错误类型）projects.go workitems.go（分页双停止）
   parser/            parser.go（分发+docx 标准库 zip+XML）mineru.go（四步云端解析）xlsx.go（行级解析，第二波用）
@@ -203,6 +212,25 @@ SSE 事件负载的权威定义在 `infra/httpgin/handler_*.go` 与 `web/src/api
 
 **有意不移植的**：LLM 会话前缀缓存（refine 微调，第二波）；embedding 密钥池（第二波，见 §11）；transformers.js 进程内向量兜底（Go 无等价物，改为降级）；用户/RBAC/OAuth（单工作区不需要）。
 
+### 8.5 LLM 层与 pi 的传承（2026-08 二次重构）
+
+port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 均移植自
+**pi**（https://github.com/earendil-works/pi，MIT License, Copyright (c) 2025 Mario Zechner，
+源码参考副本在 `/Users/weighingzhang/demo/pi`）。各文件头注有对应源文件映射。
+
+| ReqFlow 位置 | pi 出处 | 移植要点 |
+|---|---|---|
+| `port/llm.go` | `packages/ai/src/types.ts` | Context{SystemPrompt,Messages,Tools} 全量可序列化；Message 三角色 + text/thinking/toolCall 内容块；StopReason 六态；流事件协议 |
+| `infra/llm/openai.go` | `api/openai-completions.ts` | reasoning_content/reasoning/reasoning_text 三字段取首个非空（防重复返回）；tool_calls 按 index 聚合；assistant 回放为纯字符串（块结构会被部分端点镜像导致递归嵌套）；空 content+空 tool_calls 的 assistant 跳过 |
+| `infra/llm/anthropic.go` | `api/anthropic-messages.ts` | SSE 事件状态机；thinking 块签名回放（扩展思考+工具调用场景 API 强校验）；连续 toolResult 合并为单条 user 消息的 tool_result 块 |
+| `app/agent/loop.go` | `packages/agent/src/agent-loop.ts` | 自然终止（无工具调用即停）；**length 截断的工具调用一律不执行、整批错误回执让模型重发**；error/aborted 短路保留已积累消息；ToolOutput 的 Output(LLM)/Details(UI) 拆分；terminate 语义 |
+
+**有意偏离 pi**（改 loop/协议时保持同步）：
+1. 回调事件替代 async iterator；中止走 `ctx`（Go 惯例）
+2. `Loop.MaxIterations` 安全阀默认 8——pi 刻意无上限，生产导入必须兜底
+3. 缺 finish_reason 的兼容端点按「有无工具调用」**推断**终止（pi 对声明支持 finish_reason 的端点直接报错；我们面向杂牌兼容端点从宽）
+4. 不移植：模型注册表/厂商 compat 矩阵/steering 消息队列/beforeToolCall 钩子/prepareNextTurn 换模型/并行工具执行/deferred 响应——需要时按 pi 源码对应段落补
+
 ## 9. 密钥安全（四道防线，改安全逻辑必读）
 
 1. `.gitignore`：`config.yaml` / `config.*.yaml` 全变体（example 除外）
@@ -246,7 +274,7 @@ SSE 事件负载的权威定义在 `infra/httpgin/handler_*.go` 与 `web/src/api
 
 | 项 | 影响 | 处置建议 |
 |----|------|---------|
-| LLM/分析无集成测试 | 回归靠手测 | 补 `app/analyze` 的 mock LLM 单测（port 接口就是为了这个） |
+| ~~LLM 层无测试~~ | 已解决（2026-08）：infra/llm 双适配器 httptest + app/agent loop mock 单测就位 | 剩余：`app/analyze` 的 mock LLM 编排单测（宽松恢复链的分支覆盖） |
 | repository 层无测试 | schema 回归风险 | testcontainers-go 或对本机 docker PG 跑薄集成测试 |
 | 向量固定 1024 维 | 换模型要重建库 | 文档已写死流程；如需多维度考虑按维度分表 |
 | LLM 会话进程内 | 单实例限定 | 第二波做 refine 时一并决策（Redis 或维持单实例） |
