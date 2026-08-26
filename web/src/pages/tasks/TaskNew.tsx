@@ -11,13 +11,16 @@ import type { SettingsView, StepKind, Workflow } from '../../api/types'
 const { Dragger } = AntUpload
 const { Text } = Typography
 
-/** 步骤种类 → 人读标签 */
-const KIND_LABEL: Record<StepKind, string> = {
+/** 步骤种类 → 人读标签（analyze 按实际模式显示，见 kindLabelOf） */
+const KIND_LABEL: Record<Exclude<StepKind, 'analyze'>, string> = {
   parse: '机器执行 · 解析',
   human: '人工确认门',
-  analyze: '机器执行 · AI agent',
   dataset: '机器执行 · 生成数据集',
 }
+
+/** analyze 步骤标签如实反映执行模式（agent_mode 开关决定，不再无条件标 AI agent） */
+const kindLabelOf = (kind: StepKind, agentMode?: boolean): string =>
+  kind === 'analyze' ? (agentMode ? '机器执行 · AI agent（工具驱动）' : '机器执行 · AI 分析（单轮直调）') : KIND_LABEL[kind]
 
 /** 新建需求导入任务：工作流预览（步骤链 + 依赖）→ 上传文档 → 创建任务 → 触发解析 → 跳转详情页 */
 export default function TaskNew() {
@@ -65,7 +68,7 @@ export default function TaskNew() {
                   <Space size={8} wrap>
                     <Text strong style={{ fontSize: 13 }}>{s.seq}. {s.name}</Text>
                     <Tag style={{ margin: 0, fontSize: 11 }} color={s.kind === 'human' ? 'orange' : 'geekblue'}>
-                      {KIND_LABEL[s.kind]}
+                      {kindLabelOf(s.kind, settings?.llm.agentMode)}
                     </Tag>
                   </Space>
                   {s.deps.map((d, i) => (

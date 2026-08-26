@@ -17,7 +17,7 @@ type taskInputPayload struct {
 	OriginalFilePath    string         `json:"original_file_path"` // 解析步骤：上传暂存；分析后：原文存档
 	ParsedText          string         `json:"parsed_text"`
 	SpecialRequirements string         `json:"special_requirements"`
-	DatasetName         string         `json:"dataset_name"`         // 旧版兼容：生成数据集步骤的命名
+	DatasetName         string         `json:"dataset_name"`             // 旧版兼容：生成数据集步骤的命名
 	DatasetTarget       *DatasetTarget `json:"dataset_target,omitempty"` // 写入声明：模式 + 目标数据集
 }
 
@@ -31,6 +31,7 @@ type TaskManager struct {
 	datasets      port.DatasetRepo
 	datasetWriter datasetStepRunner
 	broker        *Broker
+	dialogs       *DialogHub // agent 人工交互桥（SSE dialog 事件 + HTTP 应答）
 
 	mu      sync.Mutex
 	running map[string]*runEntry // taskID → 运行登记（单写者约束：每任务同时只有一个步骤 goroutine）
@@ -44,10 +45,12 @@ func NewTaskManager(
 	datasets port.DatasetRepo,
 	datasetWriter datasetStepRunner,
 ) *TaskManager {
+	broker := NewBroker()
 	return &TaskManager{
 		tasks: tasks, parse: parse, analyze: analyze,
 		datasets: datasets, datasetWriter: datasetWriter,
-		broker:  NewBroker(),
+		broker:  broker,
+		dialogs: NewDialogHub(broker),
 		running: make(map[string]*runEntry),
 	}
 }
@@ -55,6 +58,16 @@ func NewTaskManager(
 // Subscribe 订阅任务事件流（透传 Broker；调用方负责 unsub）。
 func (m *TaskManager) Subscribe(taskID string) (<-chan Event, func()) {
 	return m.broker.Subscribe(taskID)
+}
+
+// AnswerDialog 人工回答当前等待中的问题（httpgin 透传；agent ask_human 工具的出口）。
+func (m *TaskManager) AnswerDialog(taskID, callID, answer string) error {
+	return m.dialogs.Answer(taskID, callID, answer)
+}
+
+// PendingDialog 当前等待回答的问题（SSE snapshot 负载；无则 nil）——前端刷新后恢复弹窗。
+func (m *TaskManager) PendingDialog(taskID string) any {
+	return m.dialogs.PendingDialog(taskID)
 }
 
 /* ---- 创建 / 查询 / 编辑 ---- */

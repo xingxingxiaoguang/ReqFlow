@@ -222,6 +222,24 @@ func (h *handlers) completeTask(c *gin.Context) {
 	ok(c, gin.H{"task": task})
 }
 
+// answerDialog POST /api/tasks/:id/dialog {call_id, answer} → 人工回答 agent 的提问
+// （ask_human 工具阻塞等待的出口；无等待中的问题或 call_id 不匹配返回 409）。
+func (h *handlers) answerDialog(c *gin.Context) {
+	var req struct {
+		CallID string `json:"call_id" binding:"required"`
+		Answer string `json:"answer"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, "参数不完整")
+		return
+	}
+	if err := h.svc.Tasks.AnswerDialog(c.Param("id"), req.CallID, req.Answer); err != nil {
+		fail(c, 409, err.Error())
+		return
+	}
+	ok(c, gin.H{"ok": true})
+}
+
 // taskEvents POST /api/tasks/:id/events → SSE：先订阅再回放快照，实时事件增量 + 5s 心跳。
 // 断开只退订（任务照跑）；重连重收快照——切页/刷新后进度不丢。
 func (h *handlers) taskEvents(c *gin.Context) {
@@ -235,8 +253,12 @@ func (h *handlers) taskEvents(c *gin.Context) {
 	defer unsub()
 
 	startSSE(c)
-	// 事件形状统一（与实时事件一致）：data 键包裹，前端统一 payload = data?.data 解包
-	sendEvent(c, "snapshot", gin.H{"data": gin.H{"task": task, "steps": steps, "items": items}})
+	// 事件形状统一（与实时事件一致）：data 键包裹，前端统一 payload = data?.data 解包。
+	// dialog：当前等待人工回答的问题（阻塞事件，刷新/重连必经快照恢复弹窗）。
+	sendEvent(c, "snapshot", gin.H{"data": gin.H{
+		"task": task, "steps": steps, "items": items,
+		"dialog": h.svc.Tasks.PendingDialog(taskID),
+	}})
 
 	hb := newHeartbeat(5*timeSecond, func() {
 		if clientGone(c) {

@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"reqflow/internal/app/agent"
 	"reqflow/internal/domain/logic"
 	"reqflow/internal/domain/model"
 	"reqflow/internal/port"
@@ -275,7 +274,9 @@ func (r *memDatasets) CountDatasets(ctx context.Context, typ string) (int64, err
 	defer r.mu.Unlock()
 	return int64(len(r.datasets)), nil
 }
-func (r *memDatasets) CountDatasetItems(ctx context.Context, typ string) (int64, error) { return 0, nil }
+func (r *memDatasets) CountDatasetItems(ctx context.Context, typ string) (int64, error) {
+	return 0, nil
+}
 func (r *memDatasets) ReplaceDatasetItems(ctx context.Context, id string, items []port.DatasetItemVector) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -436,8 +437,10 @@ func (f *fakeDatasetWriter) Write(ctx context.Context, datasetID, taskID string,
 // fakeEmbedder 不可用态的向量化桩（写入降级纯精确匹配路径）。
 type fakeEmbedder struct{}
 
-func (f *fakeEmbedder) Generate(ctx context.Context, texts []string) ([][]float32, error) { return nil, nil }
-func (f *fakeEmbedder) Available() bool                                                 { return false }
+func (f *fakeEmbedder) Generate(ctx context.Context, texts []string) ([][]float32, error) {
+	return nil, nil
+}
+func (f *fakeEmbedder) Available() bool { return false }
 
 /* ---- 阻塞型 scripted LLM（第二轮调用挂起，模拟分析进行中） ---- */
 
@@ -577,10 +580,13 @@ func TestTaskParseToGate(t *testing.T) {
 func TestTaskAnalyzePauseResume(t *testing.T) {
 	repo := newMemTasks()
 	parse := &fakeParse{text: testDoc}
-	llm := &blockingScriptedLLM{scripted: scriptedLLM{responses: []*port.Message{toolCallMsg(), finalTextMsg(testFinalJSON)}}, entered: make(chan struct{})}
-	tool := &stubTool{}
+	llm := &blockingScriptedLLM{scripted: scriptedLLM{responses: []*port.Message{
+		toolCallMsg("c1", "read_document", `{}`),
+		toolCallMsg("c2", "write_work_items", `{"items":[`+testDraftItem+`]}`),
+		finalTextMsg("续跑完成"),
+	}}, entered: make(chan struct{})}
 	analyze := NewAnalyzeService(llm, "")
-	analyze.EnableAgentMode([]agent.Tool{tool}, 0)
+	analyze.EnableAgentMode(0)
 	mgr := newTestManager(repo, parse, analyze, nil, nil)
 
 	ctx := context.Background()
@@ -610,9 +616,6 @@ func TestTaskAnalyzePauseResume(t *testing.T) {
 	if len(cc.Messages) != 3 {
 		t.Fatalf("检查点消息 = %d 条（应为 user+assistant+toolResult）", len(cc.Messages))
 	}
-	if tool.fired != 1 {
-		t.Fatalf("暂停前工具应执行 1 次，实际 %d", tool.fired)
-	}
 	if _, err := mgr.Pause(ctx, task.ID); err == nil {
 		t.Fatal("重复暂停应报错")
 	}
@@ -637,8 +640,8 @@ func TestTaskAnalyzePauseResume(t *testing.T) {
 	if err := json.Unmarshal([]byte(got.AgentContext), &final); err != nil {
 		t.Fatalf("最终会话非法 JSON: %v", err)
 	}
-	if len(final.Messages) != 4 {
-		t.Fatalf("最终会话消息 = %d 条", len(final.Messages))
+	if len(final.Messages) != 6 {
+		t.Fatalf("最终会话消息 = %d 条（user+读+写+终稿共 6 条）", len(final.Messages))
 	}
 }
 
@@ -646,9 +649,8 @@ func TestTaskAnalyzeFailureGoesToGate(t *testing.T) {
 	repo := newMemTasks()
 	parse := &fakeParse{text: testDoc}
 	llm := &scriptedLLM{responses: []*port.Message{nil}} // agent 首轮即失败 → 降级也失败
-	tool := &stubTool{}
 	analyze := NewAnalyzeService(llm, "")
-	analyze.EnableAgentMode([]agent.Tool{tool}, 0)
+	analyze.EnableAgentMode(0)
 	mgr := newTestManager(repo, parse, analyze, nil, nil)
 
 	ctx := context.Background()
@@ -917,9 +919,9 @@ func TestDatasetWriterMergeSkipsConflicts(t *testing.T) {
 
 	ctx := context.Background()
 	values := []map[string]any{
-		{"title": "需求A"},                             // 已存在 → 跳过
+		{"title": "需求A"}, // 已存在 → 跳过
 		{"title": "需求B", "description": "更新的描述"}, // 已存在 → 跳过（merge 不更新）
-		{"title": "需求C"},                             // 新增
+		{"title": "需求C"}, // 新增
 	}
 	prepared, err := writer.Prepare(ctx, schema, DatasetTarget{Mode: WriteModeMerge, DatasetID: "ds-x"}, "task-10", values)
 	if err != nil {

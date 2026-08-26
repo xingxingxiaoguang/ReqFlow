@@ -54,7 +54,7 @@ func requirementImportWorkflow() model.Workflow {
 	return model.Workflow{
 		Type: model.TaskTypeRequirementImport,
 		Name: "需求导入",
-		Desc: "上传需求文档 → AI 拆解为结构化需求（agent 可自主查证已有数据集）→ 查重确认 → 生成需求数据集（后续任务的输入底料）",
+		Desc: "上传需求文档 → AI 拆解为结构化需求（agent 自主阅读文档并分批产出草稿，可向人工提问）→ 查重确认 → 生成需求数据集（后续任务的输入底料）",
 		Steps: []model.WorkflowStep{
 			{
 				Seq: 1, Name: "上传解析", Kind: model.StepKindParse,
@@ -71,7 +71,7 @@ func requirementImportWorkflow() model.Workflow {
 			{
 				Seq: 3, Name: "AI 分析", Kind: model.StepKindAnalyze,
 				Deps: []model.StepDependency{
-					{Data: "parsed_text + special_requirements", Tool: "agent_loop（search_requirements / list_recent_requirements / search_datasets）"},
+					{Data: "parsed_text + special_requirements", Tool: "agent_loop（read_document / search_document / write_work_items / ask_human）"},
 				},
 			},
 			{

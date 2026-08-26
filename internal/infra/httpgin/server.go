@@ -35,25 +35,26 @@ func New(svc Services) *gin.Engine {
 		api.GET("/tasks", h.listTasks)
 		api.GET("/tasks/:id", h.getTask)
 		api.PATCH("/tasks/:id", h.patchTask)
-		api.DELETE("/tasks/:id", h.archiveTask) // 归档（可恢复，退出主业务循环）
-		api.POST("/tasks/:id/items", h.taskItems)            // 门内草稿批量保存
-		api.POST("/tasks/:id/parse", h.taskParse)            // fire-and-forget 步骤触发
+		api.DELETE("/tasks/:id", h.archiveTask)   // 归档（可恢复，退出主业务循环）
+		api.POST("/tasks/:id/items", h.taskItems) // 门内草稿批量保存
+		api.POST("/tasks/:id/parse", h.taskParse) // fire-and-forget 步骤触发
 		api.POST("/tasks/:id/analyze", h.taskAnalyze)
 		api.POST("/tasks/:id/dataset", h.taskGenerateDataset)
 		api.POST("/tasks/:id/dataset/preview", h.taskDatasetPreview) // 写入预览（冲突分桶）
 		api.POST("/tasks/:id/pause", h.pauseTask)
 		api.POST("/tasks/:id/resume", h.resumeTask)
 		api.POST("/tasks/:id/complete", h.completeTask)
-		api.POST("/tasks/:id/events", h.taskEvents) // SSE：快照回放 + 实时
+		api.POST("/tasks/:id/dialog", h.answerDialog) // 人工回答 agent 的提问（ask_human）
+		api.POST("/tasks/:id/events", h.taskEvents)   // SSE：快照回放 + 实时
 
-		api.GET("/workflows", h.listWorkflows) // 任务类型目录（工作流元数据）
-		api.GET("/datasets", h.listDatasets)   // 数据集浏览（任务产出的结果集）
+		api.GET("/workflows", h.listWorkflows)             // 任务类型目录（工作流元数据）
+		api.GET("/datasets", h.listDatasets)               // 数据集浏览（任务产出的结果集）
 		api.GET("/datasets/schemas", h.listDatasetSchemas) // 数据集 schema 目录（表格/筛选驱动）
 		api.GET("/datasets/:id", h.getDataset)
 		api.GET("/datasets/:id/items", h.queryDatasetItems) // 条目筛选 + 语义检索
 		api.DELETE("/datasets/:id", h.archiveDataset)       // 归档（含条目与向量，可恢复）
 
-		api.GET("/archives", h.listArchives)                     // 归档列表
+		api.GET("/archives", h.listArchives)                      // 归档列表
 		api.POST("/archives/:kind/:id/restore", h.restoreArchive) // 归档恢复
 
 		api.POST("/match/duplicates", h.checkDuplicates)

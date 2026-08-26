@@ -17,7 +17,6 @@ import (
 	"log/slog"
 
 	"reqflow/internal/app"
-	"reqflow/internal/app/tools"
 	"reqflow/internal/infra/config"
 	"reqflow/internal/infra/database"
 	"reqflow/internal/infra/embedding"
@@ -122,10 +121,10 @@ func main() {
 	parseSvc := app.NewParseService(docParser)
 	analyzeSvc := app.NewAnalyzeService(llmClient, cfg.Workspace.DemandDir)
 	if cfg.LLM.AgentMode {
-		// agent 模式：只读工具（需求数据集查重/语料/数据集格局）接入 agent.Loop，
-		// 分析升级为「分析 → 自主查证 → 终稿」；数据集生成仍走人工确认的任务步骤
-		analyzeSvc.EnableAgentMode(tools.Build(tools.Deps{Datasets: datasetRepo}), 0)
-		logger.Info("agent 模式已启用", "tools", "search_requirements/list_recent_requirements/search_datasets")
+		// agent 模式：工具按运行构造（read/search 文档工具 + write 草稿工具 + ask 人工交互），
+		// 分析升级为「自主阅读 → 分批产出草稿 → 必要时问人」；草稿落库仍走人工确认的任务步骤
+		analyzeSvc.EnableAgentMode(cfg.LLM.AgentMaxIterations)
+		logger.Info("agent 模式已启用", "tools", "read_document/search_document/write_work_items/ask_human")
 	}
 	matchSvc := app.NewMatchService(datasetRepo, embedClient, cfg.Match.DuplicateThreshold)
 	datasetWriter := app.NewDatasetWriter(embedClient, datasetRepo, cfg.Embedding.BatchSize)
@@ -141,6 +140,7 @@ func main() {
 	var settingsView app.SettingsView
 	settingsView.WorkspaceName = cfg.Workspace.Name
 	settingsView.LLM.BaseURL, settingsView.LLM.Model, settingsView.LLM.Configured = cfg.LLM.BaseURL, cfg.LLM.Model, cfg.LLMReady()
+	settingsView.LLM.AgentMode = cfg.LLM.AgentMode
 	settingsView.Embedding.BaseURL, settingsView.Embedding.Model, settingsView.Embedding.Configured = cfg.Embedding.BaseURL, cfg.Embedding.Model, cfg.EmbeddingReady()
 	settingsView.MinerU.Enabled, settingsView.MinerU.Configured = cfg.Parser.MinerU.Enabled, cfg.MinerUReady()
 	settingsSvc := app.NewSettingsService(settingsView, llmClient)
@@ -149,8 +149,8 @@ func main() {
 	engine := httpgin.New(httpgin.Services{
 		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
 		DatasetQuery: datasetQuery, Archive: archiveSvc,
-		UploadDir:    cfg.Workspace.UploadDir,
-		MaxFileMB:    int64(cfg.Parser.MaxFileMB),
+		UploadDir: cfg.Workspace.UploadDir,
+		MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})
 	mountStatic(engine)
 

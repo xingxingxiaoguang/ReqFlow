@@ -102,18 +102,26 @@ internal/app/        用例层；全部依赖构造注入，进度用回调上�
                      触发时**同步预置任务级状态**（见 §3.3）；token 事件 150ms 节流合并（见 §4.2）；
                      错误分类（ctx 取消→paused / 其他→门内重试或终态）
   broker.go          ⭐ 进程内事件扇出（非阻塞发布，订阅/退订锁内串行）——SSE 可重接的基础
-  analyze.go         流式分析编排：prompt 渲染→流式→宽松恢复→非流式回退→产出 AnalyzeOutcome
-                     （明细+会话 JSON+存档路径，不落库——持久化移交 TaskManager）
-                     + Resume（从 agent_context 检查点续跑 loop）
+  analyze.go         流式分析编排（agent 模式：文档经工具阅读 → write_work_items 分批产出 →
+                     必要时 ask_human 问人；sink 空则降级单发直调：prompt 渲染→流式→宽松
+                     恢复→非流式回退）→ 产出 AnalyzeOutcome（明细+会话 JSON+存档路径，不落库
+                     ——持久化移交 TaskManager）+ Resume（从 agent_context 检查点重放 sink 续跑）
+  dialog.go          ⭐ DialogHub 人工交互桥：ask_human 工具阻塞登记 → SSE dialog 事件 →
+                     HTTP Answer 投递；pending 随 SSE 快照下发（刷新恢复弹窗）；ctx 取消
+                     即空回答收束（任务暂停检查点语义不变）
   dataset.go         ⭐ DatasetWriter 数据集生成用例：草稿 → 向量化（分批）→ 幂等写入数据集；
                      任务产物的落点，任务间衔接的载体；含 DraftInput/DraftSaveInput 草稿 DTO
-  prompt.go          需求分析 Prompt 模板（占位符 {current_time}/{special_requirements_section}/{text}）
+  prompt.go          需求分析 Prompt（共享指令头 + 单发输出格式段 + 文档节；agent 模式的
+                     工具指南从实际工具集组装（DocumentedTool），不在此维护——同源不漂移）
   match.go           查重（两层匹配：归一化精确 + 向量语义，语料 = 需求数据集）
   parse.go settings.go overview.go
   bug/doc.go         ⭐ 第二波 bug 域完整设计（schema/用例流/关联落地方式）——做第二波先读它；
                      落地时以新 task 类型接入（见 §5.1），需求数据集为关联输入、Bug 数据集为产出
-  tools/tools.go     agent 模式 3 个只读工具（search_requirements / list_recent_requirements /
-                     search_datasets），数据源 = 需求数据集
+  tools/             ⭐ agent 过程工具（pi 工具模式，按运行构造）：read.go（read_document
+                     行号分页+续读提示+超长行硬拆）/ search.go（search_document 正则/字面量
+                     grep 式输出+可行动截断提示）/ write.go（write_work_items+DraftSink 同
+                     key 覆盖增量产出，校验复用数据集 schema）/ ask.go（ask_human 经
+                     HumanAsker 阻塞问人）；splitLines 全包共享，行号口径一致
   agent/loop.go      pi 式 agent loop 骨架（Tool 接口 + 自然终止 + MaxIterations 安全阀 +
                      length 截断整批 fail + ToolOutput 的 output/details 拆分）；ctx 取消即
                      干净中止并返回已积累 Context——任务暂停检查点的载体
@@ -310,17 +318,23 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 均移植自 
 
 ### 5.2 agent 工具化演进
 
-**红线（产品级，不可松动）**：读操作工具可自主调用；写操作（数据集生成 / 条目写入）不得成为 loop 的自主工具——生成数据集仍由人工在任务门内点击触发（PRODUCT §4 决策四）。
+**红线（产品级，不可松动）**：读操作工具可自主调用；写持久存储（数据集生成 / 条目写入）不得成为 loop 的自主工具——生成数据集仍由人工在任务门内点击触发（PRODUCT §4 决策四）。write_work_items 写的是内存 DraftSink（草稿），落库仍走人工确认，红线未破。
 
-**待真机验收**（需要真实 `llm.api_key` 与已有需求数据集，`config.yaml` 开 `llm.agent_mode: true`）：
-- 上传含已有需求的需求文档 → agent 自主调 `search_requirements` 逐条查重 → 终稿中标注「与已有需求重复」；全程时间轴可见「思考 → 工具调用 → 终稿」轨迹（thinking 相位 + tool_trace）
+**当前工具集**（pi 工具模式，按运行构造，`tools/` 包）：
+- `read_document`：行号分页读取（offset 1 起 + limit 行数），输出带行号纯文本；行数/字符双限制先到者截断，截断附「用 offset=N 继续读取」行动性提示；单行超长按 rune 硬拆并指引改用检索
+- `search_document`：正则/字面量（literal）/忽略大小写检索，grep 式 `行号:内容` 输出 + 上下文行 `行号-内容`；命中行超长/超限均附可行动提示（翻倍 limit / 收窄 pattern / read 看整行）
+- `write_work_items`：分批产出草稿（最终产出的唯一通道，终稿契约不再是 JSON 文本）；同项目同名 key 覆盖（可修订）、replace_all 整体重写；逐条校验（复用数据集 schema 必填/枚举）即时回执 accepted/updated/rejected
+- `ask_human`：关键决策点/卡点向人工提问（可选 options 单选）；经 DialogHub 阻塞等待 HTTP 应答，pending 随 SSE 快照下发（前端刷新恢复弹窗）；ctx 取消（暂停）以错误回执收束，会话保持合法
+- 系统提示词的工具指南从实际工具集组装（`agent.DocumentedTool` 的 snippet/guidelines）——工具增删提示词自动跟随，不漂移
+
+**待真机验收**（需要真实 `llm.api_key`，`config.yaml` 开 `llm.agent_mode: true`）：
+- 上传长需求文档 → agent 分批 read_document 通读（观察续读提示是否被正确跟随）→ search_document 定位（表格/编号/负责人）→ write_work_items 分批产出（回执被拒条目应被修正重交）→ 简短总结收尾
+- ask_human 弹窗问答（含 options 单选）；刷新页面后弹窗应从快照恢复；暂停后再继续，草稿从会话重放不丢失
 - DeepSeek 等推理模型的 reasoning_content 以 thinking 相位展示；工具调用期间前端有明确进度感
-- 分析暂停 → 检查点落库 → 继续 → 轨迹与结果连续（不重复已确认轮次）
-- 数据集为空的冷启动场景（工具全 0 命中）分析不卡死、正常出稿
+- 大文档（50k+ 字）完整跑通——`llm.agent_max_iterations` 默认 32 是否充足
 
-**工具化演进方向**（扩展工具前先读 `app/match.go` 与 `app/dataset.go`）：
-- 现有 3 个只读工具：`search_requirements`（需求查重，精确 + 模糊）/ `list_recent_requirements`（语料现状）/ `search_datasets`（数据集格局）；数据源统一为数据集仓储（快、本地、零外部依赖）
-- 新工具要点：参数 JSON Schema 保持极简（string/enum 为主）——schema 越简单模型调用越稳；Execute 的 Output 返回紧凑 JSON（id/name 等字段），Details 返回人读摘要——前端工具轨迹展示用
+**工具化演进方向**（扩展工具前先读 `tools/read.go` 与 `tools/write.go`）：
+- 新工具要点：实现 `agent.DocumentedTool`（提示词自动进系统提示）；参数 Schema 保持极简且**内嵌真实限制常量**（描述与行为同源）；Output 优先纯文本（省 token），结构化回执才用紧凑 JSON；Details 返回人读摘要（前端工具轨迹）；所有截断附「怎么继续」的可行动提示（pi 模式）
 - pi 的并行工具执行与 beforeToolCall 审批钩子暂不移植，需要时按 pi 源码 `agent-loop.ts` 对应段落补（见 §4.6 不移植清单）
 
 ### 5.3 技术债清单（如实）

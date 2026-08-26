@@ -1,19 +1,34 @@
 package app
 
-// 需求分析 Prompt（自 PingCraft 验证过的模板移植，字段与协作平台工作项对齐）。
-// 占位符以字面量 {var} 形式注入（避免与 JSON 大括号冲突的模板引擎）。
+import (
+	"fmt"
+	"strings"
+	"time"
+
+	"reqflow/internal/app/agent"
+	"reqflow/internal/app/tools"
+)
+
+// 需求分析 Prompt。结构拆分为四段：
+//   - 共享指令头（角色 + 任务 + 草稿字段规范 + 分析要点）：单发/agent 两模式共用，
+//     措辞模式中立（不预设输出形态）——单发的 JSON 契约在输出格式段、agent 的
+//     产出通道在工具指南，各自声明，避免「要求输出 JSON 数组」与「经工具提交」
+//     自相矛盾导致模型跳过工具直接单轮作答
+//   - 输出格式段（JSON 数组契约）：仅单发直调使用
+//   - 额外要求段：用户补充，空则整体不出现
+//   - 文档节：单发模式拼进 user 消息；agent 模式替换为文档清单（原文经工具阅读）
 //
-// 结构拆分为「指令头 + 文档节」：
-//   - 单发直调（默认）：头 + 文档节拼成一条 user 消息（与拆分前的输出逐字等价）
-//   - agent 模式（llm.agent_mode）：指令头 + 工具指南进 SystemPrompt，
-//     文档节独占首轮 user 消息——需求原文只出现一次，控制会话膨胀
+// agent 模式的工具使用指南不在此维护——renderAgentSystem 从实际注入的工具集
+// 组装（agent.DocumentedTool），工具增删提示词自动跟随，不会漂移。
+// 占位符以字面量 {var} 形式注入（避免与 JSON 大括号冲突的模板引擎）。
+
 const analyzePromptHead = `你是一位专业的项目管理助手和技术顾问，擅长分析需求文档并提取结构化的工作项信息。
 
 ## 任务
 分析以下需求文档，识别其中的所有工作项（需求、任务、功能点等），并按项目分组整理。
 
-## 输出要求
-返回一个 JSON 数组，每个元素代表一个工作项，包含以下字段：
+## 草稿字段规范
+每个工作项草稿包含以下字段：
 
 ### 必填字段
 - **project_name** (string): 该工作项所属的项目名称
@@ -38,9 +53,10 @@ const analyzePromptHead = `你是一位专业的项目管理助手和技术顾�
 4. 完整性：提取所有明确的需求点，不遗漏
 5. 负责人识别：注意"由XXX负责"等表述
 6. 状态识别：仅提取文档明确写出的状态
-7. 解决方案：专业、具体、可执行
+7. 解决方案：专业、具体、可执行`
 
-## 输出格式
+// analyzeOutputFormat 单发直调的输出契约（agent 模式不使用——产出走 write_work_items）。
+const analyzeOutputFormat = `## 输出格式
 只输出 JSON 数组，不要包含任何其他文字、解释或 markdown 代码块标记。
 
 示例输出：
@@ -57,9 +73,7 @@ const analyzePromptHead = `你是一位专业的项目管理助手和技术顾�
     "state": null,
     "solution_suggestion": "1. 设计注册接口\n2. bcrypt 加密密码\n3. 集成邮件/短信验证码\n4. 前端表单与验证\n5. 防重复提交"
   }
-]
-
-{special_requirements_section}`
+]`
 
 const analyzeDocSection = `---
 
@@ -69,24 +83,73 @@ const analyzeDocSection = `---
 
 ---`
 
-// agentToolGuidance agent 模式追加到 SystemPrompt 的工具使用规则（HANDOVER §12）。
-// 只读查证、不编造、终稿仍必须是纯 JSON 数组——单发模式的输出契约不变。
-const agentToolGuidance = `## 工具使用指南
-你可以调用只读查询工具核实信息，产出更准确的草稿：
-- search_projects：把文档中的项目名对应到真实项目；草稿 project_name 应优先使用返回的真实项目名
-- search_work_items：按编号（如 WI-123）或标题检查同项目是否已有相同/相似工作项；疑似重复时在该条草稿的 solution_suggestion 末尾追加一行「【重复风险】<编号 标题>」说明
-- get_work_item_types / get_project_members：核实类型与负责人是否真实存在
-- list_recent_work_items：了解项目现有工作项的表述习惯
-
-规则：
-1. 先查证后落稿：对不确定的项目名、类型、负责人，先调用工具核实再写入草稿字段
-2. 工具查不到的信息按默认规则处理（推断或留空），不得编造工具结果
-3. 最终回复必须且只能是 JSON 数组（格式与前述输出要求一致），不得夹杂工具调用过程说明`
-
 // buildSpecialSection 组装「## 额外要求」章节；用户未填写时整体不出现。
 func buildSpecialSection(special string) string {
 	if special == "" {
 		return ""
 	}
 	return "## 额外要求\n以下为用户针对本次分析补充的要求，优先级高于前述默认约定，需严格遵循：\n" + special
+}
+
+// renderPromptHead 渲染共享指令头（填充时间占位符）。
+func renderPromptHead(now time.Time) string {
+	return strings.ReplaceAll(analyzePromptHead, "{current_time}", now.Format(time.RFC3339))
+}
+
+// renderAnalyzePrompt 单发模式：指令头 + 输出格式 + 额外要求 + 文档节拼为完整 prompt
+// （一条 user 消息；与拆分前的输出逐字等价）。
+func renderAnalyzePrompt(text string, now time.Time, special string) string {
+	return strings.Join([]string{
+		renderPromptHead(now),
+		strings.ReplaceAll(analyzeOutputFormat, "{current_time}", now.Format(time.RFC3339)),
+		buildSpecialSection(special),
+		strings.ReplaceAll(analyzeDocSection, "{text}", text),
+	}, "\n\n")
+}
+
+// renderAgentSystem agent 模式 SystemPrompt：共享指令头 + 额外要求 + 工具使用指南。
+// 指南从实际注入的工具集组装（agent.DocumentedTool 的 snippet/guidelines）——
+// 工具增删提示词自动跟随，杜绝引用已下线工具的漂移。
+func renderAgentSystem(now time.Time, special string, toolset []agent.Tool) string {
+	var sb strings.Builder
+	sb.WriteString(renderPromptHead(now))
+	if sp := buildSpecialSection(special); sp != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(sp)
+	}
+	sb.WriteString("\n\n## 工具使用指南\n")
+	sb.WriteString("文档原文不直接提供（见首条消息的文档清单），你通过工具自主阅读并产出草稿：\n")
+	for _, t := range toolset {
+		if dt, ok := t.(agent.DocumentedTool); ok {
+			sb.WriteString("- ")
+			sb.WriteString(dt.PromptSnippet())
+			sb.WriteString("\n")
+		}
+	}
+	var guidelines []string
+	for _, t := range toolset {
+		if dt, ok := t.(agent.DocumentedTool); ok {
+			guidelines = append(guidelines, dt.PromptGuidelines()...)
+		}
+	}
+	if len(guidelines) > 0 {
+		sb.WriteString("\n规则：\n")
+		for i, g := range guidelines {
+			fmt.Fprintf(&sb, "%d. %s\n", i+1, g)
+		}
+	}
+	return sb.String()
+}
+
+// renderDocManifest agent 模式首轮 user 消息：文档清单（原文不进上下文，经工具阅读）。
+// 带首步行动指引——模型最容易犯的错是不调工具直接凭空作答，首条消息明确第一步动作。
+// 其余工作方式由 SystemPrompt 的工具指南约束（同源不漂移）。
+func renderDocManifest(doc tools.DocSource) string {
+	return fmt.Sprintf(`## 待分析文档
+
+- 文件名：%s
+- 规模：%d 行 / %d 字
+
+文档原文不在本消息中，你必须先调用 read_document（offset=1）开始阅读，再按系统提示
+的工具使用指南完成分析——不要在没有阅读原文的情况下直接给出结果。`, doc.FileName, doc.LineCount(), doc.RuneCount())
 }

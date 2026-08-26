@@ -268,7 +268,7 @@ export interface TaskDetail {
 
 export interface SettingsView {
   workspaceName: string
-  llm: { baseUrl: string; model: string; configured: boolean }
+  llm: { baseUrl: string; model: string; configured: boolean; agentMode: boolean }
   embedding: { baseUrl: string; model: string; configured: boolean }
   mineru: { enabled: boolean; configured: boolean }
 }
@@ -314,4 +314,20 @@ export interface ToolTrace {
   args?: string
   status: 'running' | 'done' | 'error'
   details?: string
+}
+
+/** agent 人工交互事件（ask_human 工具 ↔ 前端弹窗） */
+export interface DialogEvent {
+  phase: 'ask' | 'close'
+  call_id: string
+  question?: string
+  options?: string[]
+  reason?: string // close：answered | cancelled
+}
+
+/** 当前等待回答的提问（SSE snapshot 恢复用；无则 null） */
+export interface PendingDialog {
+  callId: string
+  question: string
+  options?: string[]
 }

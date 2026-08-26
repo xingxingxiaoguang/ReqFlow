@@ -9,9 +9,10 @@ import {
 } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../../api/tasks'
+import { api } from '../../api/client'
 import { useTaskEvents, traceFromStepData } from '../../hooks/useTaskEvents'
 import { parseTaskWorkflow } from '../../api/types'
-import type { Task, TaskInput, TaskStep, TaskType, ToolTrace, StepKind } from '../../api/types'
+import type { Task, TaskInput, TaskStep, TaskType, ToolTrace, StepKind, SettingsView } from '../../api/types'
 import ConfirmParsePanel from './panels/ConfirmParsePanel'
 import AnalysisPane from './panels/AnalysisPane'
 import MatchImportPanel from './panels/MatchImportPanel'
@@ -40,13 +41,16 @@ const STEP_COLOR: Record<TaskStep['Status'], string> = {
   paused: 'gold',
 }
 
-/** 步骤种类 → 人读标签（工作流元数据展示） */
-const KIND_LABEL: Record<StepKind, string> = {
+/** 步骤种类 → 人读标签（工作流元数据展示；analyze 按实际模式显示，见 kindLabelOf） */
+const KIND_LABEL: Record<Exclude<StepKind, 'analyze'>, string> = {
   parse: '解析',
   human: '人工门',
-  analyze: 'AI agent',
   dataset: '生成数据集',
 }
+
+/** analyze 步骤标签如实反映执行模式（agent_mode 开关决定，不再无条件标 AI agent） */
+const kindLabelOf = (kind: StepKind, agentMode?: boolean): string =>
+  kind === 'analyze' ? (agentMode ? 'AI agent' : 'AI 分析') : KIND_LABEL[kind]
 
 /** 任务详情页：头部（编辑/生命周期操作） + 步骤时间线 + 按阶段切换的工作区面板 */
 export default function TaskDetail() {
@@ -59,6 +63,9 @@ export default function TaskDetail() {
     queryFn: () => tasksApi.get(id!),
     enabled: !!id,
   })
+  // 执行模式（llm.agent_mode）：步骤标签如实显示，避免 UI 承诺 agent 而后端单轮直调
+  const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: () => api.get<SettingsView>('/api/settings') })
+  const agentMode = settings?.llm.agentMode
   const stream = useTaskEvents(id)
   const [editingTitle, setEditingTitle] = useState(false)
   const [titleDraft, setTitleDraft] = useState('')
@@ -216,7 +223,7 @@ export default function TaskDetail() {
                         <StepStatusTag status={s.Status} />
                         {def && (
                           <Tag style={{ margin: 0, fontSize: 11 }} color={def.kind === 'human' ? 'orange' : 'geekblue'}>
-                            {KIND_LABEL[def.kind]}
+                            {kindLabelOf(def.kind, agentMode)}
                           </Tag>
                         )}
                       </Space>

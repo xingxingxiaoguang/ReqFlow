@@ -4,6 +4,7 @@ import { useQueryClient } from '@tanstack/react-query'
 import { postSSE } from '../api/sse'
 import type {
   Task, TaskDetail, TaskStep, TaskItem, ToolEvent, ToolTrace, TokenEvent,
+  DialogEvent, PendingDialog,
 } from '../api/types'
 
 const TAIL_LEN = 3000
@@ -13,6 +14,8 @@ const TAIL_LEN = 3000
  * - snapshot 整包写入 react-query 缓存（['task', id]）；task/step/items 事件浅合并补丁；
  * - token/progress/tool_trace 属瞬时流，只进页面本地 state，不落缓存（重连后工具轨迹从
  *   step.data 回放，token 尾区从空开始——服务端不落库 token，避免会话膨胀）；
+ * - dialog（agent 人工提问）是必须回答的阻塞事件：除实时事件外，快照携带服务端
+ *   pending 状态，刷新/重连后据此恢复弹窗（幂等：按 call_id 去重）；
  * - 页面卸载即 abort（服务端退订），任务照跑，重进页面重新订阅收快照。
  */
 export interface TaskStream {
@@ -25,6 +28,7 @@ export interface TaskStream {
   toolTrace: ToolTrace[]
   importProgress: { current: number; total: number; lastTitle?: string; lastStatus?: string }
   importLog: { title: string; status: string }[]
+  dialog: PendingDialog | null
 }
 
 export function useTaskEvents(taskId: string | undefined): TaskStream {
@@ -34,6 +38,7 @@ export function useTaskEvents(taskId: string | undefined): TaskStream {
     thinkingTail: '', answerTail: '', answerCount: 0, phase: 'idle',
     elapsedSec: 0, analyzeMessage: '', toolTrace: [],
     importProgress: { current: 0, total: 0 }, importLog: [],
+    dialog: null,
   })
   const streamRef = useRef(stream)
   streamRef.current = stream
@@ -56,6 +61,12 @@ export function useTaskEvents(taskId: string | undefined): TaskStream {
       switch (event) {
         case 'snapshot': {
           qc.setQueryData<TaskDetail>(['task', taskId], { task: payload.task, steps: payload.steps, items: payload.items })
+          // 服务端 pending 的人工提问随快照恢复（无则清空——重连前可能已被回答/取消）
+          const d = payload.dialog as DialogEvent | null
+          patch((s) => ({
+            ...s,
+            dialog: d ? { callId: d.call_id, question: d.question ?? '', options: d.options } : null,
+          }))
           // 已暂停/终态的任务不再有实时流
           if (payload.task?.Status !== 'running') stopElapsed()
           return
@@ -80,6 +91,18 @@ export function useTaskEvents(taskId: string | undefined): TaskStream {
         }
         case 'items': {
           qc.setQueryData<TaskDetail>(['task', taskId], (old) => (old ? { ...old, items: payload as TaskItem[] } : old))
+          return
+        }
+        case 'dialog': {
+          const d = payload as DialogEvent
+          patch((s) => {
+            if (d.phase === 'ask') {
+              if (s.dialog?.callId === d.call_id) return s // 幂等：重连重收不重复弹
+              return { ...s, dialog: { callId: d.call_id, question: d.question ?? '', options: d.options } }
+            }
+            // close：answered | cancelled（任意 call_id 的关闭都清理当前弹窗）
+            return s.dialog ? { ...s, dialog: null } : s
+          })
           return
         }
         case 'token': {

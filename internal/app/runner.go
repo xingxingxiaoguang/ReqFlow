@@ -21,10 +21,10 @@ type parseStepRunner interface {
 }
 
 type analyzeStepRunner interface {
-	Run(ctx context.Context, fileName, text, specialReqs string, onProgress func(AnalyzeProgress),
+	Run(ctx context.Context, in AnalyzeInput, onProgress func(AnalyzeProgress),
 		onToken func(AnalyzeDelta), onTool func(AnalyzeToolEvent)) (*AnalyzeOutcome, error)
-	// Resume 从已落库会话（检查点）续跑分析（specialReqs 供降级单发重建 prompt）。
-	Resume(ctx context.Context, cc *port.Context, fileName, text, specialReqs string,
+	// Resume 从已落库会话（检查点）续跑分析（special 供降级单发重建 prompt）。
+	Resume(ctx context.Context, cc *port.Context, in AnalyzeInput,
 		onProgress func(AnalyzeProgress), onToken func(AnalyzeDelta), onTool func(AnalyzeToolEvent)) (*AnalyzeOutcome, error)
 }
 
@@ -435,10 +435,16 @@ func (m *TaskManager) execAnalyzeStep(workCtx, pc context.Context, task *model.T
 
 	var out *AnalyzeOutcome
 	var err error
+	ain := AnalyzeInput{
+		TaskID: task.ID, FileName: task.Title,
+		Text: in.ParsedText, Special: in.SpecialRequirements,
+		Dialog: m.dialogs,
+	}
+	defer m.dialogs.Clear(task.ID) // 人工交互兜底清理（Ask 出口自清，通常无事可做）
 	if cc != nil {
-		out, err = m.analyze.Resume(workCtx, cc, task.Title, in.ParsedText, in.SpecialRequirements, onProgress, onToken, onTool)
+		out, err = m.analyze.Resume(workCtx, cc, ain, onProgress, onToken, onTool)
 	} else {
-		out, err = m.analyze.Run(workCtx, task.Title, in.ParsedText, in.SpecialRequirements, onProgress, onToken, onTool)
+		out, err = m.analyze.Run(workCtx, ain, onProgress, onToken, onTool)
 	}
 	if err != nil {
 		traceStep()

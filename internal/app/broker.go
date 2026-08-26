@@ -3,8 +3,9 @@ package app
 import "sync"
 
 // Event 任务事件的统一载荷（SSE 事件名 = ev.Type，httpgin 原样透传）。
-// 事件词表：task | step | items | progress | token | tool_trace | error
-// 持久化不变量：Runner 先落库再 Publish（重放由快照兜底，实时事件只是增量）。
+// 事件词表：task | step | items | progress | token | tool_trace | dialog | error
+// 持久化不变量：Runner 先落库再 Publish（重放由快照兜底，实时事件只是增量；
+// dialog 的 pending 状态同样随快照下发——它是必须回答的阻塞事件）。
 type Event struct {
 	Type   string `json:"type"`
 	TaskID string `json:"task_id"`

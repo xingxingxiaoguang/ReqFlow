@@ -48,6 +48,8 @@ export const tasksApi = {
   pause: (id: string) => api.post<{ task: Task }>(`/api/tasks/${id}/pause`),
   resume: (id: string) => api.post<{ task: Task }>(`/api/tasks/${id}/resume`),
   complete: (id: string) => api.post<{ task: Task }>(`/api/tasks/${id}/complete`),
+  answerDialog: (id: string, callId: string, answer: string) =>
+    api.post<{ ok: boolean }>(`/api/tasks/${id}/dialog`, { call_id: callId, answer }),
   archiveTask: (id: string) => api.del<{ archived: boolean }>(`/api/tasks/${id}`),
   archiveDataset: (id: string) => api.del<{ archived: boolean }>(`/api/datasets/${id}`),
   listArchives: (params: { kind?: ArchiveKind; type?: string; limit?: number } = {}) => {

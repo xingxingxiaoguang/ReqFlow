@@ -57,7 +57,7 @@ make build        # → bin/reqflow
 |------|-----|------|
 | server | port / log_level / log_format | HTTP 端口、日志级别（debug~error）、日志格式（text/json） |
 | database | dsn / auto_migrate / retry_* | PG 连接串；启动自动迁移 |
-| llm | base_url / api_key / model / temperature / max_tokens / timeout_ms / **agent_mode** | OpenAI 兼容协议（DeepSeek/GLM/Qwen/Kimi 适用）；`agent_mode: true` 时需求分析启用 agent loop（只读工具自主查证，见 HANDOVER §12） |
+| llm | base_url / api_key / model / temperature / max_tokens / timeout_ms / **agent_mode** / agent_max_iterations | OpenAI 兼容协议（DeepSeek/GLM/Qwen/Kimi 适用）；`agent_mode: true` 时需求分析启用 agent loop（read_document / search_document / write_work_items / ask_human 四工具，见 HANDOVER §5.2）；agent_max_iterations 迭代上限默认 32 |
 | embedding | base_url / api_key / model / dimensions / batch_size | 语义匹配向量（默认 bge-m3 1024 维）；不配置则自动降级为仅精确匹配 |
 | pingcode | host / client_id / client_secret / grant_type / workload_unit / import_concurrency / sync_* | 企业授权凭据；工时单位 minute/hour/day |
 | match | duplicate_threshold / project_top_n | 查重阈值（默认 0.75）与项目推荐数 |
@@ -70,7 +70,8 @@ make build        # → bin/reqflow
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/api/tasks/:id/parse` | multipart 上传 → fire-and-forget 解析步骤（进度走 SSE） |
-| POST | `/api/tasks/:id/analyze` | fire-and-forget AI 分析步骤（agent 模式带只读工具查证） |
+| POST | `/api/tasks/:id/analyze` | fire-and-forget AI 分析步骤（agent 模式：读取/检索/草稿写入/问人四工具） |
+| POST | `/api/tasks/:id/dialog` | 人工回答 agent 的提问（`{call_id, answer}`；ask_human 的出口） |
 | POST | `/api/tasks/:id/dataset` | fire-and-forget 写入数据集：`{mode: create\|merge\|upsert\|replace, dataset_id?, dataset_name?}`（写入声明见下） |
 | POST | `/api/tasks/:id/dataset/preview` | 写入预览：新增/更新/无变化/非法 分桶（不落库） |
 | GET/POST/PATCH | `/api/tasks`（`/:id`、`/:id/items`、`/:id/pause`、`/:id/resume`、`/:id/complete`、`/:id/events`） | 任务生命周期 + 门内草稿 + SSE 事件流 |
@@ -121,6 +122,6 @@ make build          # 前端构建 + embed 单二进制
 
 ## 第二波路线图（扩展点已预留）
 
-- **✅ agent 模式已交付**（`llm.agent_mode`）：PingCode 查询能力包装为 5 个只读工具接入 `agent.Loop`，分析从单发提取升级为「分析 → 自主查证 → 终稿」；分析会话（Context）随记录落库，为 refine 微调铺路；前端分析页展示工具查证轨迹
+- **✅ agent 模式已交付**（`llm.agent_mode`）：分析从单发提取升级为 pi 式工具驱动——`read_document` 分批阅读（行号分页 + 续读提示）/ `search_document` 正则检索 / `write_work_items` 分批产出草稿（同 key 覆盖可修订，逐条校验回执）/ `ask_human` 关键决策点人工交互（SSE 弹窗 + HTTP 应答）；分析会话（Context）随记录落库，暂停续跑时草稿从会话重放；系统提示词的工具指南从实际工具集组装，不漂移；前端分析页展示工具轨迹与人工交互弹窗
 - **Bug 处理链路**：Excel 导入（xlsx 行级解析已就绪）→ 编号/语义双层匹配需求（top3 人工确认）→ P0~P3 批量 LLM 定级 → 确认后同步缺陷到平台（关联关系写入描述；PingCode 6.13.5 暂无关联 API）
 - PingCode OAuth 用户授权（TokenSource 扩展点）、多协作平台（PlatformClient 接口）、refine 微调会话（AgentContext 载体已落库）、自定义属性映射

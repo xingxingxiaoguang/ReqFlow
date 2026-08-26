@@ -43,15 +43,18 @@ type Config struct {
 		MaxTokens   int     `yaml:"max_tokens"  env:"REQFLOW_LLM_MAX_TOKENS"`
 		TimeoutMs   int     `yaml:"timeout_ms"  env:"REQFLOW_LLM_TIMEOUT_MS"`
 		AgentMode   bool    `yaml:"agent_mode"  env:"REQFLOW_LLM_AGENT_MODE"`
+		// AgentMaxIterations agent loop 迭代上限（一轮 = 一次 LLM 调用 + 工具执行）。
+		// <= 0 时用默认 32：分批阅读大文档需多轮（50k 字 ≈ 10+ 读取轮 + 写入轮）。
+		AgentMaxIterations int `yaml:"agent_max_iterations" env:"REQFLOW_LLM_AGENT_MAX_ITERATIONS"`
 	} `yaml:"llm"`
 
 	Embedding struct {
-		BaseURL   string `yaml:"base_url"   env:"REQFLOW_EMBEDDING_BASE_URL"`
-		APIKey    string `yaml:"api_key"    env:"REQFLOW_EMBEDDING_API_KEY"`
-		Model     string `yaml:"model"      env:"REQFLOW_EMBEDDING_MODEL"`
-		Dimensions int   `yaml:"dimensions" env:"REQFLOW_EMBEDDING_DIMENSIONS"`
-		BatchSize int    `yaml:"batch_size" env:"REQFLOW_EMBEDDING_BATCH_SIZE"`
-		TimeoutMs int    `yaml:"timeout_ms" env:"REQFLOW_EMBEDDING_TIMEOUT_MS"`
+		BaseURL    string `yaml:"base_url"   env:"REQFLOW_EMBEDDING_BASE_URL"`
+		APIKey     string `yaml:"api_key"    env:"REQFLOW_EMBEDDING_API_KEY"`
+		Model      string `yaml:"model"      env:"REQFLOW_EMBEDDING_MODEL"`
+		Dimensions int    `yaml:"dimensions" env:"REQFLOW_EMBEDDING_DIMENSIONS"`
+		BatchSize  int    `yaml:"batch_size" env:"REQFLOW_EMBEDDING_BATCH_SIZE"`
+		TimeoutMs  int    `yaml:"timeout_ms" env:"REQFLOW_EMBEDDING_TIMEOUT_MS"`
 	} `yaml:"embedding"`
 
 	Match struct {
@@ -61,12 +64,12 @@ type Config struct {
 	Parser struct {
 		MaxFileMB int `yaml:"max_file_mb" env:"REQFLOW_PARSER_MAX_FILE_MB"`
 		MinerU    struct {
-			Enabled       bool   `yaml:"enabled"        env:"REQFLOW_PARSER_MINERU_ENABLED"`
-			APIURL        string `yaml:"api_url"        env:"REQFLOW_PARSER_MINERU_API_URL"`
-			APIToken      string `yaml:"api_token"      env:"REQFLOW_PARSER_MINERU_API_TOKEN"`
-			ModelVersion  string `yaml:"model_version"  env:"REQFLOW_PARSER_MINERU_MODEL_VERSION"`
-			TimeoutMs     int    `yaml:"timeout_ms"     env:"REQFLOW_PARSER_MINERU_TIMEOUT_MS"`
-			PollIntervalMs int  `yaml:"poll_interval_ms" env:"REQFLOW_PARSER_MINERU_POLL_INTERVAL_MS"`
+			Enabled        bool   `yaml:"enabled"        env:"REQFLOW_PARSER_MINERU_ENABLED"`
+			APIURL         string `yaml:"api_url"        env:"REQFLOW_PARSER_MINERU_API_URL"`
+			APIToken       string `yaml:"api_token"      env:"REQFLOW_PARSER_MINERU_API_TOKEN"`
+			ModelVersion   string `yaml:"model_version"  env:"REQFLOW_PARSER_MINERU_MODEL_VERSION"`
+			TimeoutMs      int    `yaml:"timeout_ms"     env:"REQFLOW_PARSER_MINERU_TIMEOUT_MS"`
+			PollIntervalMs int    `yaml:"poll_interval_ms" env:"REQFLOW_PARSER_MINERU_POLL_INTERVAL_MS"`
 		} `yaml:"mineru"`
 	} `yaml:"parser"`
 
@@ -193,9 +196,13 @@ func (c *Config) Validate() (errs, warns []string) {
 }
 
 // LLMReady / EmbeddingReady / MinerUReady 供运行时做功能可用性判断。
-func (c *Config) LLMReady() bool       { return c.LLM.APIKey != "" && c.LLM.BaseURL != "" && c.LLM.Model != "" }
-func (c *Config) EmbeddingReady() bool { return c.Embedding.APIKey != "" && c.Embedding.BaseURL != "" && c.Embedding.Model != "" }
-func (c *Config) MinerUReady() bool    { return c.Parser.MinerU.Enabled && c.Parser.MinerU.APIToken != "" }
+func (c *Config) LLMReady() bool {
+	return c.LLM.APIKey != "" && c.LLM.BaseURL != "" && c.LLM.Model != ""
+}
+func (c *Config) EmbeddingReady() bool {
+	return c.Embedding.APIKey != "" && c.Embedding.BaseURL != "" && c.Embedding.Model != ""
+}
+func (c *Config) MinerUReady() bool { return c.Parser.MinerU.Enabled && c.Parser.MinerU.APIToken != "" }
 
 // FilledSecrets 列出已配置非空的敏感字段名（仅名称不含值，用于启动日志自检）。
 func (c *Config) FilledSecrets() []string {
@@ -223,12 +230,20 @@ func CheckExampleLeak(path string) []string {
 		return nil
 	}
 	var probe struct {
-		LLM       struct{ APIKey string `yaml:"api_key"` } `yaml:"llm"`
-		Embedding struct{ APIKey string `yaml:"api_key"` } `yaml:"embedding"`
-		Parser    struct {
-			MinerU struct{ APIToken string `yaml:"api_token"` } `yaml:"mineru"`
+		LLM struct {
+			APIKey string `yaml:"api_key"`
+		} `yaml:"llm"`
+		Embedding struct {
+			APIKey string `yaml:"api_key"`
+		} `yaml:"embedding"`
+		Parser struct {
+			MinerU struct {
+				APIToken string `yaml:"api_token"`
+			} `yaml:"mineru"`
 		} `yaml:"parser"`
-		Security struct{ EncryptionKey string `yaml:"encryption_key"` } `yaml:"security"`
+		Security struct {
+			EncryptionKey string `yaml:"encryption_key"`
+		} `yaml:"security"`
 	}
 	if err := yaml.Unmarshal(raw, &probe); err != nil {
 		return nil

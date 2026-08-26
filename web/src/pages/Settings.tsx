@@ -36,6 +36,11 @@ export default function Settings() {
         <Descriptions.Item label="协议"><Space><ApiOutlined />OpenAI 兼容</Space></Descriptions.Item>
         <Descriptions.Item label="Base URL">{data.llm.baseUrl}</Descriptions.Item>
         <Descriptions.Item label="模型">{data.llm.model}</Descriptions.Item>
+        <Descriptions.Item label="分析模式">
+          {data.llm.agentMode
+            ? <Tag color="geekblue">AI agent（工具驱动：读取/检索/草稿写入/问人）</Tag>
+            : <Tag color="default">单轮直调（llm.agent_mode: true 开启 agent）</Tag>}
+        </Descriptions.Item>
       </Descriptions>
 
       <Descriptions title="语义匹配（Embedding）" bordered size="small" column={2} style={{ marginTop: 24 }}>

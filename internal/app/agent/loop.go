@@ -36,6 +36,15 @@ type Tool interface {
 	Execute(ctx context.Context, call port.ToolCall, onProgress func(string)) ToolOutput
 }
 
+// DocumentedTool 工具自带提示词贡献（pi 的 promptSnippet/promptGuidelines 模式）：
+// 系统提示词的「工具使用指南」段从实际注入的工具集组装——工具增删，提示词自动跟随，
+// 从结构上杜绝提示词引用已下线工具的漂移。可选接口：未实现的工具不在指南中出现。
+type DocumentedTool interface {
+	Tool
+	PromptSnippet() string      // 一行能力说明（工具清单用）
+	PromptGuidelines() []string // 使用规则（细则列表）
+}
+
 // Config loop 配置。
 type Config struct {
 	// MaxIterations 最大迭代轮数（一次迭代 = 一次 LLM 调用 + 其工具执行）。默认 8。
