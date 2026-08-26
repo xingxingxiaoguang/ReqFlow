@@ -87,6 +87,8 @@ case "$MODE" in
     ;;
   tracked)
     # 注意：macOS bash 3.2 在 $() 内嵌套 case 的 ) 解析有怪癖，用 awk 过滤替代
+    # 与 staged 模式语义对齐：注释行（# / // / * 开头）不判泄漏，
+    # 否则会扫到本脚本与文档中自身的示例连接串（护栏自伤）
     FOUND+="$(git ls-files | awk '
       /\.lock$|\.sum$|\.svg$|\.png$|\.ico$|\.woff2?$|pnpm-lock\.yaml|^cmd\/reqflow\/dist\// { next }
       { print }
@@ -94,7 +96,16 @@ case "$MODE" in
       [ -f "$f" ] || continue
       file "$f" 2>/dev/null | grep -q text || continue
       grep -nH '' "$f" 2>/dev/null
-    done | judge)"
+    done | awk '
+      {
+        content = $0
+        sub(/^[^:]+:[0-9]+:/, "", content)
+        stripped = content
+        sub(/^[[:space:]]+/, "", stripped)
+        if (stripped ~ /^(#|\/\/|\*)/) next
+        print
+      }
+    ' | judge)"
     ;;
   *)
     echo "用法: $0 {files <路径…> | staged | tracked}" >&2
