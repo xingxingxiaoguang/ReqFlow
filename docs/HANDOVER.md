@@ -132,7 +132,7 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + Zustand + r
 | `projects` / `work_items` | 同步缓存。PK=平台 ID；`remote_updated_at TEXT`（原样字符串做增量比对）；`is_archived` 软删；**`embedding vector(1024)` 行内列** + HNSW 余弦索引（`WHERE NOT is_archived` 部分索引） |
 | `work_item_types/states/priorities` | 名称→UUID 映射底料；复合 PK（含 project_id） |
 | `work_item_properties` | 建了表但第一波不拉取（扩展点） |
-| `import_records` + `import_record_items` | 分析与导入留痕；items 即草稿快照，导入结果逐条回写（status/pingcode_id/identifier/error） |
+| `import_records` + `import_record_items` | 分析与导入留痕；items 即草稿快照，导入结果逐条回写（status/pingcode_id/identifier/error）；`agent_context`（迁移 0002）= 分析会话 Context 的 JSON 文本，refine 微调载体 |
 
 **向量维度是硬约束**：迁移固定 1024（bge-m3），`config.Validate()` 会拦截 `embedding.dimensions != 1024`。换向量模型 = 改迁移 + 清库重建 + 改配置，不是改个数字就行。
 
@@ -183,7 +183,7 @@ project_id 形如 `new:名称` → `GenerateProjectIdentifier` + `CreateProject`
 | 端点 | 类型 | 说明 |
 |------|------|------|
 | `/parse` | SSE | multipart file → progress/parsed/error |
-| `/analyze` | SSE | {text,file_name,special_requirements} → progress/token{delta,phase}/complete{record_id,items} |
+| `/analyze` | SSE | {text,file_name,special_requirements} → progress/token{delta,phase}/tool{phase,call_id,name,args?,details?}/complete{record_id,items} |
 | `/sync` | SSE | progress{stage,message} → complete{result 统计} |
 | `/import` | SSE | {record_id,project_id,items:[{id,draft}]} → progress{current,total,title,status}/project_created/complete |
 | `/match/projects` | JSON | {names:[…]} → {matches:[{id,name,score,match_type,suggested_name}]} |
@@ -244,7 +244,8 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 均移植自
 
 **环境（本机）**：
 - `proxy.golang.org` 超时 → 已 `go env -w GOPROXY=https://goproxy.cn,direct`（机器级配置）
-- Docker Hub 被墙 → pgvector 镜像走 `docker.m.daocloud.io` 拉取后打回标准 tag（首次操作过，本机已有镜像）；Docker 是 OrbStack，`open -a OrbStack` 启动
+- 容器运行时是 **Docker Desktop**（context `desktop-linux`）；Docker Hub 直拉 `pgvector/pgvector:pg16` 会卡住，已改走 `docker pull docker.m.daocloud.io/pgvector/pgvector:pg16` 后打回标准 tag（本机已有镜像）
+- 会话启动链可能残留 `GOROOT=/usr/local/go`（旧 1.18）——会把 brew go（1.27）钉到旧标准库上导致 vet/build 报 "package cmp is not in std"；已在 `~/.zshrc` go 段加 `unset GOROOT` 兜底，脚本/CI 场景用 `env -u GOROOT` 前缀
 - 本机 `grep` 被 shell 函数包装为 **ugrep**（ZCode 工具链），行为与 BSD grep 有差异；脚本中复杂正则已实测通过，但调试时注意 `which -a grep`
 - pnpm 可用；前端依赖已装好（`web/node_modules`）
 
@@ -274,6 +275,16 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 均移植自
 
 > 背景：LLM 层已完成 pi 化重构（§8.5）——会话化消息模型、双协议适配器、loop 骨架就位，
 > v1 分析仍为单发直调。本节是接手「专属 agent loop」落地所需的全部上下文。
+>
+> **✅ 已落地（2026-08-26）**：`llm.agent_mode: true` 开启后走 agent 链路。落点：
+> `internal/app/tools/tools.go`（5 个只读工具 + 成员进程内缓存，均 mock 单测覆盖）、
+> `app/analyze.go`（runAgent/runClassic 双路径，loop 彻底失败自动降级单发）、
+> `app/prompt.go`（模板拆为指令头+文档节：agent 模式 SystemPrompt=指令头+工具指南，
+> 原文只进首轮 user 消息）、迁移 0002（`import_records.agent_context` 落库会话 JSON，
+> 单发模式同样落库，refine 的统一载体）、SSE `tool` 事件（`handler_analyze.go` 与
+> `web/src/api/types.ts` 两端同步）与前端分析页「工具查证轨迹」时间轴。
+> 集成测试 `app/analyze_agent_test.go`：全链路/降级/单发回归三场景。
+> 待真机验收项见 §12.5（需要真实 llm.api_key 与已同步语料）。
 
 ### 12.1 目标与产品红线
 

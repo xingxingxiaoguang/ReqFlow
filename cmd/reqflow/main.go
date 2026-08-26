@@ -17,6 +17,7 @@ import (
 	"log/slog"
 
 	"reqflow/internal/app"
+	"reqflow/internal/app/tools"
 	"reqflow/internal/infra/config"
 	"reqflow/internal/infra/database"
 	"reqflow/internal/infra/embedding"
@@ -129,6 +130,14 @@ func main() {
 		3, cfg.PingCode.SyncWorkItemBatchSize, time.Duration(cfg.PingCode.SyncBatchDelayMs)*time.Millisecond)
 	parseSvc := app.NewParseService(docParser)
 	analyzeSvc := app.NewAnalyzeService(llmClient, importRepo, cfg.Workspace.DemandDir)
+	if cfg.LLM.AgentMode {
+		// agent 模式（HANDOVER §12）：只读工具接入 agent.Loop，分析从单发提取
+		// 升级为「分析 → 自主查证 → 终稿」；导入仍走人工确认的既有流程
+		analyzeSvc.EnableAgentMode(tools.Build(tools.Deps{
+			Projects: projectRepo, WorkItems: workItemRepo, Meta: metaRepo, Platform: pcClient,
+		}), 0)
+		logger.Info("agent 模式已启用", "tools", "search_projects/search_work_items/get_work_item_types/get_project_members/list_recent_work_items")
+	}
 	matchSvc := app.NewMatchService(projectRepo, workItemRepo, embedClient,
 		cfg.Match.ProjectTopN, cfg.Match.DuplicateThreshold)
 	importSvc := app.NewImportService(pcClient, metaRepo, importRepo, projectRepo,

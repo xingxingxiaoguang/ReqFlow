@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { postSSE } from '../api/sse'
-import type { DraftItem, DuplicateResult, ProjectMatch } from '../api/types'
+import type { DraftItem, DuplicateResult, ProjectMatch, ToolEvent, ToolTrace } from '../api/types'
 
 /**
  * 需求导入向导的跨页临时态。
@@ -23,6 +23,7 @@ interface ImportWizardState {
   thinkingTail: string // 思考流尾部（滑动窗口）
   answerTail: string // 正文流尾部（滑动窗口）
   answerCount: number // 已生成条目实时计数
+  toolTrace: ToolTrace[] // agent 模式工具调用轨迹（单发模式为空）
 
   /* 结果态 */
   recordId?: string
@@ -58,6 +59,7 @@ export const useImportWizard = create<ImportWizardState>((set, get) => ({
   thinkingTail: '',
   answerTail: '',
   answerCount: 0,
+  toolTrace: [],
 
   items: [],
   matches: [],
@@ -90,7 +92,7 @@ export const useImportWizard = create<ImportWizardState>((set, get) => ({
     const { parsedText, fileName, specialRequirements } = get()
     set({
       analyzing: true, phase: 'idle',
-      thinkingTail: '', answerTail: '', answerCount: 0, elapsedSec: 0,
+      thinkingTail: '', answerTail: '', answerCount: 0, elapsedSec: 0, toolTrace: [],
       analyzeMessage: 'AI 正在拆解需求功能点…',
     })
     try {
@@ -118,6 +120,8 @@ export const useImportWizard = create<ImportWizardState>((set, get) => ({
                 [tail]: next,
                 answerCount: data.phase === 'answer' ? countTitles(next) : s.answerCount,
               } as any)
+          } else if (event === 'tool') {
+            set({ toolTrace: applyToolEvent(s.toolTrace, data as ToolEvent) })
           } else if (event === 'complete') {
             set({
               analyzing: false,
@@ -142,7 +146,7 @@ export const useImportWizard = create<ImportWizardState>((set, get) => ({
     set({
       fileName: '', parsedText: '', specialRequirements: '', parsing: false, parseMessage: '',
       analyzing: false, analyzeMessage: '', elapsedSec: 0, phase: 'idle',
-      thinkingTail: '', answerTail: '', answerCount: 0,
+      thinkingTail: '', answerTail: '', answerCount: 0, toolTrace: [],
       recordId: undefined, items: [], matches: [], selectedProjectId: undefined,
       dupResults: [], importing: false, importProgress: { current: 0, total: 0 },
       importDone: undefined,
@@ -164,4 +168,20 @@ export const useImportWizard = create<ImportWizardState>((set, get) => ({
 function countTitles(answerTail: string): number {
   const m = answerTail.match(/"title"\s*:/g)
   return m ? m.length : 0
+}
+
+/** tool 事件归并进轨迹：start 入列、end 回写最近一条同 call_id 条目的终态 */
+function applyToolEvent(trace: ToolTrace[], ev: ToolEvent): ToolTrace[] {
+  if (ev.phase === 'start') {
+    const next = [...trace, { callId: ev.call_id, name: ev.name, args: ev.args, status: 'running' as const }]
+    return next.length > 50 ? next.slice(next.length - 50) : next
+  }
+  const next = [...trace]
+  for (let i = next.length - 1; i >= 0; i--) {
+    if (next[i].callId === ev.call_id) {
+      next[i] = { ...next[i], status: ev.is_error ? 'error' : 'done', details: ev.details }
+      break
+    }
+  }
+  return next
 }

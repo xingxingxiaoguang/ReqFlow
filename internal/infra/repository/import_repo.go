@@ -120,7 +120,7 @@ func recordToRow(rec *model.ImportRecord) *importRecordRow {
 		Status: rec.Status, ItemsCount: rec.ItemsCount,
 		TargetProjectID: strPtr(rec.TargetProjectID), TargetProjectName: strPtr(rec.TargetProjectName),
 		ImportedCount: rec.ImportedCount, FailedCount: rec.FailedCount,
-		ErrorMessage: strPtr(rec.ErrorMessage),
+		ErrorMessage: strPtr(rec.ErrorMessage), AgentContext: strPtr(rec.AgentContext),
 		CreatedAt:    rec.CreatedAt, UpdatedAt: rec.UpdatedAt,
 	}
 }
@@ -131,7 +131,7 @@ func recordToModel(row *importRecordRow) model.ImportRecord {
 		Status: row.Status, ItemsCount: row.ItemsCount,
 		TargetProjectID: strVal(row.TargetProjectID), TargetProjectName: strVal(row.TargetProjectName),
 		ImportedCount: row.ImportedCount, FailedCount: row.FailedCount,
-		ErrorMessage: strVal(row.ErrorMessage),
+		ErrorMessage: strVal(row.ErrorMessage), AgentContext: strVal(row.AgentContext),
 		CreatedAt:    row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
 }

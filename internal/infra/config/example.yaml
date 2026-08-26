@@ -23,6 +23,8 @@ llm:
   temperature: 0.7
   max_tokens: 8192
   timeout_ms: 300000
+  agent_mode: false     # true 时需求分析启用 agent loop：模型可调用只读工具自主查证
+                       # 项目名/查重/类型/负责人后再出稿（导入仍需人工确认）
 
 # 向量 embedding（OpenAI 兼容 /embeddings；不配置则语义匹配自动降级为仅精确匹配）
 embedding:

@@ -100,3 +100,22 @@ export interface TokenEvent {
   delta: string
   phase: 'thinking' | 'answer'
 }
+
+/** agent 模式工具调用轨迹（/api/analyze SSE tool 事件，两端契约见 handler_analyze.go） */
+export interface ToolEvent {
+  phase: 'start' | 'end'
+  call_id: string
+  name: string
+  args?: string
+  details?: string
+  is_error?: boolean
+}
+
+/** 工具轨迹条目（store 内聚状态，由 ToolEvent 驱动） */
+export interface ToolTrace {
+  callId: string
+  name: string
+  args?: string
+  status: 'running' | 'done' | 'error'
+  details?: string
+}

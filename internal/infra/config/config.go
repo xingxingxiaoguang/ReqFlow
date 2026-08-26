@@ -42,6 +42,7 @@ type Config struct {
 		Temperature float64 `yaml:"temperature" env:"REQFLOW_LLM_TEMPERATURE"`
 		MaxTokens   int     `yaml:"max_tokens"  env:"REQFLOW_LLM_MAX_TOKENS"`
 		TimeoutMs   int     `yaml:"timeout_ms"  env:"REQFLOW_LLM_TIMEOUT_MS"`
+		AgentMode   bool    `yaml:"agent_mode"  env:"REQFLOW_LLM_AGENT_MODE"`
 	} `yaml:"llm"`
 
 	Embedding struct {

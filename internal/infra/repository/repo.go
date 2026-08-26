@@ -78,6 +78,7 @@ type importRecordRow struct {
 	ImportedCount     int        `gorm:"column:imported_count"`
 	FailedCount       int        `gorm:"column:failed_count"`
 	ErrorMessage      *string    `gorm:"column:error_message"`
+	AgentContext      *string    `gorm:"column:agent_context"` // 会话 JSON 文本（refine 载体）
 	CreatedAt         time.Time  `gorm:"column:created_at"`
 	UpdatedAt         time.Time  `gorm:"column:updated_at"`
 }

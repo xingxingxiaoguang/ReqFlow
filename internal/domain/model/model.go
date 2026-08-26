@@ -83,8 +83,11 @@ type ImportRecord struct {
 	ImportedCount     int
 	FailedCount       int
 	ErrorMessage      string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	// AgentContext 分析会话的 JSON 序列化（port.Context：系统提示 + 消息序列 + 工具表）。
+	// 单发与 agent 模式均落库，是 refine 微调与换模型续跑的统一载体；空 = 未记录。
+	AgentContext string
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
 }
 
 // ImportRecordItem 导入明细（与 DraftItem 一一对应，含导入结果）。

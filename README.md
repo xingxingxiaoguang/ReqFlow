@@ -57,7 +57,7 @@ make build        # → bin/reqflow
 |------|-----|------|
 | server | port / log_level / log_format | HTTP 端口、日志级别（debug~error）、日志格式（text/json） |
 | database | dsn / auto_migrate / retry_* | PG 连接串；启动自动迁移 |
-| llm | base_url / api_key / model / temperature / max_tokens / timeout_ms | OpenAI 兼容协议（DeepSeek/GLM/Qwen/Kimi 适用） |
+| llm | base_url / api_key / model / temperature / max_tokens / timeout_ms / **agent_mode** | OpenAI 兼容协议（DeepSeek/GLM/Qwen/Kimi 适用）；`agent_mode: true` 时需求分析启用 agent loop（只读工具自主查证，见 HANDOVER §12） |
 | embedding | base_url / api_key / model / dimensions / batch_size | 语义匹配向量（默认 bge-m3 1024 维）；不配置则自动降级为仅精确匹配 |
 | pingcode | host / client_id / client_secret / grant_type / workload_unit / import_concurrency / sync_* | 企业授权凭据；工时单位 minute/hour/day |
 | match | duplicate_threshold / project_top_n | 查重阈值（默认 0.75）与项目推荐数 |
@@ -70,7 +70,7 @@ make build        # → bin/reqflow
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/api/parse` | multipart 上传 → SSE `progress`/`parsed`（解析确认门） |
-| POST | `/api/analyze` | `{text, file_name, special_requirements}` → SSE `token(delta,phase)`/`complete` |
+| POST | `/api/analyze` | `{text, file_name, special_requirements}` → SSE `token(delta,phase)`/`tool`(agent 模式工具轨迹)/`complete` |
 | POST | `/api/sync` | SSE 增量同步平台项目/工作项/元数据并写入向量 |
 | POST | `/api/match/projects` | 项目名 → 推荐 top N（精确前置 + 语义兜底） |
 | POST | `/api/match/duplicates` | 同项目查重（标题精确 / 语义阈值） |
@@ -104,5 +104,6 @@ make build          # 前端构建 + embed 单二进制
 
 ## 第二波路线图（扩展点已预留）
 
+- **✅ agent 模式已交付**（`llm.agent_mode`）：PingCode 查询能力包装为 5 个只读工具接入 `agent.Loop`，分析从单发提取升级为「分析 → 自主查证 → 终稿」；分析会话（Context）随记录落库，为 refine 微调铺路；前端分析页展示工具查证轨迹
 - **Bug 处理链路**：Excel 导入（xlsx 行级解析已就绪）→ 编号/语义双层匹配需求（top3 人工确认）→ P0~P3 批量 LLM 定级 → 确认后同步缺陷到平台（关联关系写入描述；PingCode 6.13.5 暂无关联 API）
-- PingCode OAuth 用户授权（TokenSource 扩展点）、多协作平台（PlatformClient 接口）、refine 微调会话、自定义属性映射
+- PingCode OAuth 用户授权（TokenSource 扩展点）、多协作平台（PlatformClient 接口）、refine 微调会话（AgentContext 载体已落库）、自定义属性映射

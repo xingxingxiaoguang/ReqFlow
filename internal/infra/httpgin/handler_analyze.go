@@ -8,6 +8,7 @@ import (
 
 // analyzeStream POST /api/analyze {text, file_name, special_requirements} → SSE。
 // token 事件携带 {delta, phase}（thinking/answer 两相位）；分析思考期每 5 秒推送心跳计时。
+// tool 事件（agent 模式）携带工具调用轨迹 {phase, call_id, name, args?, details?, is_error?}。
 func (h *handlers) analyzeStream(c *gin.Context) {
 	var req struct {
 		Text               string `json:"text"`
@@ -56,6 +57,13 @@ func (h *handlers) analyzeStream(c *gin.Context) {
 				return
 			}
 			sendEvent(c, "token", gin.H{"delta": d.Text, "phase": d.Phase})
+		},
+		func(ev app.AnalyzeToolEvent) {
+			heartbeat.Stop() // 工具执行期间有明确进度，无需心跳
+			if clientGone(c) {
+				return
+			}
+			sendEvent(c, "tool", ev)
 		},
 	)
 	if err != nil {

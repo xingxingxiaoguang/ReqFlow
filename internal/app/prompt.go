@@ -2,7 +2,12 @@ package app
 
 // 需求分析 Prompt（自 PingCraft 验证过的模板移植，字段与协作平台工作项对齐）。
 // 占位符以字面量 {var} 形式注入（避免与 JSON 大括号冲突的模板引擎）。
-const analyzePromptTemplate = `你是一位专业的项目管理助手和技术顾问，擅长分析需求文档并提取结构化的工作项信息。
+//
+// 结构拆分为「指令头 + 文档节」：
+//   - 单发直调（默认）：头 + 文档节拼成一条 user 消息（与拆分前的输出逐字等价）
+//   - agent 模式（llm.agent_mode）：指令头 + 工具指南进 SystemPrompt，
+//     文档节独占首轮 user 消息——需求原文只出现一次，控制会话膨胀
+const analyzePromptHead = `你是一位专业的项目管理助手和技术顾问，擅长分析需求文档并提取结构化的工作项信息。
 
 ## 任务
 分析以下需求文档，识别其中的所有工作项（需求、任务、功能点等），并按项目分组整理。
@@ -54,15 +59,29 @@ const analyzePromptTemplate = `你是一位专业的项目管理助手和技术�
   }
 ]
 
-{special_requirements_section}
+{special_requirements_section}`
 
----
+const analyzeDocSection = `---
 
 ## 需求文档内容
 
 {text}
 
 ---`
+
+// agentToolGuidance agent 模式追加到 SystemPrompt 的工具使用规则（HANDOVER §12）。
+// 只读查证、不编造、终稿仍必须是纯 JSON 数组——单发模式的输出契约不变。
+const agentToolGuidance = `## 工具使用指南
+你可以调用只读查询工具核实信息，产出更准确的草稿：
+- search_projects：把文档中的项目名对应到真实项目；草稿 project_name 应优先使用返回的真实项目名
+- search_work_items：按编号（如 WI-123）或标题检查同项目是否已有相同/相似工作项；疑似重复时在该条草稿的 solution_suggestion 末尾追加一行「【重复风险】<编号 标题>」说明
+- get_work_item_types / get_project_members：核实类型与负责人是否真实存在
+- list_recent_work_items：了解项目现有工作项的表述习惯
+
+规则：
+1. 先查证后落稿：对不确定的项目名、类型、负责人，先调用工具核实再写入草稿字段
+2. 工具查不到的信息按默认规则处理（推断或留空），不得编造工具结果
+3. 最终回复必须且只能是 JSON 数组（格式与前述输出要求一致），不得夹杂工具调用过程说明`
 
 // buildSpecialSection 组装「## 额外要求」章节；用户未填写时整体不出现。
 func buildSpecialSection(special string) string {
