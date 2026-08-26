@@ -258,7 +258,7 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 均移植自
 - LLM SSE 单行可能极大 → scanner.Buffer 扩到 8MB（`llm/client.go`）
 - PingCode 响应字段形状不固定（扁平/嵌套、字符串/数字时间）→ `pingcode` 包统一走 `getStr/getUpdated` 防御式取值
 
-## 11. 第二波开发指南（Bug 链路落地路径）
+## 11. 第二波开发指南 · Bug 链路落地路径
 
 设计定稿在 `internal/app/bug/doc.go`，按此顺序做（每步落点明确，不动存量包）：
 
@@ -270,7 +270,79 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 均移植自
 6. **前端**：替换 `web/src/pages/Bugs.tsx` 占位（四步向导复用 import 的模式：上传→匹配确认表格（top3 候选单选/否决/标无效）→定级面板（可改档）→同步）
 7. **顺手可做**：embedding 密钥池（参考 PingCraft `services/embedding.ts`：轮询/429 冷却读 Retry-After/401 摘除，只在 `infra/embedding` 内改）；LLM refine 微调会话（`app/analyze` 已留注释扩展点，进程内 map 参考 PingCraft `llmSession.ts` 的前缀缓存设计）
 
-## 12. 已知限制与技术债（如实）
+## 12. LLM 演进主线：PingCode 工具化接入 agent.Loop
+
+> 背景：LLM 层已完成 pi 化重构（§8.5）——会话化消息模型、双协议适配器、loop 骨架就位，
+> v1 分析仍为单发直调。本节是接手「专属 agent loop」落地所需的全部上下文。
+
+### 12.1 目标与产品红线
+
+目标：把 PingCode 能力包装为 `agent.Tool` 接入 `agent.Loop`，让需求分析从「单发提取」
+进化为「分析 → 自主查证（查项目/查重/查元数据）→ 修正建议」的专属 agent；最终导入
+仍走人工确认——产品总纲原则 1「AI 是草稿机不是审批者」。
+
+**红线：读操作工具可自主调用；写操作（`CreateProject`/`CreateWorkItem`）第一波不得
+成为 loop 的自主工具。** 如确需写工具，必须 `Terminate: true` 且 Output 只返回
+「待确认 payload」——执行仍由人工点击既有 `/api/import` 流程完成。
+
+### 12.2 已就位的地基（接手先读这五个文件）
+
+| 文件 | 就位内容 |
+|---|---|
+| `internal/app/agent/loop.go` | Loop/Tool/ToolOutput 契约、自然终止、MaxIterations=8 安全阀、length 截断整批拒绝执行、terminate 语义 |
+| `internal/port/llm.go` | `Context.Tools` 注入位（loop 的 registerTools 自动写入）；ToolSpec/ToolCall；消息模型全可序列化 |
+| `internal/infra/llm/openai.go` | tools + tool_choice 请求渲染、tool_calls 流式按 index 聚合（httptest 覆盖） |
+| `internal/infra/llm/anthropic.go` | input_schema 渲染、tool_use 流式聚合（httptest 覆盖） |
+| `internal/app/agent/loop_test.go` | scriptedClient mock 模式——工具链集成测试直接复用 |
+
+### 12.3 工具候选清单（读操作优先）
+
+数据源优先用本地缓存仓储（`ProjectRepo`/`WorkItemRepo`——快、不占平台 API 配额），
+`PlatformClient` 直查仅做缓存未同步时的兜底：
+
+| 工具名（建议） | 数据源 | 用途 |
+|---|---|---|
+| `search_projects(name)` | ProjectRepo（复用 `logic.NormalizeForExactMatch` 精确 + contains 模糊） | 草稿项目名 → 真实项目 ID |
+| `search_work_items(project_id, title)` | WorkItemRepo（同上归一化精确 + contains） | 导入前自主查重 |
+| `get_work_item_types(project_id)` | MetaRepo | type 名称 → UUID 映射（草稿自检 type_id 合法性） |
+| `get_project_members(project_id)` | PlatformClient.ListProjectMembers（进程内缓存） | assignee 姓名解析 |
+| `list_recent_work_items(project_id, limit)` | WorkItemRepo | 模型主动看语料现状，描述写得更贴实际 |
+
+参考实现：`app/match.go`（两层匹配的精确层就是 `search_projects` 的内核）、
+`app/import.go` 的 `resolveAssigneeID`（姓名解析三级策略可直接搬）。
+
+### 12.4 落地步骤
+
+1. 新建 `internal/app/tools/` 包，依赖注入构造（repos + platform client + 配置），
+   每个工具实现 `agent.Tool`；Execute 的 Output 返回紧凑 JSON（id/name 等字段），
+   Details 返回人读摘要——前端工具轨迹展示用
+2. `AnalyzeService` 加开关（如 `llm.agent_mode`）：开启时构造
+   `agent.New(llm, tools, agent.Config{})` 替代直调 `llm.Stream`。loop 的 onDelta
+   与现有 `AnalyzeDelta`（thinking/answer）天然兼容；onEvent 的
+   `tool_execution_start/end` 作为新 SSE 事件类型透传（`handler_analyze.go` 与
+   `web/src/api/types.ts` 两端同步加）
+3. 工具参数 JSON Schema 保持极简（string/enum 为主）——schema 越简单模型调用越稳；
+   枚举值来自 MetaRepo 时在构造时快照，别在 Spec() 里查库
+4. 会话膨胀控制：需求文档原文只在首轮 user 消息，轮数由 MaxIterations=8 兜底，
+   v1 无需截断。落库会话 = 序列化最终 Context（`import_records` 加列或独立表），
+   第二波 refine 微调复用同一载体
+5. 前端：分析页时间轴加「工具调用」节点（复用 phase 展示模式，tool_execution
+   事件驱动），让用户看到 agent 查证过程——这是产品差异点，不是调试信息
+
+### 12.5 测试与验收
+
+- **单测**：tools 包 mock `PlatformClient`/repo（port 接口即为此设计）；
+  loop 集成复用 `loop_test.go` 的 scriptedClient——第一轮脚本返回 toolCall、
+  第二轮返回终稿，断言工具执行、toolResult 回填、消息序列
+- **手测验收**：上传含模糊项目名的需求文档 → agent 自主调 `search_projects`
+  修正 `project_name` → 草稿的 project_id 可直接进入导入；全程 SSE 时间轴
+  可见「思考 → 工具调用 → 修正 → 终稿」轨迹
+- **真机注意**：DeepSeek 等推理模型的 reasoning_content 以 thinking 相位展示，
+  工具调用期间前端要有明确进度感（tool_execution 事件即为此设计）；
+  pi 的并行工具执行与 beforeToolCall 审批钩子暂不移植，需要时按
+  pi 源码 `agent-loop.ts` 对应段落补（见 §8.5 不移植清单）
+
+## 13. 已知限制与技术债（如实）
 
 | 项 | 影响 | 处置建议 |
 |----|------|---------|
@@ -283,7 +355,7 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 均移植自
 | `logic/mapping.go` 别名词典硬编码在 domain | 纯逻辑无配置依赖的取舍 | 若需用户自定义别名，挪到配置并保持纯函数签名 |
 | 前端单 chunk 1.5MB | 首载稍慢 | 按路由 code-split，非紧急 |
 
-## 13. 运维备忘
+## 14. 运维备忘
 
 - **DB**：`docker compose up -d`；数据卷 `reqflow_pgdata`；连接 `postgres://reqflow:reqflow@127.0.0.1:5432/reqflow`
 - **迁移**：启动时自动跑（`database.auto_migrate: true`），内嵌 SQL 幂等（schema_migrations 表）；新增迁移文件放 `internal/infra/database/migrations/NNNN_*.up.sql`（+ 可选 down）
@@ -291,7 +363,7 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 均移植自
 - **日志**：stdout（text/json 可配）；启动告警（配置降级）集中在头几行
 - **升级发布**：`make build` → 替换二进制 + 保留 config.yaml 与 data/ → 重启（自动迁移）
 
-## 14. 联系与上游
+## 15. 联系与上游
 
 - 产品定义/路线图决策记录：`docs/PRODUCT.md` + 本文件
 - 参考实现：`/Users/xxxg/demo/PingCraft`（只读参考，勿改动）
