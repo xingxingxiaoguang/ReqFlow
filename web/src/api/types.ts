@@ -74,6 +74,8 @@ export interface FieldSpec {
   in_key?: boolean
   default?: any
   clean?: string
+  /** 提取说明（渲染进分析提示词的字段规范段；M3 受控编辑目标之一） */
+  prompt?: string
 }
 
 export interface DatasetSchema {
@@ -227,12 +229,15 @@ export interface MetadataToolView {
   guidelines: string[]
 }
 
-/** 任务类型聚合视图（元数据页详情：workflow + schema + profile + 工具清单） */
+/** 任务类型聚合视图（元数据页详情：workflow + schema + profile + 工具清单）
+ *  M3：schema_source/profile_source 为分构件来源（编辑器徽标与回退按钮判定） */
 export interface TaskTypeView {
   type: string
   name: string
   desc: string
   source: MetadataSource
+  schema_source: MetadataSource
+  profile_source: MetadataSource
   dataset_type: string
   workflow: Workflow
   schema: DatasetSchema
@@ -368,4 +373,82 @@ export interface PendingDialog {
   callId: string
   question: string
   options?: string[]
+}
+
+/* ---- 元数据受控编辑（M3） ---- */
+
+/** 兼容判定级别（METADATA §4.4 规则表）：ok 放行 / warn 需确认 / block 拦截 */
+export type CompatLevel = 'ok' | 'warn' | 'block'
+
+export interface CompatFinding {
+  level: CompatLevel
+  rule: string
+  field?: string
+  message: string
+}
+
+export interface CompatReport {
+  findings: CompatFinding[]
+  blocked: boolean
+  needs_confirm: boolean
+  needs_reembed: boolean
+}
+
+/** 兼容影响面涉及的存量数据集 */
+export interface AffectedDataset {
+  id: string
+  name: string
+  item_count: number
+  schema_version: number
+  needs_reembed: boolean
+}
+
+/** check（dry-run）/ update（保存）统一返回；saved=false 表示未落库 */
+export interface SchemaUpdateResult {
+  dataset_type: string
+  version: number
+  source: MetadataSource
+  report: CompatReport
+  datasets?: AffectedDataset[]
+  saved: boolean
+  block_reason?: string
+}
+
+export interface ProfileUpdateResult {
+  task_type: string
+  version: number
+  source: MetadataSource
+  findings?: CompatFinding[]
+  saved: boolean
+}
+
+/** 版本历史条目（payload 为该版完整定义原文） */
+export interface MetadataVersionView {
+  version: number
+  enabled: boolean
+  effective_version: number
+  summary: string
+  created_by: string
+  created_at: string
+  payload: Record<string, unknown>
+}
+
+export interface MetadataExport {
+  exported_at: string
+  task_types: TaskTypeView[]
+}
+
+export interface MetadataImportItemInput {
+  type: string
+  schema?: DatasetSchema
+  profile?: { role: string; example: string }
+}
+
+export interface MetadataImportResult {
+  items: {
+    type: string
+    schema?: SchemaUpdateResult
+    profile?: ProfileUpdateResult
+    error?: string
+  }[]
 }

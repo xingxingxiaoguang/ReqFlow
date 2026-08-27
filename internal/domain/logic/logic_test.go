@@ -156,3 +156,54 @@ func TestDistanceToScore(t *testing.T) {
 		}
 	}
 }
+
+func TestFingerprintSaltVectorSensitivity(t *testing.T) {
+	// M3 已知缺陷修复：InVector 角色变更后，同值条目指纹必须变化（unchanged → update 重嵌）
+	clone := func(s model.DatasetSchema) model.DatasetSchema { // 深拷贝 Fields（浅拷贝共享底层数组）
+		fields := make([]model.FieldSpec, len(s.Fields))
+		copy(fields, s.Fields)
+		s.Fields = fields
+		return s
+	}
+	base := model.DatasetSchema{Type: "t", Fields: []model.FieldSpec{
+		{Key: "title", Type: model.FieldString, InKey: true, InVector: model.VectorTitle},
+		{Key: "body", Type: model.FieldText, InVector: model.VectorBody},
+	}}
+	vals := map[string]any{"title": "T", "body": "B"}
+	fp := FingerprintOf(base, vals)
+
+	changed := clone(base)
+	changed.Fields[1].InVector = model.VectorNone // body 退出向量
+	if FingerprintOf(changed, vals) == fp {
+		t.Fatal("InVector 变更后指纹不应相同（否则语料跳过重嵌）")
+	}
+
+	keyChanged := clone(base)
+	keyChanged.Fields[1].InKey = true
+	if FingerprintOf(keyChanged, vals) == fp {
+		t.Fatal("InKey 变更后指纹不应相同（条目身份口径已变）")
+	}
+
+	if FingerprintOf(base, vals) != fp {
+		t.Fatal("同 schema 同值指纹应稳定")
+	}
+}
+
+func TestFingerprintSaltIgnoresPresentation(t *testing.T) {
+	// 改 Label/Prompt 等纯展示项不得触发全量重嵌（盐只取向量相关摘要）
+	base := model.DatasetSchema{Type: "t", Fields: []model.FieldSpec{
+		{Key: "title", Label: "标题", Type: model.FieldString, InKey: true, InVector: model.VectorTitle, Prompt: "说明A"},
+	}}
+	vals := map[string]any{"title": "T"}
+	fp := FingerprintOf(base, vals)
+
+	cosmetic := base
+	cosmetic.Fields[0].Label = "新标题"
+	cosmetic.Fields[0].Prompt = "说明B"
+	if FingerprintOf(cosmetic, vals) != fp {
+		t.Fatal("纯展示项变更不应改变指纹（避免无谓重嵌）")
+	}
+	if VectorFingerprintSalt(base) != VectorFingerprintSalt(cosmetic) {
+		t.Fatal("盐对展示项应不敏感")
+	}
+}

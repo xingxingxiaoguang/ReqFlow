@@ -43,7 +43,8 @@ func NewMatchService(datasets port.DatasetRepo, embedder port.Embedder, threshol
 //  2. 语义层：仅对未命中项批量 embedding → SearchSimilarDatasetItems（cosine 距离换算分数），
 //     达到阈值判为疑似重复。embedding 未配置时精确层照跑（降级）。
 func (s *MatchService) CheckDuplicates(ctx context.Context, items []map[string]any) ([]DuplicateResult, error) {
-	schema, ok := model.SchemaOf(model.DatasetTypeRequirement)
+	// 语料 schema 走 effective（M3 受控编辑后的 requirement 定义）；语料类型仍写死 requirement
+	schema, ok := effectiveSchemaOf(model.DatasetTypeRequirement)
 	if !ok {
 		return nil, fmt.Errorf("requirement schema 未注册")
 	}
@@ -88,7 +89,7 @@ func (s *MatchService) CheckDuplicates(ctx context.Context, items []map[string]a
 		texts := make([]string, len(pending))
 		for k, i := range pending {
 			// 与写入侧同一 schema 组装规则（VectorDocOf），保证向量空间对齐
-			texts[k] = logic.VectorDocOf(schema, items[i], vectorBodyLimit)
+			texts[k] = logic.VectorDocOf(schema, items[i], logic.VectorBodyLimit)
 		}
 		embs, err := s.embedder.Generate(ctx, texts)
 		if err != nil {
@@ -119,7 +120,7 @@ func (s *MatchService) matchOf(it model.DatasetItem, score float64, matchType st
 
 // requirementTitle 解析需求条目字段取标题（查重展示/精确索引用；schema 标题口径）。
 func requirementTitle(fields string) string {
-	schema, ok := model.SchemaOf(model.DatasetTypeRequirement)
+	schema, ok := effectiveSchemaOf(model.DatasetTypeRequirement)
 	if !ok {
 		return ""
 	}

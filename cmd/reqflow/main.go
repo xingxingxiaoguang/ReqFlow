@@ -116,6 +116,7 @@ func main() {
 	datasetRepo := repository.NewDatasetRepo(db)
 	taskRepo := repository.NewTaskRepo(db)
 	archiveRepo := repository.NewArchiveRepo(db)
+	metadataRepo := repository.NewMetadataRepo(db)
 
 	/* ---- app 用例 ---- */
 	parseSvc := app.NewParseService(docParser)
@@ -131,7 +132,12 @@ func main() {
 	datasetQuery := app.NewDatasetQueryService(datasetRepo, embedClient)
 	archiveSvc := app.NewArchiveService(taskRepo, datasetRepo, archiveRepo)
 	overviewSvc := app.NewOverviewService(datasetRepo, taskRepo)
-	metadataSvc := app.NewMetadataService()
+	metadataSvc := app.NewMetadataService(metadataRepo, datasetRepo)
+	// 元数据覆盖层装载（seed → override → effective）：先于任何用例构造之后、服务就绪之前
+	if err := metadataSvc.Reload(context.Background()); err != nil {
+		logger.Error("元数据覆盖层装载失败", "err", err)
+		os.Exit(1)
+	}
 	taskMgr := app.NewTaskManager(taskRepo, parseSvc, analyzeSvc, datasetRepo, datasetWriter)
 	// 服务重启恢复：把中断在 running 的任务/步骤标为 paused（用户手动继续）
 	if err := taskMgr.Recover(context.Background()); err != nil {

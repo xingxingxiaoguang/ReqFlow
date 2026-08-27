@@ -80,6 +80,9 @@ make build        # → bin/reqflow
 | POST | `/api/archives/:kind/:id/restore` | 归档恢复到主表（数据集恢复后查重/检索语料随之生效） |
 | GET | `/api/metadata` · `/api/metadata/task-types/:type` | 元数据目录：任务类型聚合定义（workflow + schema + profile + 工具清单 + source），前端「元数据」tab 数据源 |
 | POST | `/api/metadata/render/preview` | 提示词预览：`{task_type, special_requirements?}` → 三段提示词实时渲染（与运行时装配同一函数） |
+| POST | `/api/metadata/schemas/:type/check` | schema 兼容性 dry-run：规则表判定（✅/⚠️/❌）+ 存量数据集影响面 |
+| PUT/DELETE | `/api/metadata/schemas/:type` · `/api/metadata/profiles/:type` | 受控编辑（❌ 拦截 / ⚠️ confirm_risky + 版本递增 + 审计）/ 回退内置 |
+| GET/POST | `/api/metadata/history/:kind/:key` · `/api/metadata/export` · `/api/metadata/import` | 版本历史（含 diff 载荷）/ effective 视图导出 / 导入（同一守卫） |
 | POST | `/api/match/duplicates` | 同项目查重（标题精确 / 语义阈值） |
 | GET | `/api/datasets` `/api/datasets/:id` | 数据集与条目浏览 |
 | GET | `/api/datasets/schemas` | 数据集 schema 目录（字段合同：表格/筛选/向量组装驱动） |

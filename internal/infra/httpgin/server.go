@@ -62,6 +62,16 @@ func New(svc Services) *gin.Engine {
 		api.GET("/metadata/task-types/:type", h.metadataTaskType)     // 任务类型聚合视图
 		api.POST("/metadata/render/preview", h.metadataPromptPreview) // 提示词预览
 
+		// 元数据受控编辑（M3）：写路径是显式管理动作，每次写必记审计
+		api.POST("/metadata/schemas/:type/check", h.metadataSchemaCheck)   // 兼容性 dry-run
+		api.PUT("/metadata/schemas/:type", h.metadataSchemaUpdate)         // schema 受控保存
+		api.DELETE("/metadata/schemas/:type", h.metadataSchemaReset)       // 回退到内置
+		api.PUT("/metadata/profiles/:type", h.metadataProfileUpdate)       // 指令头/示例编辑
+		api.DELETE("/metadata/profiles/:type", h.metadataProfileReset)     // 回退到内置
+		api.GET("/metadata/history/:kind/:key", h.metadataHistory)         // 版本历史
+		api.GET("/metadata/export", h.metadataExport)                     // effective 视图导出
+		api.POST("/metadata/import", h.metadataImport)                    // 导入（同一守卫）
+
 		api.POST("/match/duplicates", h.checkDuplicates)
 
 		api.GET("/settings", h.viewSettings)

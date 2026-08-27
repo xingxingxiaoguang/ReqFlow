@@ -158,6 +158,9 @@ func (s *AnalyzeService) Resume(
 	if err != nil {
 		return nil, err
 	}
+	// 快照隔离（METADATA §4.5）：续跑按会话携带的 schema 快照重放/续写——
+	// 元数据热编辑（M3 受控编辑）不影响进行中任务。
+	profile = profileWithSnapshot(cc, profile)
 
 	if s.agentCfg != nil {
 		sink := tools.NewDraftSink()
@@ -230,6 +233,7 @@ func (s *AnalyzeService) runAgent(
 	cc := &port.Context{
 		SystemPrompt: renderAgentSystem(now, in.Special, toolset, profile),
 		Messages:     []port.Message{port.NewUserMessage(renderDocManifest(tools.DocSource{FileName: in.FileName, Text: in.Text}))},
+		TaskSchema:   marshalJSON(profile.Write.Schema),
 	}
 
 	onProgress(AnalyzeProgress{Stage: "analyzing", Message: "AI 正在拆解需求功能点（agent 模式：自主阅读文档并分批产出草稿）…"})
@@ -300,7 +304,10 @@ func (s *AnalyzeService) runClassic(
 		return nil, err
 	}
 	// pi Context：单发提取 = 一条 user 消息；会话同样产出（续跑/refine 的载体）
-	llmCtx := &port.Context{Messages: []port.Message{port.NewUserMessage(renderAnalyzePrompt(in.Text, now, in.Special, profile))}}
+	llmCtx := &port.Context{
+		Messages:   []port.Message{port.NewUserMessage(renderAnalyzePrompt(in.Text, now, in.Special, profile))},
+		TaskSchema: marshalJSON(profile.Schema()),
+	}
 
 	onProgress(AnalyzeProgress{Stage: "analyzing", Message: "AI 正在拆解需求功能点…"})
 	msg, streamErr := s.llm.Stream(ctx, llmCtx, tokenMapper(onToken))
@@ -352,6 +359,21 @@ func normalizeDraftValues(schema model.DatasetSchema, raws []any, now time.Time)
 		}
 	}
 	return out
+}
+
+// profileWithSnapshot 会话携带 schema 快照时以快照覆写 profile 的 schema 构面
+// （校验/归一化/渲染全部按执行时口径；非法快照静默忽略回退 effective）。
+func profileWithSnapshot(cc *port.Context, profile AnalyzeProfile) AnalyzeProfile {
+	if cc == nil || cc.TaskSchema == "" {
+		return profile
+	}
+	var snap model.DatasetSchema
+	if json.Unmarshal([]byte(cc.TaskSchema), &snap) != nil || snap.Type == "" || len(snap.Fields) == 0 {
+		return profile
+	}
+	profile.Schema = func() model.DatasetSchema { return snap }
+	profile.Write.Schema = snap
+	return profile
 }
 
 // checkpoint 暂停检查点产出：序列化已积累会话（续跑载体），不解析草稿。

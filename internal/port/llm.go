@@ -141,6 +141,10 @@ type Context struct {
 	SystemPrompt string     `json:"system_prompt,omitempty"`
 	Messages     []Message  `json:"messages"`
 	Tools        []ToolSpec `json:"tools,omitempty"`
+	// TaskSchema 任务产出 schema 的快照（M3 元数据受控编辑的快照隔离）：
+	// 随会话检查点落库，Resume 重放草稿写入时按执行时的 schema 校验/归一化/定 key
+	// ——元数据热编辑不影响进行中任务（METADATA §4.5）。JSON 文本，空 = 按 effective。
+	TaskSchema string `json:"task_schema,omitempty"`
 }
 
 /* ---- 流事件协议（pi AssistantMessageEvent 子集）---- */

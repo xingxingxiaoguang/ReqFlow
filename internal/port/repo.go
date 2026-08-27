@@ -5,6 +5,7 @@ package port
 
 import (
 	"context"
+	"time"
 
 	"reqflow/internal/domain/model"
 )
@@ -133,4 +134,51 @@ type ArchiveRepo interface {
 	RestoreDataset(ctx context.Context, datasetID string) error
 	// ListArchivedDatasets 归档数据集列表（typ 空 = 全部）。
 	ListArchivedDatasets(ctx context.Context, typ string, limit int) ([]model.ArchivedDataset, error)
+}
+
+/* ---- 元数据注册表（M3：DB 覆盖层） ---- */
+
+// 元数据资产种类（metadata_registry.kind）。
+const (
+	MetadataKindDatasetSchema  = "dataset_schema"  // key = 数据集类型
+	MetadataKindAnalyzeProfile = "analyze_profile" // key = 任务类型
+)
+
+// MetadataEntry 注册表条目（一个版本；版本历史同表保留不删）。
+type MetadataEntry struct {
+	Kind      string
+	Key       string
+	Version   int
+	Payload   string // JSON 文本（该版本完整定义）
+	Enabled   bool   // 最新版 false = 整体回退 seed
+	Summary   string // 变更说明
+	CreatedBy string
+	CreatedAt time.Time
+}
+
+// MetadataAuditEntry 审计记录（写路径必记）。
+type MetadataAuditEntry struct {
+	Action      string // update_schema | update_profile | reset_schema | reset_profile | import
+	Kind        string
+	Key         string
+	FromVersion int
+	ToVersion   int
+	Summary     string
+	Operator    string
+	CreatedAt   time.Time
+}
+
+// MetadataRepo 元数据注册表仓储。effective 选择规则：每 (kind,key) 取最大 version
+// 行，该行 enabled=false 则该 key 无 override（回退 seed）——由 app 层合并加载器判定。
+type MetadataRepo interface {
+	// CreateEntry 写入一个新版本（Version 由 app 层按递增规则判定后传入）。
+	CreateEntry(ctx context.Context, e *MetadataEntry) error
+	// LatestEntries 每 (kind,key) 的最大 version 行（含 disabled；空表返回空）。
+	LatestEntries(ctx context.Context) ([]MetadataEntry, error)
+	// ListVersions 版本历史（新→旧）。
+	ListVersions(ctx context.Context, kind, key string, limit int) ([]MetadataEntry, error)
+	// WriteAudit 记审计（只增不改）。
+	WriteAudit(ctx context.Context, a *MetadataAuditEntry) error
+	// ListAudit 审计查询（新→旧）。
+	ListAudit(ctx context.Context, kind, key string, limit int) ([]MetadataAuditEntry, error)
 }

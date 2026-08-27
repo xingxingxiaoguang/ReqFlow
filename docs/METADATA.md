@@ -1,6 +1,6 @@
 # ReqFlow 元数据管理模块设计
 
-> 状态：设计定稿（未落地）。分波执行计划见 [METADATA_PLAN.md](./METADATA_PLAN.md)；产品定位与方向性决策见 [PRODUCT.md](./PRODUCT.md)。
+> 状态：M1~M3 已落地（注册点收敛 + 目录/预览 + 草稿字段袋化 + 存储与受控编辑；交付记录见 [METADATA_PLAN.md](./METADATA_PLAN.md)），M4（工作流定义外置 + 向导）待与产品第四波合流。产品定位与方向性决策见 [PRODUCT.md](./PRODUCT.md)。
 > 本文回答五件事：为什么做、管什么不管什么、怎么存、怎么对外暴露、什么永远不能动。
 
 ## 1. 背景与问题
@@ -114,6 +114,7 @@ CREATE TABLE metadata_registry (
 
 - **版本历史不删**：数据集只存 `SchemaVersion` 数字，目录必须能查回旧版定义（现状 `Schemas()` 只有最新版，是缺口）。
 - 审计独立小表 `metadata_audit`（who/when/kind/key/from_version/to_version/summary），写路径必记。
+- **落地偏离记录（M3）**：payload 实现为 TEXT（JSON 文本）而非上表的 JSONB——与 dataset_items.fields / 0008 的全库「TEXT 存 JSON」决策一致（GORM 字符串直写免类型转换，无库内查询需求）；「回退 seed」实现为写入 enabled=false 的最新版（版本历史保留），而非物理删除。
 
 ### 4.4 版本与兼容规则（写守卫的核心）
 

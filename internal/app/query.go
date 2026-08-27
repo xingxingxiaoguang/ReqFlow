@@ -54,7 +54,7 @@ func (s *DatasetQueryService) Query(ctx context.Context, q DatasetQuery) ([]Quer
 	if q.TopN <= 0 || q.TopN > 500 {
 		q.TopN = 100
 	}
-	schema, ok := model.SchemaOf(q.Type)
+	schema, ok := effectiveSchemaOf(q.Type)
 	if !ok {
 		return nil, fmt.Errorf("未注册的数据集类型: %s", q.Type)
 	}
@@ -99,7 +99,7 @@ func (s *DatasetQueryService) Query(ctx context.Context, q DatasetQuery) ([]Quer
 	// 语义：查询向量（与写入侧同一 schema 组装规则，保证向量空间对齐）
 	queryDoc := logic.VectorDocOf(schema, map[string]any{
 		schemaTitleKey(schema): text,
-	}, vectorBodyLimit)
+	}, logic.VectorBodyLimit)
 	emb, err := s.embedder.Generate(ctx, []string{queryDoc})
 	if err != nil {
 		return nil, fmt.Errorf("查询向量化失败: %w", err)

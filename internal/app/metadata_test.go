@@ -8,7 +8,7 @@ import (
 // 提示词预览与运行时装配同源：渲染结果包含 schema 字段规范段、工具指南段、
 // 额外要求注入——预览即装配的精确复现（不存在第二套渲染逻辑）。
 func TestPromptPreviewRenders(t *testing.T) {
-	svc := NewMetadataService()
+	svc := NewMetadataService(nil, nil)
 	pv, err := svc.PromptPreview(PromptPreviewInput{TaskType: "requirement_import", Special: "重点关注性能需求"})
 	if err != nil {
 		t.Fatal(err)
@@ -36,7 +36,7 @@ func TestPromptPreviewRenders(t *testing.T) {
 
 // 预览的空 WriteSpec 兜底路径：零值运行依赖构造工具集按 requirement 默认绑定（钉住 orDefault 行为）。
 func TestPromptPreviewCatalog(t *testing.T) {
-	svc := NewMetadataService()
+	svc := NewMetadataService(nil, nil)
 	catalog := svc.Catalog()
 	if len(catalog.TaskTypes) == 0 {
 		t.Fatal("目录总览为空")
@@ -57,7 +57,7 @@ func TestPromptPreviewCatalog(t *testing.T) {
 
 // 未注册类型的预览报错。
 func TestPromptPreviewUnregistered(t *testing.T) {
-	if _, err := NewMetadataService().PromptPreview(PromptPreviewInput{TaskType: "nope"}); err == nil {
+	if _, err := NewMetadataService(nil, nil).PromptPreview(PromptPreviewInput{TaskType: "nope"}); err == nil {
 		t.Fatal("未注册类型应报错")
 	}
 }

@@ -133,8 +133,7 @@ func NewDatasetWriter(embedder port.Embedder, datasets port.DatasetRepo, batchSi
 	return &DatasetWriter{embedder: embedder, datasets: datasets, batchSize: batchSize}
 }
 
-// vectorBodyLimit 向量文档中 body 字段的总截断长度（与查询侧组装对齐）。
-const vectorBodyLimit = 500
+// 向量文档 body 截断长度常量已下沉 domain（logic.VectorBodyLimit）——写入/查询/指纹共用。
 
 // Prepare 预览写入效果：schema 校验 + 目标数据集冲突分桶。不落库、不向量化。
 func (s *DatasetWriter) Prepare(ctx context.Context, schema model.DatasetSchema, target DatasetTarget,
@@ -248,7 +247,7 @@ func (s *DatasetWriter) Write(ctx context.Context, datasetID, taskID string, pre
 			end := min(start+s.batchSize, len(vectors))
 			texts := make([]string, 0, end-start)
 			for _, v := range vectors[start:end] {
-				texts = append(texts, logic.VectorDocOf(prepared.Schema, parseFieldsValues(v.Fields), vectorBodyLimit))
+				texts = append(texts, logic.VectorDocOf(prepared.Schema, parseFieldsValues(v.Fields), logic.VectorBodyLimit))
 			}
 			embs, err := s.embedder.Generate(ctx, texts)
 			if err != nil {

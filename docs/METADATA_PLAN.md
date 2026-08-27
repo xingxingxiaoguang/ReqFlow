@@ -10,7 +10,7 @@
 |------|------|------|---------|------|
 | M1 | 注册点收敛 + 只读元数据目录 + 提示词预览 | 无 | 后端 ~5 文件，前端 ~5 文件 | ✅ 已交付 |
 | M2 | 草稿字段袋化（全链路 map 贯通，消灭 DraftItem struct） | 无（建议在 M1 后） | 后端 ~10 文件 + 迁移，前端 ~4 文件 | ✅ 已交付 |
-| M3 | 元数据存储 + 受控编辑 + 兼容守卫 + 导入导出 | M2 | 后端 ~8 文件 + 2 迁移，前端编辑器 | 🔲 |
+| M3 | 元数据存储 + 受控编辑 + 兼容守卫 + 导入导出 | M2 | 后端 ~8 文件 + 2 迁移，前端编辑器 | ✅ 已交付 |
 | M4 | 工作流定义外置 + 新任务类型向导 | M3 | 与产品第四波合流 | 🔲 |
 
 ---
@@ -196,9 +196,11 @@ SSE:       publishItems → items 事件（TaskItem JSON）→ useTaskEvents.ts:
 
 ---
 
-## M3 · 元数据存储 + 受控编辑 + 兼容守卫
+## M3 · 元数据存储 + 受控编辑 + 兼容守卫 ✅ 已交付
 
 **目标**：schema 与 profile 可在元数据页受控编辑（DB override + 版本历史 + 兼容检查 + 审计 + 导出导入），seed/override/effective 三态生效。
+
+**交付记录**（2026-08）：迁移 `0009_metadata_registry` + `0010_metadata_audit`（payload 依全库惯例用 TEXT-not-JSONB）；`logic/schema_compat.go` 兼容规则引擎（§4.4 全规则 + enum→string 放宽特例 + 提示词 `{{` 注入告警 + 形状校验含 snake_case key 硬校验——字段 key 会拼进过滤 SQL 的注入面收口）；`FingerprintOf` 纳入向量相关 schema 摘要盐（`VectorBodyLimit` 下沉 domain，InVector/InKey 变更不再跳过重嵌）；`port.MetadataRepo` + `repository/metadata_repo.go`（DISTINCT ON 取每 key 最新版）；`app/registry.go` override 合并层（进程内 effective，写后整体替换）+ `app/metadata_edit.go` 写路径（UpdateSchema/UpdateProfile/Reset/History/Export/Import，❌ 拦截 / ⚠️ 需 confirm_risky / 审计必记 / enabled=false 回退 seed）；`port.Context.TaskSchema` 会话快照（Resume 重放按执行时 schema——快照隔离）；运行时读侧（match/query）切 `effectiveSchemaOf`；8 个新端点；前端元数据页字段合同/装配描述受控编辑器（保存自动 check、影响面确认弹窗、版本历史 diff 抽屉、source 徽标 + 回退到内置、导出按钮）。门禁与真机验收全过：改 Prompt 预览即时变化、枚举收窄拦截并列出影响数据集、删 override 回内置（版本历史保留）、审计四连落库；浏览器实测编辑→检查→保存→徽标→预览全链路。
 
 ### 后端
 

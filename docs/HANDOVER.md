@@ -7,8 +7,8 @@
 
 ## 1. 项目是什么（30 秒版）
 
-- **现状**：Task 生命周期管理 + AI agent loop 驱动的项目管理辅助平台，**任务与任务通过数据集衔接**（不依赖任何外部协作平台，已全量剪除 PingCode）。需求导入任务化：上传解析 → 确认门 → **AI 分析（agent 工具驱动：经 read_document/search_document 自主阅读原文，write_work_items 分批产出草稿，关键决策点 ask_human 问人）** → 查重确认 → 生成需求数据集。提示词零固定模板——按任务类型 profile 动态装配（指令头注册表 + schema 渲染字段规范 + 工具集同源组装指南）。数据集为第一等公民（结果集浏览、查重与关联匹配的统一语料）。长程流程在任务详情页全程跟踪（步骤时间线 + 分阶段工作区），支持暂停/继续（分析走会话检查点、数据集生成幂等重建）、编辑、手动完成，进度落库可重放，执行脱离页面（断开照跑、服务重启自动标暂停、SSE 断线自动重连）。任务类型定义已收敛为聚合注册表（`app/registry.go` 一处声明），元数据目录（M1，前端「元数据」tab）提供聚合定义只读视图 + 提示词预览（设计见 `docs/METADATA.md`，分波计划见 `docs/METADATA_PLAN.md`）。
-- **下一步**：第二波 Bug 链路任务化（消费需求数据集 → 产出 Bug 数据集，方案定稿在 `internal/app/bug/doc.go`，见 §5.1）；元数据管理后续波次（M3 受控编辑 → M4 工作流外置，见 docs/METADATA_PLAN.md；M2 草稿字段袋化已交付——草稿全链路 schema 字段袋驱动，新任务类型零 struct 接入）；多客户端上线补全（认证 / LLM 并发限流，见 §5.4）；技术债清理（§5.3）。
+- **现状**：Task 生命周期管理 + AI agent loop 驱动的项目管理辅助平台，**任务与任务通过数据集衔接**（不依赖任何外部协作平台，已全量剪除 PingCode）。需求导入任务化：上传解析 → 确认门 → **AI 分析（agent 工具驱动：经 read_document/search_document 自主阅读原文，write_work_items 分批产出草稿，关键决策点 ask_human 问人）** → 查重确认 → 生成需求数据集。提示词零固定模板——按任务类型 profile 动态装配（指令头注册表 + schema 渲染字段规范 + 工具集同源组装指南）。数据集为第一等公民（结果集浏览、查重与关联匹配的统一语料）。长程流程在任务详情页全程跟踪（步骤时间线 + 分阶段工作区），支持暂停/继续（分析走会话检查点、数据集生成幂等重建）、编辑、手动完成，进度落库可重放，执行脱离页面（断开照跑、服务重启自动标暂停、SSE 断线自动重连）。任务类型定义已收敛为聚合注册表（`app/registry.go` 一处声明）；元数据管理 M1~M3 已交付——聚合定义目录 + 提示词预览（前端「元数据」tab）+ **受控编辑（M3：schema/profile 经 DB 覆盖层编辑，兼容守卫 + 版本历史 + 审计 + 导入导出，seed/override/effective 三态生效）**（设计见 `docs/METADATA.md`，分波计划见 `docs/METADATA_PLAN.md`）。
+- **下一步**：第二波 Bug 链路任务化（消费需求数据集 → 产出 Bug 数据集，方案定稿在 `internal/app/bug/doc.go`，见 §5.1）；元数据管理 M4（工作流定义外置 + 新任务类型向导，与产品第四波合流）；多客户端上线补全（认证 / LLM 并发限流，见 §5.4）；技术债清理（§5.3）。
 - **仓库**：`/Users/xxxg/demo/ReqFlow`，main 分支。项目自主演进（工具/提示词/装配范式自成体系，见 §4.6 与 §5.2）。
 
 ## 2. 怎么接手：跑起来
@@ -83,12 +83,22 @@ internal/domain/
     draft.go           ⭐ NormalizeValues：LLM 输出 → schema 字段袋归一化——默认值
                        （Default 含 {current_time}）/枚举越界回落/数字宽松解析/清洗声明
                        （Clean）全部来自 FieldSpec，代码零字段知识（M2 消灭 B1 双源）
+    schema.go          ItemKeyOf（条目主键）/ FingerprintOf（指纹 = 字段值 + 向量相关
+                       schema 摘要盐——InKey/InVector/截断变更不再跳过重嵌，M3 已知
+                       缺陷修复）/ ValidateValues / VectorDocOf（向量文档组装）/
+                       VectorBodyLimit（写入/查询/指纹三方共用）；TitleFieldOf 标题口径
+    schema_compat.go   ⭐ 兼容规则引擎（M3 写守卫核心）：CheckSchemaCompat 按 METADATA
+                       §4.4 规则表逐条判定（✅/⚠️/❌）；ValidateSchemaShape 形状硬校验
+                       （字段 key 白名单 snake_case——key 会拼进过滤 SQL，注入面收口）；
+                       ValidateProfileText + {{ 模板注入告警
 
 internal/port/
-  repo.go            DatasetRepo/TaskRepo + 向量 DTO（DatasetItemVector/SimilarDatasetItem）
+  repo.go            DatasetRepo/TaskRepo/MetadataRepo（M3：registry/audit 仓储契约，
+                     effective = 每 (kind,key) 最大 version 且 enabled）+ 向量 DTO
   llm.go             LLMClient（Stream/Complete/Ping）+ pi 式消息模型（Context/Message/内容块/
-                     ToolSpec 全可 JSON 序列化——Context 即会话，暂停检查点与 refine 以它为单位）
-                     + 流事件协议（start/text_delta/thinking_delta/toolcall_*/done/error）
+                     ToolSpec 全可 JSON 序列化——Context 即会话，暂停检查点与 refine 以它为单位；
+                     Context.TaskSchema 为任务产出 schema 快照——Resume 重放按执行时
+                     schema，元数据热编辑不影响进行中任务）+ 流事件协议
   embedding.go       Embedder（Available() 驱动降级）
   parser.go          DocParser
 
@@ -96,14 +106,23 @@ internal/app/        用例层；全部依赖构造注入，进度用回调上�
   registry.go        ⭐ 任务类型聚合注册表（唯一注册点）：工作流 + 产出数据集类型 +
                      schema + 装配 profile 一处声明（TaskTypeOf/TaskTypes）；旧查找
                      入口（WorkflowOf/AnalyzeProfileOf/写入计划）均为薄委托，一致性
-                     有单测钉住；新增任务类型 = 加一条聚合定义（PRODUCT §4 决策二）
+                     有单测钉住；新增任务类型 = 加一条聚合定义（PRODUCT §4 决策二）；
+                     M3 起 seed 之上叠加 DB override 合并层（metadataOverrides，整体
+                     替换无竞态）——TaskTypeOf 返回 effective 视图，运行时仍进程内
+                     调用不经 HTTP；effectiveSchemaOf 是按数据集类型工作的读侧
+                     （match/query）统一入口
   workflow.go        工作流定义（半元数据驱动）：步骤链 + 依赖声明（StepKind:
                      parse/human/analyze/dataset）；创建任务时快照进 tasks.workflow
                      （任务自描述，不受定义演进影响）；查找入口委托聚合注册表
-  metadata.go        ⭐ 元数据目录用例（M1 只读）：Catalog（总览）/ TaskTypeView
-                     （聚合视图）/ PromptPreview（三段提示词实时渲染，复用运行时
-                     渲染器与工具集构造——预览即装配的精确复现）；M3 扩展为
-                     seed/override 合并的 effective 视图（docs/METADATA.md）
+  metadata.go        ⭐ 元数据目录用例（M1 只读部分）：Catalog（总览）/ TaskTypeView
+                     （聚合视图，含 schema_source/profile_source 分构件来源）/
+                     PromptPreview（三段提示词实时渲染，复用运行时渲染器与工具集
+                     构造——预览即装配的精确复现）
+  metadata_edit.go   ⭐ 元数据受控编辑（M3 写路径）：Reload（seed→override→effective
+                     装载，写后整体刷新）/ UpdateSchema（形状校验→兼容引擎→❌拦截
+                     ⚠️confirm_risky→版本递增+审计）/ UpdateProfile / Reset*（enabled=
+                     false 最新版回退 seed，版本历史保留）/ History / Export / Import
+                     （逐项同一守卫）；effective 版本 = seed.Version + 注册表版本
   task.go            ⭐ TaskManager 任务门面：CRUD/编辑/触发/暂停/继续/完成/Recover +
                      运行登记表（每任务单写者 goroutine）+ 数据集浏览透传——httpgin 唯一任务入口
   runner.go          ⭐ 步骤执行器小接口（parse/analyze/dataset 服务结构即满足，测试注入假实现）
@@ -157,9 +176,11 @@ internal/infra/
                        dataset_items 建表 + 任务衔接列 + DROP 平台语料表）/ 0006_dataset_generic
                        （数据集通用底座：item_key/fingerprint/元数据列）/ 0007_archive（归档表）
                        / 0008_task_items_fields（task_items 推倒重建为字段袋：fields TEXT JSON，
-                       与 dataset_items.fields 决策一致）；研发阶段无数据搬迁，改表直接推倒重建
-  repository/        两个仓储实现（GORM + pgvector；dataset_repo 的 Raw SQL 向量检索注意
-                      **显式列映射**——嵌套结构体 Scan 会丢 fields 列，踩过坑）
+                       与 dataset_items.fields 决策一致）/ 0009_metadata_registry + 0010_metadata_audit
+                       （M3 元数据覆盖层与审计，payload 同为 TEXT JSON）；研发阶段无数据搬迁，改表直接推倒重建
+  repository/        仓储实现（GORM + pgvector；dataset_repo 的 Raw SQL 向量检索注意
+                      **显式列映射**——嵌套结构体 Scan 会丢 fields 列，踩过坑；
+                      metadata_repo 的 LatestEntries 用 DISTINCT ON 取每 (kind,key) 最大版）
   llm/               双协议适配器（均移植自 pi，偏离清单见 §4.6）：client.go 工厂按 provider 分发
                      openai.go——OpenAI 兼容 /chat/completions（reasoning 三字段防重复、
                        tool_calls 流式增量聚合、缺 finish_reason 时推断）
@@ -169,6 +190,8 @@ internal/infra/
   parser/            parser.go（分发+docx 标准库 zip+XML）mineru.go（四步云端解析）xlsx.go（行级解析，第二波用）
   httpgin/           server.go（路由表）sse.go heartbeat.go handler_tasks.go（任务/工作流/数据集端点）
                      handler_misc.go handler_match.go handler_metadata.go（元数据目录 3 端点）
+                     handler_metadata_edit.go（M3 受控编辑 8 端点；守卫拦截 409 时判定明细
+                     随 data 载荷带回前端）
   database/migrations 见上
 
 web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-router
@@ -181,8 +204,15 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
   src/api/tasks.ts           任务 API 封装（创建/列表/详情/编辑/暂停/继续/完成/步骤触发/草稿保存/数据集浏览）
   src/pages/Tasks.tsx        任务列表（状态筛选 + 生命周期操作）
   src/pages/Datasets.tsx     数据集浏览（结果集 + 条目明细 + 来源任务追溯）
-  src/pages/Metadata.tsx     元数据目录（M1 只读）：任务类型聚合视图（步骤链/字段合同/
-                             装配描述）+ 提示词预览（可填额外要求实时渲染，/metadata 路由）
+  src/pages/Metadata.tsx     元数据目录：任务类型聚合视图（步骤链/字段合同/装配描述）
+                             + 提示词预览（可填额外要求实时渲染）+ 导出按钮（effective
+                             视图 JSON 留档），/metadata 路由
+  src/pages/MetadataEditors.tsx ⭐ M3 受控编辑器：SchemaEditor（字段合同编辑：行点击
+                             弹窗改 Label/枚举/属性/提取说明 → 保存自动 check → 判定
+                             弹窗 ❌标红/⚠️勾选确认/影响面数据集表 → 保存生效）+
+                             ProfileEditor（指令头/示例）+ HistoryDrawer（版本历史，
+                             点选两版 LCS 行 diff）；409 守卫拦截不抛错——判定明细
+                             随响应 data 带回（api.putDetail）
   src/pages/tasks/           详情页 TaskDetail（头部+步骤时间线+按阶段工作区；analyze 步骤
                      标签按 settings.llm.agentMode 如实显示）+
                      panels/（ConfirmParsePanel / AnalysisPane（双区实时滚动+工具轨迹+人工
@@ -297,6 +327,11 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
 | `/match/duplicates` | JSON | {items:[字段袋]} → {results:[{index,match|null}]}（语料 = 需求数据集，标题按 schema 标题字段口径） |
 | `/metadata` `/metadata/task-types/:type` | JSON | 元数据目录：总览（任务类型列表 + source）/ 聚合视图（workflow + schema + profile + 工具清单）——前端「元数据」tab 数据源 |
 | `/metadata/render/preview` | JSON | {task_type, special_requirements?} → 三段提示词实时渲染（与运行时装配同一函数） |
+| `/metadata/schemas/:type/check` | JSON | 兼容性 dry-run {schema} → 判定明细 + 存量数据集影响面（不落库） |
+| `/metadata/schemas/:type` `PUT`/`DELETE` | JSON | schema 受控保存 {schema, confirm_risky?, summary?}（❌ 拦截/⚠️ 需确认，409 携带判定明细）/ 回退到内置（版本历史保留） |
+| `/metadata/profiles/:type` `PUT`/`DELETE` | JSON | 指令头/示例编辑 {role, example, summary?} / 回退到内置 |
+| `/metadata/history/:kind/:key` | JSON | 版本历史（新→旧，含载荷原文；kind = dataset_schema\|analyze_profile） |
+| `/metadata/export` `/metadata/import` | JSON | effective 视图导出 / 导入（逐项同一守卫，单项失败不中断） |
 | `/overview` | JSON | 概览（datasets/datasetItems/tasks + recentTasks/recentDatasets） |
 | `/settings` `/settings/test-llm` | JSON | 脱敏视图/连通测试 |
 | `/health` | JSON | 存活 |

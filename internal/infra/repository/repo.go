@@ -93,6 +93,34 @@ type taskItemRow struct {
 
 func (taskItemRow) TableName() string { return "task_items" }
 
+type metadataRegistryRow struct {
+	ID        string    `gorm:"column:id;primaryKey"`
+	Kind      string    `gorm:"column:kind"`
+	Key       string    `gorm:"column:key"`
+	Version   int       `gorm:"column:version"`
+	Payload   string    `gorm:"column:payload"` // JSON 文本
+	Enabled   bool      `gorm:"column:enabled"`
+	Summary   string    `gorm:"column:summary"`
+	CreatedBy string    `gorm:"column:created_by"`
+	CreatedAt time.Time `gorm:"column:created_at"`
+}
+
+func (metadataRegistryRow) TableName() string { return "metadata_registry" }
+
+type metadataAuditRow struct {
+	ID          string    `gorm:"column:id;primaryKey"`
+	Action      string    `gorm:"column:action"`
+	Kind        string    `gorm:"column:kind"`
+	Key         string    `gorm:"column:key"`
+	FromVersion int       `gorm:"column:from_version"`
+	ToVersion   int       `gorm:"column:to_version"`
+	Summary     string    `gorm:"column:summary"`
+	Operator    string    `gorm:"column:operator"`
+	CreatedAt   time.Time `gorm:"column:created_at"`
+}
+
+func (metadataAuditRow) TableName() string { return "metadata_audit" }
+
 /* ---- 公共构造 ---- */
 
 // NewProjectRepo / NewWorkItemRepo / NewMetaRepo / NewImportRepo 见各自文件。

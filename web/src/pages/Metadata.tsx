@@ -4,10 +4,11 @@ import {
   Table, Tabs, Tag, Timeline, Typography,
 } from 'antd'
 import type { CSSProperties } from 'react'
-import { PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
-import { useQuery } from '@tanstack/react-query'
+import { DownloadOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { metadataApi } from '../api/metadata'
-import type { FieldSpec, PromptPreview, StepKind, TaskTypeSummary, TaskTypeView } from '../api/types'
+import type { PromptPreview, StepKind, TaskTypeSummary, TaskTypeView } from '../api/types'
+import { ProfileEditor, SchemaEditor } from './MetadataEditors'
 
 const { Text, Paragraph } = Typography
 
@@ -36,32 +37,11 @@ function PromptBlock({ title, text }: { title: string; text: string }) {
   )
 }
 
-/** 字段类型展示：枚举附值域提示 */
-function FieldTypeTag({ field }: { field: FieldSpec }) {
-  if (field.type === 'enum') {
-    return (
-      <Tag color="purple" title={`可选值：${field.enum?.join(' / ')}`}>
-        enum · {field.enum?.length ?? 0} 值
-      </Tag>
-    )
-  }
-  return <Tag>{field.type}</Tag>
-}
-
-/** 字段属性徽标（必填/可筛/主键/向量角色） */
-function FieldFlags({ field }: { field: FieldSpec }) {
-  const flags: { label: string; color?: string }[] = []
-  if (field.required) flags.push({ label: '必填', color: 'red' })
-  if (field.filterable) flags.push({ label: '可筛', color: 'cyan' })
-  if (field.in_key) flags.push({ label: '主键', color: 'gold' })
-  if (field.in_vector && field.in_vector !== 'none') flags.push({ label: `向量·${field.in_vector}`, color: 'geekblue' })
-  if (!flags.length) return <Text type="secondary">—</Text>
-  return <>{flags.map((f) => <Tag key={f.label} color={f.color}>{f.label}</Tag>)}</>
-}
-
-/** 元数据页：任务类型聚合定义的统一目录（M1 只读）——看懂一个任务类型从「翻四个文件」变「开一个页面」 */
+/** 元数据页：任务类型聚合定义的统一目录——看懂一个任务类型从「翻四个文件」变「开一个页面」；
+ *  M3 起字段合同/装配描述可受控编辑（保存前自动兼容检查，❌ 拦截 / ⚠️ 需确认） */
 export default function Metadata() {
   const { message } = App.useApp()
+  const queryClient = useQueryClient()
   const { data: catalog, isLoading } = useQuery({
     queryKey: ['metadata-catalog'],
     queryFn: metadataApi.catalog,
@@ -97,6 +77,29 @@ export default function Metadata() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected])
 
+  /* 受控编辑保存/回退后：刷新聚合视图与目录（effective 即时生效），预览重渲 */
+  const handleSaved = () => {
+    void queryClient.invalidateQueries({ queryKey: ['metadata-task-type', selected] })
+    void queryClient.invalidateQueries({ queryKey: ['metadata-catalog'] })
+    if (selected) void renderPreview(selected)
+  }
+
+  /* 导出 effective 视图（JSON 文件留档 / 跨环境分发人工导入） */
+  const doExport = async () => {
+    try {
+      const doc = await metadataApi.export()
+      const blob = new Blob([JSON.stringify(doc, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `reqflow-metadata-${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (e) {
+      message.error((e as Error).message)
+    }
+  }
+
   if (isLoading) return <Card loading />
   if (!catalog?.task_types.length) {
     return <Card><Empty description="注册表为空（无已注册任务类型）" /></Card>
@@ -123,23 +126,28 @@ export default function Metadata() {
   return (
     <Row gutter={16}>
       <Col span={6}>
-        <Card title={<Text strong>任务类型</Text>} styles={{ body: { padding: 8 } }}>
+        <Card
+          title={<Text strong>任务类型</Text>}
+          styles={{ body: { padding: 8 } }}
+          extra={<Button size="small" icon={<DownloadOutlined />} onClick={doExport}>导出</Button>}
+        >
           <List dataSource={catalog.task_types} renderItem={renderSummary} split={false} />
         </Card>
       </Col>
       <Col span={18}>
         <Card loading={viewLoading && !view}>
           {!view ? <Spin /> : <TaskTypeDetail view={view} preview={preview} previewLoading={previewLoading}
-            special={special} onSpecialChange={setSpecial} onRender={() => selected && void renderPreview(selected)} />}
+            special={special} onSpecialChange={setSpecial} onRender={() => selected && void renderPreview(selected)}
+            onSaved={handleSaved} />}
         </Card>
       </Col>
     </Row>
   )
 }
 
-/** 聚合详情：概览（步骤链）/ 字段合同 / 装配描述 / 提示词预览 */
+/** 聚合详情：概览（步骤链）/ 字段合同（受控编辑）/ 装配描述（受控编辑）/ 提示词预览 */
 function TaskTypeDetail({
-  view, preview, previewLoading, special, onSpecialChange, onRender,
+  view, preview, previewLoading, special, onSpecialChange, onRender, onSaved,
 }: {
   view: TaskTypeView
   preview: PromptPreview | null
@@ -147,6 +155,7 @@ function TaskTypeDetail({
   special: string
   onSpecialChange: (v: string) => void
   onRender: () => void
+  onSaved: () => void
 }) {
   return (
     <>
@@ -197,33 +206,14 @@ function TaskTypeDetail({
           {
             key: 'schema',
             label: '字段合同',
-            children: (
-              <Table<FieldSpec>
-                rowKey="key"
-                size="small"
-                pagination={false}
-                dataSource={view.schema.fields}
-                columns={[
-                  { title: '字段', dataIndex: 'key', width: 160, render: (k: string) => <Text code>{k}</Text> },
-                  { title: '名称', dataIndex: 'label', width: 110 },
-                  { title: '类型', dataIndex: 'type', width: 110, render: (_, f) => <FieldTypeTag field={f} /> },
-                  { title: '属性', key: 'flags', width: 220, render: (_, f) => <FieldFlags field={f} /> },
-                  { title: '提取说明（进提示词）', dataIndex: 'prompt' },
-                ]}
-              />
-            ),
+            children: <SchemaEditor view={view} onSaved={onSaved} />,
           },
           {
             key: 'profile',
             label: '装配描述',
             children: (
               <>
-                <PromptBlock title="指令头 Role（{field_spec} 占位由 schema 渲染替换）" text={view.profile.role} />
-                {view.profile.example && (
-                  <div style={{ marginTop: 16 }}>
-                    <PromptBlock title="单发降级示例 Example" text={view.profile.example} />
-                  </div>
-                )}
+                <ProfileEditor view={view} onSaved={onSaved} />
                 <Typography.Title level={5} style={{ marginTop: 24 }}>
                   工具清单（写入绑定：<Text code>{view.profile.write.tool_name}</Text>）
                 </Typography.Title>

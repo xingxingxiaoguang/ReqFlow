@@ -7,12 +7,13 @@ import (
 	"reqflow/internal/app/agent"
 	"reqflow/internal/app/tools"
 	"reqflow/internal/domain/model"
+	"reqflow/internal/port"
 )
 
-// 元数据目录用例（M1 只读）：聚合注册表（registry.go）的统一对外视图
-// + 提示词预览。设计见 docs/METADATA.md——M1 全部条目 source=builtin；
-// M3 引入 metadata_registry 覆盖与受控编辑后出现 overridden，本用例扩展
-// 为 seed/override 合并的 effective 视图（运行时仍进程内供给，不经 HTTP）。
+// 元数据目录用例：聚合注册表（registry.go）的统一对外视图 + 提示词预览。
+// 设计见 docs/METADATA.md——M1 全部条目 source=builtin；M3 引入 metadata_registry
+// 覆盖与受控编辑后出现 overridden，读侧给 effective 合并视图（运行时仍进程内供给，
+// 不经 HTTP），写路径见 metadata_edit.go（版本递增 + 兼容守卫 + 审计 + 导入导出）。
 // 提示词预览复用运行时渲染器（prompt.go）与工具集构造（tools.BuildForRun），
 // 与实际装配同一函数——不存在第二套渲染逻辑。
 
@@ -62,16 +63,20 @@ type MetadataToolView struct {
 // TaskTypeView 任务类型聚合视图（元数据页详情：workflow + schema + profile + 工具）。
 // Workflow/Schema 直接透传 domain 类型（JSON 形状与 /workflows、/datasets/schemas
 // 端点一致，前端复用既有 Workflow/DatasetSchema 类型）。
+// Source 为整体来源（schema/profile 任一被覆盖即 overridden）；
+// SchemaSource/ProfileSource 为分构件来源（M3 编辑器徽标与回退按钮的判定依据）。
 type TaskTypeView struct {
-	Type        string              `json:"type"`
-	Name        string              `json:"name"`
-	Desc        string              `json:"desc"`
-	Source      string              `json:"source"`
-	DatasetType string              `json:"dataset_type"`
-	Workflow    model.Workflow      `json:"workflow"`
-	Schema      model.DatasetSchema `json:"schema"`
-	Profile     MetadataProfileView `json:"profile"`
-	Tools       []MetadataToolView  `json:"tools"`
+	Type          string              `json:"type"`
+	Name          string              `json:"name"`
+	Desc          string              `json:"desc"`
+	Source        string              `json:"source"`
+	SchemaSource  string              `json:"schema_source"`
+	ProfileSource string              `json:"profile_source"`
+	DatasetType   string              `json:"dataset_type"`
+	Workflow      model.Workflow      `json:"workflow"`
+	Schema        model.DatasetSchema `json:"schema"`
+	Profile       MetadataProfileView `json:"profile"`
+	Tools         []MetadataToolView  `json:"tools"`
 }
 
 // PromptPreviewInput 提示词预览入参。
@@ -96,20 +101,29 @@ const (
 )
 
 // MetadataService 元数据目录用例。
-type MetadataService struct{}
+type MetadataService struct {
+	repo     port.MetadataRepo // nil = 无 DB 覆盖层（纯 seed 运行；单测/降级形态）
+	datasets port.DatasetRepo  // 兼容检查的影响面清单（存量数据集）
+}
 
-// NewMetadataService 构造用例（无状态；保持与其他用例一致的注入形态）。
-func NewMetadataService() *MetadataService { return &MetadataService{} }
+// NewMetadataService 构造用例。repo 允许 nil（无覆盖层时读侧退化为纯 seed）。
+func NewMetadataService(repo port.MetadataRepo, datasets port.DatasetRepo) *MetadataService {
+	return &MetadataService{repo: repo, datasets: datasets}
+}
 
 // Catalog 目录总览。
 func (s *MetadataService) Catalog() MetadataCatalog {
 	defs := TaskTypes()
 	out := MetadataCatalog{TaskTypes: make([]TaskTypeSummary, 0, len(defs))}
 	for _, d := range defs {
+		source := MetadataSourceBuiltin
+		if schemaOverridden(d.DatasetType) || profileOverridden(d.Type) {
+			source = MetadataSourceOverridden
+		}
 		sum := TaskTypeSummary{
 			Type: d.Type, Name: d.Workflow.Name, Desc: d.Workflow.Desc,
 			StepCount: len(d.Workflow.Steps), DatasetType: d.DatasetType,
-			Source: MetadataSourceBuiltin,
+			Source: source,
 		}
 		if d.Schema != nil {
 			sum.SchemaLabel = d.Schema().Label
@@ -129,10 +143,22 @@ func (s *MetadataService) TaskTypeView(taskType string) (*TaskTypeView, error) {
 	if writeTool == "" { // 零值绑定兜底（与 tools.WriteSpec.orDefault 同口径）
 		writeTool = tools.DefaultWriteSpec().Name
 	}
+	schemaSource, profileSource := MetadataSourceBuiltin, MetadataSourceBuiltin
+	if schemaOverridden(d.DatasetType) {
+		schemaSource = MetadataSourceOverridden
+	}
+	if profileOverridden(d.Type) {
+		profileSource = MetadataSourceOverridden
+	}
+	source := MetadataSourceBuiltin
+	if schemaSource == MetadataSourceOverridden || profileSource == MetadataSourceOverridden {
+		source = MetadataSourceOverridden
+	}
 	view := &TaskTypeView{
 		Type: d.Type, Name: d.Workflow.Name, Desc: d.Workflow.Desc,
-		Source: MetadataSourceBuiltin, DatasetType: d.DatasetType,
-		Workflow: d.Workflow,
+		Source: source, SchemaSource: schemaSource, ProfileSource: profileSource,
+		DatasetType: d.DatasetType,
+		Workflow:    d.Workflow,
 		Profile: MetadataProfileView{
 			Role:    d.Profile.Role,
 			Example: d.Profile.Example,
