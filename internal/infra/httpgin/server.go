@@ -14,6 +14,7 @@ type Services struct {
 	Overview     *app.OverviewService
 	DatasetQuery *app.DatasetQueryService
 	Archive      *app.ArchiveService
+	Metadata     *app.MetadataService
 
 	UploadDir string // 上传暂存目录（cmd 从配置注入）
 	MaxFileMB int64  // 上传大小上限
@@ -56,6 +57,10 @@ func New(svc Services) *gin.Engine {
 
 		api.GET("/archives", h.listArchives)                      // 归档列表
 		api.POST("/archives/:kind/:id/restore", h.restoreArchive) // 归档恢复
+
+		api.GET("/metadata", h.metadataCatalog)                       // 元数据目录总览
+		api.GET("/metadata/task-types/:type", h.metadataTaskType)     // 任务类型聚合视图
+		api.POST("/metadata/render/preview", h.metadataPromptPreview) // 提示词预览
 
 		api.POST("/match/duplicates", h.checkDuplicates)
 

@@ -6,6 +6,7 @@ import TaskNew from './pages/tasks/TaskNew'
 import TaskDetail from './pages/tasks/TaskDetail'
 import Bugs from './pages/Bugs'
 import Datasets from './pages/Datasets'
+import Metadata from './pages/Metadata'
 import Archives from './pages/Archives'
 import Settings from './pages/Settings'
 
@@ -22,6 +23,7 @@ export const router = createBrowserRouter([
       { path: 'tasks/:id', element: <TaskDetail /> },
       { path: 'bugs', element: <Bugs /> },
       { path: 'datasets', element: <Datasets /> },
+      { path: 'metadata', element: <Metadata /> },
       { path: 'archives', element: <Archives /> },
       { path: 'settings', element: <Settings /> },
     ],

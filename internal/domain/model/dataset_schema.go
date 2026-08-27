@@ -84,6 +84,8 @@ func SchemaOf(typ string) (DatasetSchema, bool) {
 }
 
 // DatasetTypeOfTask 任务类型 → 产出数据集类型（task↔dataset 接缝的类型映射）。
+// 运行时路径已由 app 层聚合注册表（app.TaskTypeOf 的 DatasetType 字段）承载，
+// 两处由注册表一致性测试互相钉住；保留此映射供域层独立使用。
 func DatasetTypeOfTask(taskType string) (string, bool) {
 	switch taskType {
 	case TaskTypeRequirementImport:

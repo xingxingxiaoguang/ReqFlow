@@ -629,21 +629,21 @@ func datasetWritePlan(task *model.Task) (DatasetTarget, model.DatasetSchema, err
 	return datasetWritePlanFor(task, *target)
 }
 
-// datasetWritePlanFor 以显式声明（预览请求/任务输入）解析写入计划。
+// datasetWritePlanFor 以显式声明（预览请求/任务输入）解析写入计划
+// （任务类型 → 产出 schema 经聚合注册表一次解析，不再两级查找）。
 func datasetWritePlanFor(task *model.Task, target DatasetTarget) (DatasetTarget, model.DatasetSchema, error) {
 	t, err := target.Normalize()
 	if err != nil {
 		return t, model.DatasetSchema{}, err
 	}
-	dsType, ok := model.DatasetTypeOfTask(task.Type)
+	def, ok := TaskTypeOf(task.Type)
 	if !ok {
-		return t, model.DatasetSchema{}, fmt.Errorf("任务类型 %s 未注册产出数据集类型", task.Type)
+		return t, model.DatasetSchema{}, fmt.Errorf("任务类型 %s 未注册（聚合注册表 TaskTypeOf）", task.Type)
 	}
-	schema, ok := model.SchemaOf(dsType)
-	if !ok {
-		return t, model.DatasetSchema{}, fmt.Errorf("数据集类型 %s 未注册 schema", dsType)
+	if def.Schema == nil {
+		return t, model.DatasetSchema{}, fmt.Errorf("任务类型 %s 未注册产出 schema", task.Type)
 	}
-	return t, schema, nil
+	return t, def.Schema(), nil
 }
 
 /* ---- 小工具 ---- */

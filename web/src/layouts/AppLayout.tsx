@@ -2,7 +2,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { ProLayout } from '@ant-design/pro-components'
 import {
   DashboardOutlined, PlusCircleOutlined, FileAddOutlined, BugOutlined,
-  DatabaseOutlined, UnorderedListOutlined, SettingOutlined, ThunderboltFilled, InboxOutlined,
+  DatabaseOutlined, AppstoreOutlined, UnorderedListOutlined, SettingOutlined, ThunderboltFilled, InboxOutlined,
 } from '@ant-design/icons'
 import type React from 'react'
 import { Badge, Tooltip, Typography } from 'antd'
@@ -25,6 +25,7 @@ const menu = {
     },
     { path: '/tasks', name: '任务管理', icon: <UnorderedListOutlined /> },
     { path: '/datasets', name: '数据集', icon: <DatabaseOutlined /> },
+    { path: '/metadata', name: '元数据', icon: <AppstoreOutlined /> },
     { path: '/archives', name: '归档', icon: <InboxOutlined /> },
     { path: '/settings', name: '设置', icon: <SettingOutlined /> },
   ],

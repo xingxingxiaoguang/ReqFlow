@@ -4,7 +4,7 @@
 > 技术栈：React 18 + Ant Design 5（前端）/ Go + Gin + GORM（后端）/ PostgreSQL 16 + pgvector（DB）。
 > 发布形态：`go:embed` 单二进制，配置全部本地 YAML，代码与产物零硬编码。
 
-📄 **文档**：[产品总纲](./docs/PRODUCT.md)（定位/功能全景/路线图） · [交接文档](./docs/HANDOVER.md)（架构/代码地图/流程/踩坑/第二波指南）
+📄 **文档**：[产品总纲](./docs/PRODUCT.md)（定位/功能全景/路线图） · [交接文档](./docs/HANDOVER.md)（架构/代码地图/流程/踩坑/第二波指南） · [元数据模块设计](./docs/METADATA.md) + [分波执行计划](./docs/METADATA_PLAN.md)（定义层统一管理，M1~M4）
 
 ## 架构（四层，依赖只允许向内）
 
@@ -78,6 +78,8 @@ make build        # → bin/reqflow
 | DELETE | `/api/tasks/:id` · `/api/datasets/:id` | 归档（移入独立归档表，可恢复，退出主业务循环） |
 | GET | `/api/archives?kind=task\|dataset&type=` | 归档列表（任务含明细快照；数据集含条目与向量） |
 | POST | `/api/archives/:kind/:id/restore` | 归档恢复到主表（数据集恢复后查重/检索语料随之生效） |
+| GET | `/api/metadata` · `/api/metadata/task-types/:type` | 元数据目录：任务类型聚合定义（workflow + schema + profile + 工具清单 + source），前端「元数据」tab 数据源 |
+| POST | `/api/metadata/render/preview` | 提示词预览：`{task_type, special_requirements?}` → 三段提示词实时渲染（与运行时装配同一函数） |
 | POST | `/api/match/duplicates` | 同项目查重（标题精确 / 语义阈值） |
 | GET | `/api/datasets` `/api/datasets/:id` | 数据集与条目浏览 |
 | GET | `/api/datasets/schemas` | 数据集 schema 目录（字段合同：表格/筛选/向量组装驱动） |

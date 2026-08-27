@@ -205,6 +205,68 @@ export interface Workflow {
   steps: WorkflowStep[]
 }
 
+/** 元数据目录（任务类型聚合定义的统一对外视图；M1 只读，source 恒 builtin，M3 起 DB 覆盖出现 overridden） */
+export type MetadataSource = 'builtin' | 'overridden'
+
+export interface TaskTypeSummary {
+  type: string
+  name: string
+  desc: string
+  step_count: number
+  dataset_type?: string
+  schema_label?: string
+  source: MetadataSource
+}
+
+export interface MetadataCatalog {
+  task_types: TaskTypeSummary[]
+}
+
+export interface MetadataWriteBinding {
+  tool_name: string
+}
+
+/** 装配描述视图（role 为声明原文，含 {field_spec} 占位；渲染后形态见 PromptPreview） */
+export interface MetadataProfileView {
+  role: string
+  example: string
+  write: MetadataWriteBinding
+}
+
+/** agent 工具声明（snippet/guidelines 即系统提示词的同源素材） */
+export interface MetadataToolView {
+  name: string
+  description: string
+  snippet: string
+  guidelines: string[]
+}
+
+/** 任务类型聚合视图（元数据页详情：workflow + schema + profile + 工具清单） */
+export interface TaskTypeView {
+  type: string
+  name: string
+  desc: string
+  source: MetadataSource
+  dataset_type: string
+  workflow: Workflow
+  schema: DatasetSchema
+  profile: MetadataProfileView
+  tools: MetadataToolView[]
+}
+
+export interface PromptPreviewInput {
+  task_type: string
+  special_requirements?: string
+}
+
+/** 三段提示词的实时渲染（与运行时装配同一函数：改元数据 → 此处即最终形态） */
+export interface PromptPreview {
+  task_type: string
+  agent_system_prompt: string
+  agent_first_message: string
+  classic_prompt: string
+}
+
 /** 解析任务自带的工作流快照（task.Workflow JSON 文本） */
 export function parseTaskWorkflow(task: Task): Workflow | null {
   if (!task?.Workflow) return null

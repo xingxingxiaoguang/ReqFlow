@@ -7,7 +7,7 @@ import (
 	"reqflow/internal/domain/model"
 )
 
-// AnalyzeProfile 一类任务的 agent 装配描述（工作流注册表的 agent 侧对应物）。
+// AnalyzeProfile 一类任务的 agent 装配描述（聚合注册表的 agent 侧构件）。
 //
 // 系统提示词由此动态装配（无固定模板）：
 //
@@ -15,8 +15,8 @@ import (
 //	+ 工具指南（agent.DocumentedTool 同源组装）
 //
 // 单发降级路径同理由 profile 装配：输出契约 + 示例（profile.Example 覆盖，
-// 缺省按 schema 生成骨架）。新增任务类型 = 注册工作流 + 注册产出 schema +
-// 注册本 profile，执行骨架与提示词装配零改动。
+// 缺省按 schema 生成骨架）。新增任务类型 = 在聚合注册表（registry.go）加一条
+// 聚合定义（工作流 + schema + 本 profile），执行骨架与提示词装配零改动。
 type AnalyzeProfile struct {
 	// Role 指令头：角色 + 任务 + 分析要点。模式中立（不预设输出形态）；
 	// {field_spec} 占位符由产出 schema 渲染替换，{current_time} 渲染时填充。
@@ -29,13 +29,13 @@ type AnalyzeProfile struct {
 	Example string
 }
 
-// AnalyzeProfileOf 按任务类型取 agent 装配描述；未注册返回 false。
+// AnalyzeProfileOf 按任务类型取 agent 装配描述；未注册返回 false（委托聚合注册表）。
 func AnalyzeProfileOf(taskType string) (AnalyzeProfile, bool) {
-	switch taskType {
-	case model.TaskTypeRequirementImport:
-		return requirementProfile(), true
+	d, ok := TaskTypeOf(taskType)
+	if !ok {
+		return AnalyzeProfile{}, false
 	}
-	return AnalyzeProfile{}, false
+	return d.Profile, true
 }
 
 // profileFor 运行期解析：空类型（旧会话/测试）回退 requirement；未注册类型报错。

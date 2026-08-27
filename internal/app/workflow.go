@@ -6,25 +6,29 @@ import (
 	"reqflow/internal/domain/model"
 )
 
-// 工作流注册表：内置任务类型的工作流定义（半元数据驱动——定义即数据，
-// 执行引擎按 Step.Kind 查找注册的执行器）。新增任务类型 = 在此加一条定义
-// + 复用/新增 kind 执行器（runner.go），不再动执行骨架。
+// 工作流定义（半元数据驱动——定义即数据，执行引擎按 Step.Kind 查找注册的执行器）。
+// 注册点已收敛进聚合注册表（registry.go 的 taskTypeDefinitions）：新增任务类型
+// = 注册表加一条聚合定义 + 复用/新增 kind 执行器（runner.go），不再动执行骨架。
 // 创建任务时定义被快照进 tasks.workflow：任务自描述，且不受定义演进影响
-// （旧任务按自己的快照执行与展示）。
+// （旧任务按自己的快照执行与展示）。本文件的查找入口为聚合注册表的薄委托。
 
-// Workflows 全部内置工作流（目录：任务类型创建入口展示用）。
+// Workflows 全部内置工作流（目录：任务类型创建入口展示用；委托聚合注册表）。
 func Workflows() []model.Workflow {
-	return []model.Workflow{requirementImportWorkflow()}
+	defs := TaskTypes()
+	out := make([]model.Workflow, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, d.Workflow)
+	}
+	return out
 }
 
-// WorkflowOf 按类型取工作流定义；未注册返回 false。
+// WorkflowOf 按类型取工作流定义；未注册返回 false（委托聚合注册表）。
 func WorkflowOf(typ string) (model.Workflow, bool) {
-	for _, w := range Workflows() {
-		if w.Type == typ {
-			return w, true
-		}
+	d, ok := TaskTypeOf(typ)
+	if !ok {
+		return model.Workflow{}, false
 	}
-	return model.Workflow{}, false
+	return d.Workflow, true
 }
 
 // MarshalWorkflow 序列化工作流定义（tasks.workflow 快照）。

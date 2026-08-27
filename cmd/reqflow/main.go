@@ -131,6 +131,7 @@ func main() {
 	datasetQuery := app.NewDatasetQueryService(datasetRepo, embedClient)
 	archiveSvc := app.NewArchiveService(taskRepo, datasetRepo, archiveRepo)
 	overviewSvc := app.NewOverviewService(datasetRepo, taskRepo)
+	metadataSvc := app.NewMetadataService()
 	taskMgr := app.NewTaskManager(taskRepo, parseSvc, analyzeSvc, datasetRepo, datasetWriter)
 	// 服务重启恢复：把中断在 running 的任务/步骤标为 paused（用户手动继续）
 	if err := taskMgr.Recover(context.Background()); err != nil {
@@ -148,7 +149,7 @@ func main() {
 	/* ---- HTTP ---- */
 	engine := httpgin.New(httpgin.Services{
 		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
-		DatasetQuery: datasetQuery, Archive: archiveSvc,
+		DatasetQuery: datasetQuery, Archive: archiveSvc, Metadata: metadataSvc,
 		UploadDir: cfg.Workspace.UploadDir,
 		MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})
