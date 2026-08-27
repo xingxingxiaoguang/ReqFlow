@@ -3,6 +3,7 @@ import {
   Card, Col, Row, Typography, Space, Button, Select, Table, Tag, InputNumber,
   Input, Progress, Alert, App, Statistic, List, Radio, Tooltip,
 } from 'antd'
+import type { TableProps } from 'antd'
 import {
   AimOutlined, DatabaseOutlined, ReloadOutlined, CheckCircleTwoTone,
   CloseCircleTwoTone, SaveOutlined, PlayCircleOutlined, EyeOutlined,
@@ -10,18 +11,20 @@ import {
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../api/client'
 import { tasksApi } from '../../../api/tasks'
-import type { SettingsView, Task, TaskItem, WriteMode, WritePreview } from '../../../api/types'
+import type {
+  DraftFieldValues, FieldSpec, SettingsView, Task, TaskItem, WriteMode, WritePreview,
+} from '../../../api/types'
+import { parseDatasetItemFields } from '../../../api/types'
 import type { TaskStream } from '../../../hooks/useTaskEvents'
 import MatchBadge from '../../../components/MatchBadge'
 
 const { Text } = Typography
 
-const PRIORITY_OPTIONS = [
-  { value: 'High', label: 'High · 高' },
-  { value: 'Medium', label: 'Medium · 中' },
-  { value: 'Low', label: 'Low · 低' },
-]
-const TYPE_OPTIONS = ['story', 'task', 'bug', 'feature', 'epic'].map((v) => ({ value: v, label: v }))
+/** 编辑行：明细（ID/状态回写）+ 解析后的字段袋值 */
+interface EditableRow {
+  item: TaskItem
+  values: DraftFieldValues
+}
 
 /** 写入策略说明（select option 内嵌） */
 const MODE_OPTIONS: { value: WriteMode; label: string; desc: string }[] = [
@@ -36,7 +39,8 @@ export default function MatchImportPanel({
 }: { task: Task; items: TaskItem[]; importing: boolean; stream: TaskStream }) {
   const qc = useQueryClient()
   const { message } = App.useApp()
-  const [editable, setEditable] = useState<TaskItem[]>(items)
+  const [rows, setRows] = useState<EditableRow[]>(() =>
+    items.map((it) => ({ item: it, values: parseDatasetItemFields(it.Fields) })))
   const [datasetName, setDatasetName] = useState<string>()
   const [writeMode, setWriteMode] = useState<WriteMode>('merge')
   const [targetDatasetId, setTargetDatasetId] = useState<string>()
@@ -47,9 +51,20 @@ export default function MatchImportPanel({
   const { importProgress, importLog } = stream
   const done = task.Status === 'succeeded'
 
+  // 本面板为 requirement_import 的 per-type 工作区：列/控件由 requirement schema 驱动
+  const { data: schemaData } = useQuery({
+    queryKey: ['schemas'],
+    queryFn: () => tasksApi.schemas(),
+  })
+  const schema = useMemo(
+    () => (schemaData?.schemas ?? []).find((s) => s.type === 'requirement'),
+    [schemaData],
+  )
+  const textFields = useMemo(() => schema?.fields.filter((f) => f.type === 'text') ?? [], [schema])
+
   // 服务端明细变化（分析完成/重新分析）同步到编辑态
   useEffect(() => {
-    setEditable(items)
+    setRows(items.map((it) => ({ item: it, values: parseDatasetItemFields(it.Fields) })))
   }, [items])
 
   // 已产出数据集的任务默认并入原数据集（终态重写场景）
@@ -78,27 +93,22 @@ export default function MatchImportPanel({
   const runDuplicates = useCallback(async () => {
     try {
       const data = await api.post<{ results: { index: number; match: any }[] }>('/api/match/duplicates', {
-        items: editable.map((i) => ({
-          project_name: i.project_name, title: i.title, description: i.description,
-          priority: i.priority, estimated_hours: i.estimated_hours, start_at: i.start_at,
-          end_at: i.end_at, type_id: i.type_id, assignee_name: i.assignee_name,
-          state: i.state, solution_suggestion: i.solution_suggestion,
-        })),
+        items: rows.map((r) => r.values),
       })
       setDupResults(data.results)
     } catch (e) {
       message.warning(`查重失败：${(e as Error).message}`)
     }
-  }, [editable, message])
+  }, [rows, message])
 
   const [dupResults, setDupResults] = useState<{ index: number; match: any }[]>([])
   useEffect(() => {
-    if (editable.length && !importing) void runDuplicates()
+    if (rows.length && !importing) void runDuplicates()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [editable.length, importing])
+  }, [rows.length, importing])
 
-  const patchItem = (index: number, patch: Partial<TaskItem>) => {
-    setEditable((list) => list.map((it, i) => (i === index ? { ...it, ...patch } : it)))
+  const patchItem = (index: number, key: string, value: unknown) => {
+    setRows((list) => list.map((r, i) => (i === index ? { ...r, values: { ...r.values, [key]: value } } : r)))
     setPreview(undefined) // 草稿变化后预览失效
   }
 
@@ -113,15 +123,7 @@ export default function MatchImportPanel({
     try {
       await tasksApi.saveItems(
         task.ID,
-        editable.map((i) => ({
-          id: i.ID,
-          draft: {
-            project_name: i.project_name, title: i.title, description: i.description,
-            priority: i.priority, estimated_hours: i.estimated_hours, start_at: i.start_at,
-            end_at: i.end_at, type_id: i.type_id, assignee_name: i.assignee_name,
-            state: i.state, solution_suggestion: i.solution_suggestion,
-          },
-        })),
+        rows.map((r) => ({ id: r.item.ID, fields: r.values })),
       )
       qc.invalidateQueries({ queryKey: ['task', task.ID] })
       message.success('草稿已保存')
@@ -165,7 +167,7 @@ export default function MatchImportPanel({
   }
 
   const dupCount = dupResults.filter((r) => r.match).length
-  const totalHours = editable.reduce((s, i) => s + (i.estimated_hours || 0), 0)
+  const totalHours = rows.reduce((s, r) => s + (Number(r.values['estimated_hours']) || 0), 0)
 
   return (
     <Row gutter={[16, 16]}>
@@ -173,8 +175,8 @@ export default function MatchImportPanel({
       <Col span={24}>
         <Card size="small">
           <Row gutter={24} align="middle">
-            <Col><Statistic title="需求条目" value={editable.length} /></Col>
-            <Col><Statistic title="涉及分组" value={new Set(editable.map((i) => i.project_name).filter(Boolean)).size} /></Col>
+            <Col><Statistic title="需求条目" value={rows.length} /></Col>
+            <Col><Statistic title="涉及分组" value={new Set(rows.map((r) => String(r.values['project_name'] ?? '')).filter(Boolean)).size} /></Col>
             <Col><Statistic title="预估总工时" value={totalHours} suffix="h" /></Col>
             {dupResults.length > 0 && (
               <Col><Statistic title="疑似重复" value={dupCount} valueStyle={{ color: dupCount ? '#dc2626' : undefined }} /></Col>
@@ -297,44 +299,32 @@ export default function MatchImportPanel({
         </Card>
       </Col>
 
-      {/* 明细表 */}
+      {/* 明细表（列与编辑控件由 requirement schema 驱动；长文本字段走展开行） */}
       <Col span={24}>
         <Card size="small" title={<Space><AimOutlined style={{ color: '#4F46E5' }} /><Text strong>需求明细</Text><Text type="secondary">（可直接编辑）</Text></Space>}>
           <Table
             rowKey={(_, i) => String(i)}
-            dataSource={editable}
+            dataSource={rows}
             size="middle"
-            pagination={editable.length > 10 ? { pageSize: 10, showSizeChanger: false } : false}
+            pagination={rows.length > 10 ? { pageSize: 10, showSizeChanger: false } : false}
             columns={[
+              ...(schema?.fields ?? []).filter((f) => f.type !== 'text').map((f) => fieldColumn(f, {
+                dupByIndex, patchItem, importing, done,
+              })),
               {
-                title: '查重', width: 92, dataIndex: 'match',
-                render: (_, __, index) => <MatchBadge match={dupByIndex.get(index)} />,
-              },
-              { title: '标题', dataIndex: 'title', width: 260,
-                render: (v, _, index) => <Input value={v} variant="borderless" disabled={importing || done} onChange={(e) => patchItem(index, { title: e.target.value })} /> },
-              { title: '分组', dataIndex: 'project_name', width: 130, ellipsis: true },
-              { title: '类型', dataIndex: 'type_id', width: 110,
-                render: (v, _, index) => <Select variant="borderless" value={v} style={{ width: '100%' }} options={TYPE_OPTIONS} disabled={importing || done} onChange={(t) => patchItem(index, { type_id: t })} /> },
-              { title: '优先级', dataIndex: 'priority', width: 130,
-                render: (v, _, index) => <Select variant="borderless" value={v} style={{ width: '100%' }} options={PRIORITY_OPTIONS} disabled={importing || done} onChange={(p) => patchItem(index, { priority: p })} /> },
-              { title: '工时(h)', dataIndex: 'estimated_hours', width: 100,
-                render: (v, _, index) => <InputNumber variant="borderless" min={0} value={v} disabled={importing || done} onChange={(n) => patchItem(index, { estimated_hours: n ?? 0 })} /> },
-              { title: '负责人', dataIndex: 'assignee_name', width: 110,
-                render: (v, _, index) => <Input value={v ?? ''} variant="borderless" placeholder="可留空" disabled={importing || done} onChange={(e) => patchItem(index, { assignee_name: e.target.value })} /> },
-              { title: '状态', dataIndex: 'state', width: 90,
-                render: (v) => v ? <Tag style={{ margin: 0 }}>{v}</Tag> : <Tag style={{ margin: 0 }} color="default">待办</Tag> },
-              {
-                title: '结果', dataIndex: 'Status', width: 100,
-                render: (v) => v === 'success' ? <Tag color="green">已入数据集</Tag> : v === 'failed' ? <Tag color="red">未通过校验</Tag> : <Tag>待写入</Tag>,
+                title: '结果', width: 100,
+                render: (_: unknown, r: EditableRow) => r.item.Status === 'success' ? <Tag color="green">已入数据集</Tag>
+                  : r.item.Status === 'failed' ? <Tag color="red">未通过校验</Tag> : <Tag>待写入</Tag>,
               },
             ]}
             expandable={{
-              rowExpandable: (r) => !!r.description || !!r.solution_suggestion || !!r.ErrorMessage,
+              rowExpandable: (r) => textFields.some((f) => !!r.values[f.key]) || !!r.item.ErrorMessage,
               expandedRowRender: (r) => (
                 <div style={{ padding: '4px 8px' }}>
-                  <ParagraphBlock label="描述" text={r.description} />
-                  <ParagraphBlock label="解决方案建议" text={r.solution_suggestion} />
-                  <ParagraphBlock label="失败原因" text={r.ErrorMessage} danger />
+                  {textFields.map((f) => (
+                    <ParagraphBlock key={f.key} label={f.label} text={r.values[f.key]} />
+                  ))}
+                  <ParagraphBlock label="失败原因" text={r.item.ErrorMessage} danger />
                 </div>
               ),
             }}
@@ -379,6 +369,59 @@ export default function MatchImportPanel({
       )}
     </Row>
   )
+}
+
+/** schema 字段 → 可编辑表格列（enum→Select / number→InputNumber / string|date→Input；
+ * 标题列（in_vector==='title'）挂查重徽标） */
+function fieldColumn(
+  f: FieldSpec,
+  ctx: {
+    dupByIndex: Map<number, any>
+    patchItem: (index: number, key: string, value: unknown) => void
+    importing: boolean
+    done: boolean
+  },
+): NonNullable<TableProps<EditableRow>['columns']>[number] {
+  const disabled = ctx.importing || ctx.done
+  const isTitle = f.in_vector === 'title'
+  const render: NonNullable<TableProps<EditableRow>['columns']>[number]['render'] = (_, row, index) => {
+    switch (f.type) {
+      case 'enum':
+        return (
+          <Select
+            variant="borderless" style={{ width: '100%' }}
+            value={row.values[f.key]}
+            options={(f.enum ?? []).map((v) => ({ value: v, label: v }))}
+            disabled={disabled}
+            onChange={(v) => ctx.patchItem(index, f.key, v)}
+          />
+        )
+      case 'number':
+        return (
+          <InputNumber
+            variant="borderless" min={0} style={{ width: '100%' }}
+            value={typeof row.values[f.key] === 'number' ? row.values[f.key] : undefined}
+            disabled={disabled}
+            onChange={(n) => ctx.patchItem(index, f.key, n ?? 0)}
+          />
+        )
+      default: // string | date
+        return (
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            {isTitle && <MatchBadge match={ctx.dupByIndex.get(index)} />}
+            <Input
+              value={row.values[f.key] == null ? '' : String(row.values[f.key])}
+              variant="borderless"
+              placeholder={f.type === 'date' ? 'ISO 8601' : undefined}
+              disabled={disabled}
+              onChange={(e) => ctx.patchItem(index, f.key, e.target.value)}
+            />
+          </div>
+        )
+    }
+  }
+  const width = isTitle ? 280 : f.type === 'enum' ? 110 : f.type === 'number' ? 110 : f.type === 'date' ? 170 : 130
+  return { title: f.label, dataIndex: ['values', f.key], width, render }
 }
 
 function ParagraphBlock({ label, text, danger }: { label: string; text?: string; danger?: boolean }) {

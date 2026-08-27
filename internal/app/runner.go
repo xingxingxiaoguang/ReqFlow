@@ -512,7 +512,7 @@ func (m *TaskManager) execDatasetStep(workCtx, pc context.Context, task *model.T
 	}
 	values := make([]map[string]any, len(items))
 	for i := range items {
-		values[i] = draftValuesOf(items[i].DraftItem)
+		values[i] = items[i].Values()
 	}
 	prepared, err := m.datasetWriter.Prepare(pc, schema, target, task.ID, values)
 	if err != nil {

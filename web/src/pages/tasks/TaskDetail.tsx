@@ -11,7 +11,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { tasksApi } from '../../api/tasks'
 import { api } from '../../api/client'
 import { useTaskEvents, traceFromStepData } from '../../hooks/useTaskEvents'
-import { parseTaskWorkflow } from '../../api/types'
+import { parseDatasetItemFields, parseTaskWorkflow } from '../../api/types'
 import type { Task, TaskInput, TaskStep, TaskType, ToolTrace, StepKind, SettingsView } from '../../api/types'
 import ConfirmParsePanel from './panels/ConfirmParsePanel'
 import AnalysisPane from './panels/AnalysisPane'
@@ -321,10 +321,10 @@ function MonitorView({
           <Table
             rowKey="ID" size="small" dataSource={items} pagination={false}
             columns={[
-              { title: '标题', dataIndex: 'title', ellipsis: true },
-              { title: '项目', dataIndex: 'project_name', width: 120, ellipsis: true },
-              { title: '类型', dataIndex: 'type_id', width: 80 },
-              { title: '优先级', dataIndex: 'priority', width: 90 },
+              { title: '标题', ellipsis: true, render: (_, r) => parseDatasetItemFields(r.Fields)['title'] ?? '' },
+              { title: '项目', width: 120, ellipsis: true, render: (_, r) => parseDatasetItemFields(r.Fields)['project_name'] ?? '' },
+              { title: '类型', width: 80, render: (_, r) => parseDatasetItemFields(r.Fields)['type_id'] ?? '' },
+              { title: '优先级', width: 90, render: (_, r) => parseDatasetItemFields(r.Fields)['priority'] ?? '' },
               {
                 title: '结果', dataIndex: 'Status', width: 90,
                 render: (v) => v === 'success' ? <Tag color="green">成功</Tag> : v === 'failed' ? <Tag color="red">失败</Tag> : <Tag>待导入</Tag>,

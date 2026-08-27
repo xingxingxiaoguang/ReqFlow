@@ -1,8 +1,6 @@
 package logic
 
 import (
-	"encoding/json"
-	"strings"
 	"testing"
 	"time"
 
@@ -55,39 +53,98 @@ func TestExtractJSONArrayLenient(t *testing.T) {
 	}
 }
 
-func TestNormalizeDraft(t *testing.T) {
+func TestNormalizeValues(t *testing.T) {
 	now := time.Date(2026, 8, 25, 10, 0, 0, 0, time.UTC)
 	raw := map[string]any{
-		"project_name": "  用户中心 ",
-		"title":        "",
-		"priority":     "critical", // 非法值 → Medium
-		"estimated_hours": "16",  // 字符串数字
-		"type_id":      "story",
-		"state":        "null",  // 占位 → 空
-		"assignee_name": "张三",
+		"project_name":    "  用户中心 ",
+		"title":           "",
+		"priority":        "critical", // 枚举越界 → 回落 Default(Medium)
+		"estimated_hours": "16",       // 字符串数字宽松解析
+		"type_id":         "story",
+		"state":           "null", // 占位词 → 清洗为空（无默认 → 缺省）
+		"assignee_name":   "张三",
+		"extra_key":       "越权键应丢弃",
 	}
-	d := NormalizeDraft(raw, now)
-	if d.ProjectName != "用户中心" || d.Title != "未命名工作项" {
-		t.Errorf("默认值兜底失败: %+v", d)
+	v := NormalizeValues(model.RequirementSchema(), raw, now)
+	if v["project_name"] != "用户中心" || v["title"] != "未命名工作项" {
+		t.Errorf("默认值兜底失败: %+v", v)
 	}
-	if d.Priority != "Medium" {
-		t.Errorf("优先级白名单失效: %s", d.Priority)
+	if v["priority"] != "Medium" {
+		t.Errorf("枚举越界应回落默认: %v", v["priority"])
 	}
-	if d.EstimatedHours != 16 {
-		t.Errorf("字符串数字解析失败: %v", d.EstimatedHours)
+	if v["estimated_hours"] != float64(16) {
+		t.Errorf("字符串数字解析失败: %v", v["estimated_hours"])
 	}
-	if d.State != "" {
-		t.Errorf("占位状态应清空: %q", d.State)
+	if v["start_at"] != now.Format(time.RFC3339) {
+		t.Errorf("{current_time} 占位应渲染运行时刻: %v", v["start_at"])
 	}
-	if d.StartAt == "" {
-		t.Error("开始时间缺省应填当前时间")
+	if _, ok := v["state"]; ok {
+		t.Errorf("清洗为空且无默认的字段应缺省: %+v", v)
+	}
+	if _, ok := v["extra_key"]; ok {
+		t.Errorf("schema 外的键应丢弃: %+v", v)
 	}
 }
 
-func TestNormalizeDraftsSkipsNonMap(t *testing.T) {
-	out := NormalizeDrafts([]any{map[string]any{"title": "a"}, "garbage", 42}, time.Now())
-	if len(out) != 1 || out[0].Title != "a" {
-		t.Errorf("非 map 元素应跳过: %+v", out)
+func TestNormalizeValuesNegativeNumberFallsBack(t *testing.T) {
+	v := NormalizeValues(model.RequirementSchema(), map[string]any{"estimated_hours": -1}, time.Now())
+	if v["estimated_hours"] != float64(8) {
+		t.Errorf("非正数应回落默认: %v", v["estimated_hours"])
+	}
+}
+
+func TestNormalizeValuesCustomSchema(t *testing.T) {
+	// 自定义 schema（零 requirement 知识）：默认值/枚举/清洗全部随 schema 声明生效
+	schema := model.DatasetSchema{Type: "review_note", Fields: []model.FieldSpec{
+		{Key: "finding", Label: "发现", Type: model.FieldString, Required: true, InKey: true,
+			InVector: model.VectorTitle, Default: "未命名发现"},
+		{Key: "severity", Label: "级别", Type: model.FieldEnum, Enum: []string{"p0", "p1", "p2"}, Default: "p1"},
+		{Key: "hours", Label: "耗时", Type: model.FieldNumber},
+		{Key: "state", Label: "状态", Type: model.FieldString, Clean: model.FieldCleanState},
+	}}
+	now := time.Now()
+	v := NormalizeValues(schema, map[string]any{"finding": "  空指针  ", "severity": "p9", "hours": "1.5", "state": "666f6f2062617262617a7175"}, now)
+	if v["finding"] != "空指针" {
+		t.Errorf("trim 失败: %v", v["finding"])
+	}
+	if v["severity"] != "p1" {
+		t.Errorf("自定义枚举越界应回落自定义默认: %v", v["severity"])
+	}
+	if v["hours"] != 1.5 {
+		t.Errorf("数字解析失败: %v", v["hours"])
+	}
+	if _, ok := v["state"]; ok {
+		t.Errorf("疑似 ID 应清洗为空且缺省: %+v", v)
+	}
+	v2 := NormalizeValues(schema, nil, now)
+	if v2["finding"] != "未命名发现" || v2["severity"] != "p1" {
+		t.Errorf("全空输入应填自定义默认: %+v", v2)
+	}
+	if _, ok := v2["hours"]; ok {
+		t.Errorf("无默认的空数字应缺省: %+v", v2)
+	}
+}
+
+func TestTitleFieldOf(t *testing.T) {
+	f, ok := TitleFieldOf(model.RequirementSchema())
+	if !ok || f.Key != "title" {
+		t.Fatalf("requirement 标题字段 = %+v ok=%v", f, ok)
+	}
+	if _, ok := TitleFieldOf(model.DatasetSchema{Type: "x"}); ok {
+		t.Fatal("无 title 角色的 schema 应返回 false")
+	}
+}
+
+func TestItemKeyOf(t *testing.T) {
+	schema := model.RequirementSchema()
+	a := ItemKeyOf(schema, map[string]any{"title": "实现登录", "project_name": "UserCenter"})
+	b := ItemKeyOf(schema, map[string]any{"title": "实现登录", "project_name": "ＵｓｅｒＣｅｎｔｅｒ"})
+	if a != b {
+		t.Errorf("归一化后相同的标题/分组应为同一 key: %q vs %q", a, b)
+	}
+	c := ItemKeyOf(schema, map[string]any{"title": "实现登录", "project_name": "订单中心"})
+	if a == c {
+		t.Error("不同分组应为不同 key")
 	}
 }
 
@@ -96,18 +153,6 @@ func TestDistanceToScore(t *testing.T) {
 	for _, c := range cases {
 		if got := DistanceToScore(c.d); got != c.want {
 			t.Errorf("DistanceToScore(%v) = %v, want %v", c.d, got, c.want)
-		}
-	}
-}
-
-func TestDraftItemJSONShape(t *testing.T) {
-	b, err := json.Marshal(model.DraftItem{Title: "x"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, key := range []string{`"project_name"`, `"solution_suggestion"`, `"estimated_hours"`} {
-		if !strings.Contains(string(b), key) {
-			t.Errorf("JSON 缺少字段 %s: %s", key, b)
 		}
 	}
 }

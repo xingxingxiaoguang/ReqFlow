@@ -10,40 +10,15 @@ import (
 	"reqflow/internal/port"
 )
 
-// DraftInput 需求草稿的 HTTP 入参形状（app 层 DTO，port/domain 类型不外泄）。
-type DraftInput struct {
-	ProjectName        string  `json:"project_name"`
-	Title              string  `json:"title"`
-	Description        string  `json:"description"`
-	Priority           string  `json:"priority"`
-	EstimatedHours     float64 `json:"estimated_hours"`
-	StartAt            string  `json:"start_at"`
-	EndAt              string  `json:"end_at"`
-	TypeID             string  `json:"type_id"`
-	AssigneeName       string  `json:"assignee_name"`
-	State              string  `json:"state"`
-	SolutionSuggestion string  `json:"solution_suggestion"`
-}
-
-func (d DraftInput) toModel() model.DraftItem {
-	return model.DraftItem{
-		ProjectName: d.ProjectName, Title: d.Title, Description: d.Description,
-		Priority: d.Priority, EstimatedHours: d.EstimatedHours,
-		StartAt: d.StartAt, EndAt: d.EndAt, TypeID: d.TypeID,
-		AssigneeName: d.AssigneeName, State: d.State,
-		SolutionSuggestion: d.SolutionSuggestion,
-	}
-}
-
-// DraftSaveInput 门内草稿保存入参（草稿 + 可选明细 ID；ID 空则新建）。
+// DraftSaveInput 门内草稿保存入参（schema 字段袋 + 可选明细 ID；ID 空则新建）。
 type DraftSaveInput struct {
-	ID    string     `json:"id"`
-	Draft DraftInput `json:"draft"`
+	ID     string         `json:"id"`
+	Fields map[string]any `json:"fields"`
 }
 
 // toTaskItem 草稿保存入参 → 任务明细（status 重置为 pending）。
 func (d DraftSaveInput) toTaskItem() model.TaskItem {
-	return model.TaskItem{ID: d.ID, DraftItem: d.Draft.toModel(), Status: model.ItemStatusPending}
+	return model.TaskItem{ID: d.ID, Fields: marshalJSON(d.Fields), Status: model.ItemStatusPending}
 }
 
 /* ---- 写入目标（task → dataset 的标准化接缝） ---- */
@@ -326,35 +301,12 @@ func filterByActions(items []PreparedItem, actions ...string) []PreparedItem {
 	return out
 }
 
-/* ---- 需求条目字段（DraftItem → schema values） ---- */
+/* ---- 字段袋解析 ---- */
 
-// draftValuesOf 需求草稿 → schema 字段值（requirement 专属转换；新任务类型提供各自的转换器）。
-func draftValuesOf(d model.DraftItem) map[string]any {
-	return map[string]any{
-		"title":               d.Title,
-		"project_name":        d.ProjectName,
-		"description":         d.Description,
-		"solution_suggestion": d.SolutionSuggestion,
-		"priority":            d.Priority,
-		"type_id":             d.TypeID,
-		"estimated_hours":     d.EstimatedHours,
-		"start_at":            d.StartAt,
-		"end_at":              d.EndAt,
-		"assignee_name":       d.AssigneeName,
-		"state":               d.State,
-	}
-}
-
-// parseFieldsValues fields JSON → 字段值 map（向量文档组装用；宽松解析）。
+// parseFieldsValues fields JSON → 字段值 map（查重语料/向量文档组装用；宽松解析）。
+// TaskItem 的读侧统一入口是 model.TaskItem.Values()，此函数服务 DatasetItem.Fields。
 func parseFieldsValues(fields string) map[string]any {
 	var v map[string]any
 	_ = json.Unmarshal([]byte(fields), &v)
 	return v
-}
-
-// requirementFieldsOf 解析需求条目字段（查重展示等仍需强类型处）。
-func requirementFieldsOf(fields string) model.DraftItem {
-	var d model.DraftItem
-	_ = json.Unmarshal([]byte(fields), &d)
-	return d
 }

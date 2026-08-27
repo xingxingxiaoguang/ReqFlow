@@ -20,9 +20,13 @@ type TaskTypeDefinition struct {
 	Profile     AnalyzeProfile             // agent 装配描述（指令头/示例/写入绑定）
 }
 
+// extraTaskTypes 测试注入的扩展任务类型（生产恒空）。金标准用例经此注册玩具
+// 类型验证「零 struct/Normalize/ValuesOf 接入」（schema 端到端生效的定义）。
+var extraTaskTypes []TaskTypeDefinition
+
 // taskTypeDefinitions 全部已注册任务类型（唯一注册点；定义函数在各所属文件维护）。
 func taskTypeDefinitions() []TaskTypeDefinition {
-	return []TaskTypeDefinition{
+	all := []TaskTypeDefinition{
 		{
 			Type:        model.TaskTypeRequirementImport,
 			Workflow:    requirementImportWorkflow(),
@@ -31,6 +35,7 @@ func taskTypeDefinitions() []TaskTypeDefinition {
 			Profile:     requirementProfile(),
 		},
 	}
+	return append(all, extraTaskTypes...)
 }
 
 // TaskTypes 全部已注册任务类型的聚合定义（元数据目录/聚合 API 用）。

@@ -100,6 +100,36 @@ func stringify(v any) string {
 	}
 }
 
+// AsNumber 数字宽松解析（JSON number/int 或可解析字符串；归一化与写入工具校验共用）。
+func AsNumber(v any) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case string:
+		var f float64
+		if _, err := fmt.Sscanf(strings.TrimSpace(n), "%g", &f); err == nil {
+			return f, true
+		}
+	}
+	return 0, false
+}
+
+// TitleFieldOf 语义向量文档的标题字段（InVector==VectorTitle；查重与展示标题的 schema 口径）。
+func TitleFieldOf(schema model.DatasetSchema) (model.FieldSpec, bool) {
+	for _, f := range schema.Fields {
+		if f.InVector == model.VectorTitle {
+			return f, true
+		}
+	}
+	return model.FieldSpec{}, false
+}
+
 func enumContains(enum []string, v string) bool {
 	for _, e := range enum {
 		if e == v {

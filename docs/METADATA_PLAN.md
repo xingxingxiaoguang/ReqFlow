@@ -9,7 +9,7 @@
 | 波次 | 内容 | 依赖 | 规模预估 | 状态 |
 |------|------|------|---------|------|
 | M1 | 注册点收敛 + 只读元数据目录 + 提示词预览 | 无 | 后端 ~5 文件，前端 ~5 文件 | ✅ 已交付 |
-| M2 | 草稿字段袋化（全链路 map 贯通，消灭 DraftItem struct） | 无（建议在 M1 后） | 后端 ~10 文件 + 迁移，前端 ~4 文件 | 🔲 |
+| M2 | 草稿字段袋化（全链路 map 贯通，消灭 DraftItem struct） | 无（建议在 M1 后） | 后端 ~10 文件 + 迁移，前端 ~4 文件 | ✅ 已交付 |
 | M3 | 元数据存储 + 受控编辑 + 兼容守卫 + 导入导出 | M2 | 后端 ~8 文件 + 2 迁移，前端编辑器 | 🔲 |
 | M4 | 工作流定义外置 + 新任务类型向导 | M3 | 与产品第四波合流 | 🔲 |
 
@@ -56,11 +56,13 @@ README（API 表 + 文档链接）、PRODUCT（§5 底座表增行、路线图�
 
 ---
 
-## M2 · 草稿字段袋化（最大的一笔，独立一波）· 接手级上下文
+## M2 · 草稿字段袋化（最大的一笔，独立一波）✅ 已交付
 
 **目标**：草稿管线从 requirement 定型 struct 改为 schema 驱动的字段袋，**字段定义端到端生效**（schema 增删字段 → 提示词 / 写入校验 / 草稿存取 / 数据集写入全链路自动跟随）——这是元数据「受控编辑」（M3）的硬前置，也顺手消灭 METADATA §3 的 B1 双源漂移。
 
 **验收金标准**：在聚合注册表加一个玩具任务类型（自定义 2~3 字段 schema，如 `test_review`），**不写任何 struct / Normalize / ValuesOf**，经 API 跑通「创建任务 → 解析 → 分析（单发模式即可）→ 草稿落库 → 生成数据集」全链路；requirement_import 则在前端全链路回归（含门内编辑与查重）。
+
+**交付记录**（2026-08）：`model.TaskItem` 袋化（Fields JSON 文本 + `Values()` 读侧入口，`DraftItem` 全删）；`FieldSpec` 增 `Default`（含 `{current_time}`）/`Clean` 声明；`logic.NormalizeValues` schema 驱动归一化（代码零字段知识）；`tools.WriteSpec` 瘦身为 `{Name,Schema}`、`DraftSink` 存字段袋且 key=`ItemKeyOf`（与数据集条目身份同一口径）；`match` 改字段袋入参 + `TitleFieldOf` 标题口径；迁移 `0008_task_items_fields`（task_items 推倒重建为 fields TEXT，清空存量 33 行开发数据）；前端 `MatchImportPanel` schema 驱动编辑列（enum→Select/number→InputNumber/text→展开行/标题列挂查重徽标）。金标准自动化：`internal/app/golden_test.go`（`test_review` 玩具类型 agent 全链路 + 单发模式；注册缝 `registry.go extraTaskTypes` 生产恒空）。门禁与验收：`make test` + `make build` 全绿；真机迁移/API/前端编辑保存落库均验证通过。
 
 ### M2.0 执行原则（本波红线，先读）
 

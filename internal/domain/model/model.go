@@ -2,7 +2,10 @@
 // 本包仅依赖标准库，承载数据集、分析草稿、任务三块核心状态。
 package model
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 /* ---- 数据集（任务产出的结果集，任务间衔接的载体） ---- */
 
@@ -51,21 +54,6 @@ const (
 
 /* ---- 分析草稿与任务 ---- */
 
-// DraftItem LLM 分析产出的工作项草稿（导入前可被用户编辑）。
-type DraftItem struct {
-	ID                 string `json:"id"`
-	ProjectName        string `json:"project_name"`
-	Title              string `json:"title"`
-	Description        string `json:"description"`
-	Priority           string `json:"priority"`           // High | Medium | Low
-	EstimatedHours     float64 `json:"estimated_hours"`
-	StartAt            string `json:"start_at"`           // ISO 8601
-	EndAt              string `json:"end_at,omitempty"`
-	TypeID             string `json:"type_id"`            // story | task | bug | feature | epic
-	AssigneeName       string `json:"assignee_name"`
-	State              string `json:"state"`              // 文档标注的状态名，可空
-	SolutionSuggestion string `json:"solution_suggestion"`
-}
 
 // Task 一轮长程流程（需求导入/bug…）的生命周期载体。
 // 状态机：pending → running → awaiting(人工门) | paused → running → succeeded | failed（终态）。
@@ -111,12 +99,26 @@ type TaskStep struct {
 }
 
 // TaskItem 任务明细草稿（AI 分析产物，生成数据集前的编辑缓冲）。
+// Fields 为 schema 类型化字段的 JSON 文本（字段袋，与 DatasetItem.Fields 同构）——
+// 草稿形状由任务类型的产出 schema 驱动，本结构不再绑定具体字段。
 type TaskItem struct {
 	ID           string
 	TaskID       string
-	DraftItem
+	Fields       string // JSON 文本（schema 字段袋）
 	Status       string // pending | success | failed
 	ErrorMessage string
+}
+
+// Values 解析 Fields 为字段值 map（读侧统一入口；非法 JSON 返回空 map）。
+func (t TaskItem) Values() map[string]any {
+	var v map[string]any
+	if t.Fields != "" {
+		_ = json.Unmarshal([]byte(t.Fields), &v)
+	}
+	if v == nil {
+		v = map[string]any{}
+	}
+	return v
 }
 
 // 任务类型。

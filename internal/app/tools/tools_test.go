@@ -182,8 +182,8 @@ func TestWriteWorkItemsAccept(t *testing.T) {
 		t.Fatalf("回执 = %s (%v)", out.Output, err)
 	}
 	items := d.Sink.Items()
-	if len(items) != 1 || items[0].Title != "实现登录" || items[0].TypeID != "story" {
-		t.Fatalf("sink = %+v", items) // NormalizeDraft 默认值应已填充
+	if len(items) != 1 || items[0]["title"] != "实现登录" || items[0]["type_id"] != "story" {
+		t.Fatalf("sink = %+v", items) // NormalizeValues 默认值应已填充
 	}
 }
 
@@ -202,7 +202,7 @@ func TestWriteWorkItemsUpsertAndReplace(t *testing.T) {
 	if r.Updated != 1 || d.Sink.Len() != 1 {
 		t.Fatalf("同 key 应覆盖: %s, len=%d", out.Output, d.Sink.Len())
 	}
-	if d.Sink.Items()[0].Description != "v2" {
+	if d.Sink.Items()[0]["description"] != "v2" {
 		t.Fatalf("覆盖未生效: %+v", d.Sink.Items()[0])
 	}
 
@@ -212,7 +212,7 @@ func TestWriteWorkItemsUpsertAndReplace(t *testing.T) {
 	}
 	// replace_all：整体重写
 	executeTool(t, ts, "write_work_items", `{"replace_all":true,"items":[{"project_name":"Q","title":"only"}]}`)
-	if d.Sink.Len() != 1 || d.Sink.Items()[0].ProjectName != "Q" {
+	if d.Sink.Len() != 1 || d.Sink.Items()[0]["project_name"] != "Q" {
 		t.Fatalf("replace_all = %+v", d.Sink.Items())
 	}
 }
@@ -266,7 +266,7 @@ func TestDraftSinkReplayFrom(t *testing.T) {
 		t.Fatalf("重放条数 = %d", sink.Len())
 	}
 	items := sink.Items()
-	if items[0].Title != "T1" || items[0].Description != "v2" || items[1].ProjectName != "Q" {
+	if items[0]["title"] != "T1" || items[0]["description"] != "v2" || items[1]["project_name"] != "Q" {
 		t.Fatalf("重放结果 = %+v", items)
 	}
 }

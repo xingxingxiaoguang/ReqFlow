@@ -33,7 +33,7 @@ export const tasksApi = {
   get: (id: string) => api.get<TaskDetail>(`/api/tasks/${id}`),
   patch: (id: string, p: { title?: string; parsed_text?: string; special_requirements?: string }) =>
     api.patch<{ task: Task }>(`/api/tasks/${id}`, p),
-  saveItems: (id: string, items: { id?: string; draft: Record<string, unknown> }[]) =>
+  saveItems: (id: string, items: { id?: string; fields: Record<string, unknown> }[]) =>
     api.post<{ ok: boolean }>(`/api/tasks/${id}/items`, { items }),
   triggerParse: (id: string, file: File) => {
     const form = new FormData()

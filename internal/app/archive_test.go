@@ -141,7 +141,7 @@ func TestArchiveTaskRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	task, _ := CreateAwaitingTask(t, repo)
 	_ = repo.ReplaceTaskItems(ctx, task.ID, []model.TaskItem{
-		{DraftItem: model.DraftItem{Title: "A"}, Status: model.ItemStatusPending},
+		{Fields: `{"title":"A"}`, Status: model.ItemStatusPending},
 	})
 
 	if err := svc.ArchiveTask(ctx, task.ID); err != nil {

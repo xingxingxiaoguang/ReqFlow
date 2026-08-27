@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"strings"
 	"time"
 
 	"reqflow/internal/app/agent"
@@ -17,71 +16,64 @@ import (
 /* ---- DraftSink：草稿累积器 ---- */
 
 // WriteSpec 写入工具与任务产出 schema 的绑定（按任务类型的 profile 实例化）。
-// 校验（ValidateValues）与归一化都由此驱动——写入契约与 schema 同源。
+// 校验（ValidateValues）与归一化（NormalizeValues）都由此驱动——写入契约与 schema 同源。
 type WriteSpec struct {
-	Name      string                                          // 工具名（会话重放识别）
-	Schema    model.DatasetSchema                             // 产出 schema（校验 + 提示词渲染）
-	Normalize func(map[string]any, time.Time) model.DraftItem // schema 校验后的草稿归一化
+	Name   string              // 工具名（会话重放识别）
+	Schema model.DatasetSchema // 产出 schema（校验 + 归一化 + 提示词渲染）
 }
 
 // DefaultWriteSpec requirement 默认绑定（RunDeps/ReplayFrom 零值兜底）。
 func DefaultWriteSpec() WriteSpec {
 	return WriteSpec{
-		Name:      "write_work_items",
-		Schema:    model.RequirementSchema(),
-		Normalize: logic.NormalizeDraft,
+		Name:   "write_work_items",
+		Schema: model.RequirementSchema(),
 	}
 }
 
 func (w WriteSpec) orDefault() WriteSpec {
-	if w.Name == "" || w.Schema.Type == "" || w.Normalize == nil {
+	if w.Name == "" || w.Schema.Type == "" {
 		return DefaultWriteSpec()
 	}
 	return w
 }
 
-// DraftSink write_work_items 的写入目标（内存态，不落任何持久存储）。
-// key = 主键字段归一化拼接（对齐数据集 ItemKey 语义），同 key 覆盖早前写入
-// （模型可修订），首插顺序保留。会话重放可完整重建（ReplayFrom）。
+// DraftSink 写入工具的写入目标（内存态，不落任何持久存储）。
+// 草稿为 schema 字段袋（map）；key = ItemKeyOf(schema, values)——与数据集条目
+// 身份同一函数同一口径（"同 key 同条目"），同 key 覆盖早前写入（模型可修订），
+// 首插顺序保留。会话重放可完整重建（ReplayFrom）。
 type DraftSink struct {
 	order []string
-	items map[string]model.DraftItem
+	items map[string]map[string]any
 }
 
 func NewDraftSink() *DraftSink {
-	return &DraftSink{items: map[string]model.DraftItem{}}
+	return &DraftSink{items: map[string]map[string]any{}}
 }
 
-// draftKey 归一化 title + project_name（与数据集 ItemKey 语义对齐：同组同名视为
-// 同一条）。草稿字段袋化后改为由 schema 的 InKey 字段驱动，此处保持 requirement 管线。
-func draftKey(d model.DraftItem) string {
-	return logic.NormalizeForExactMatch(d.Title) + "\x1f" + logic.NormalizeForExactMatch(d.ProjectName)
-}
-
-// Upsert 写入一条：key 已存在则覆盖并返回 false（修订），否则追加并返回 true（新增）。
+// Upsert 写入一条字段袋：key 已存在则覆盖并返回 false（修订），否则追加并返回 true（新增）。
 // loop 顺序执行工具，无并发写。
-func (s *DraftSink) Upsert(d model.DraftItem) bool {
-	k := draftKey(d)
+func (s *DraftSink) Upsert(schema model.DatasetSchema, values map[string]any) bool {
+	k := logic.ItemKeyOf(schema, values)
 	_, exists := s.items[k]
 	if !exists {
 		s.order = append(s.order, k)
 	}
-	s.items[k] = d
+	s.items[k] = values
 	return !exists
 }
 
-// ReplaceAll 清空后整体写入（pi write 的整体重写语义）。
-func (s *DraftSink) ReplaceAll(ds []model.DraftItem) {
+// ReplaceAll 清空后整体写入（写入工具的整体重写语义）。
+func (s *DraftSink) ReplaceAll(schema model.DatasetSchema, items []map[string]any) {
 	s.order = s.order[:0]
-	s.items = map[string]model.DraftItem{}
-	for _, d := range ds {
-		s.Upsert(d)
+	s.items = map[string]map[string]any{}
+	for _, v := range items {
+		s.Upsert(schema, v)
 	}
 }
 
-// Items 按首插顺序返回全部草稿。
-func (s *DraftSink) Items() []model.DraftItem {
-	out := make([]model.DraftItem, 0, len(s.order))
+// Items 按首插顺序返回全部草稿（字段袋）。
+func (s *DraftSink) Items() []map[string]any {
+	out := make([]map[string]any, 0, len(s.order))
 	for _, k := range s.order {
 		out = append(out, s.items[k])
 	}
@@ -184,7 +176,7 @@ func applyWriteArgs(sink *DraftSink, raw json.RawMessage, now time.Time, w Write
 		return nil, fmt.Errorf("items 不能为空")
 	}
 	if args.ReplaceAll {
-		sink.ReplaceAll(nil)
+		sink.ReplaceAll(w.Schema, nil)
 	}
 	r := &writeReceipt{}
 	for i, item := range args.Items {
@@ -192,7 +184,7 @@ func applyWriteArgs(sink *DraftSink, raw json.RawMessage, now time.Time, w Write
 			r.Rejected = append(r.Rejected, rejectDetail{Index: i, Error: err.Error()})
 			continue
 		}
-		if sink.Upsert(w.Normalize(item, now)) {
+		if sink.Upsert(w.Schema, logic.NormalizeValues(w.Schema, item, now)) {
 			r.Accepted++
 		} else {
 			r.Updated++
@@ -216,24 +208,10 @@ func validateDraft(item map[string]any, schema model.DatasetSchema) error {
 			continue
 		}
 		if v, ok := item[f.Key]; ok && v != nil {
-			if n, parsed := asNumber(v); !parsed || math.IsNaN(n) || math.IsInf(n, 0) || n <= 0 {
+			if n, parsed := logic.AsNumber(v); !parsed || math.IsNaN(n) || math.IsInf(n, 0) || n <= 0 {
 				return fmt.Errorf("%s 必须为正数", f.Label)
 			}
 		}
 	}
 	return nil
-}
-
-// asNumber 数字参数宽松解析（JSON number 或可解析字符串，与 NormalizeDraft 口径一致）。
-func asNumber(v any) (float64, bool) {
-	switch n := v.(type) {
-	case float64:
-		return n, true
-	case string:
-		var f float64
-		if _, err := fmt.Sscanf(strings.TrimSpace(n), "%g", &f); err == nil {
-			return f, true
-		}
-	}
-	return 0, false
 }

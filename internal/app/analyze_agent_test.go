@@ -124,8 +124,9 @@ func TestAnalyzeAgentFullFlow(t *testing.T) {
 	if len(tokens) == 0 || tokens[len(tokens)-1].Phase != "answer" {
 		t.Fatalf("token 流 = %+v", tokens)
 	}
-	// 草稿来自写入工具的 sink
-	if len(res.Items) != 1 || res.Items[0].Title != "实现用户登录功能" || res.Items[0].ProjectName != "用户中心" {
+	// 草稿来自写入工具的 sink（schema 字段袋）
+	vals := res.Items[0].Values()
+	if len(res.Items) != 1 || vals["title"] != "实现用户登录功能" || vals["project_name"] != "用户中心" {
 		t.Fatalf("items = %+v", res.Items)
 	}
 	// 会话产出
@@ -243,7 +244,7 @@ func TestAnalyzeAgentResumeReplaysSink(t *testing.T) {
 		t.Fatalf("Resume: %v", err)
 	}
 	// 本轮无新写入：items 完全来自会话重放
-	if len(res.Items) != 1 || res.Items[0].Title != "实现用户登录功能" {
+	if len(res.Items) != 1 || res.Items[0].Values()["title"] != "实现用户登录功能" {
 		t.Fatalf("重放后的 items = %+v", res.Items)
 	}
 	if llm.calls != 1 {

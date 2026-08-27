@@ -6,24 +6,8 @@ export interface ApiResponse<T> {
   error?: string
 }
 
-/** LLM 分析产出的工作项草稿 */
-export interface DraftItem {
-  id?: string
-  record_id?: string
-  project_name: string
-  title: string
-  description: string
-  priority: 'High' | 'Medium' | 'Low'
-  estimated_hours: number
-  start_at: string
-  end_at?: string
-  type_id: string
-  assignee_name: string
-  state: string
-  solution_suggestion: string
-  status?: string
-  match?: DuplicateMatch | null
-}
+/** 草稿字段袋值（schema 驱动的松散键值；形状由任务类型的产出 schema 决定） */
+export type DraftFieldValues = Record<string, any>
 
 export interface ProjectMatch {
   id: string
@@ -88,6 +72,8 @@ export interface FieldSpec {
   filterable?: boolean
   in_vector?: VectorRole
   in_key?: boolean
+  default?: any
+  clean?: string
 }
 
 export interface DatasetSchema {
@@ -302,24 +288,14 @@ export interface TaskStep {
   EndedAt: string
 }
 
-/** 任务明细草稿（含导入结果回写字段；草稿字段沿用 DraftItem snake_case） */
+/** 任务明细草稿（Fields 为 schema 字段袋 JSON 文本，用 parseDatasetItemFields 解析；
+ * Status/ErrorMessage 为导入结果回写） */
 export interface TaskItem {
   ID: string
   TaskID: string
-  project_name: string
-  title: string
-  description: string
-  priority: 'High' | 'Medium' | 'Low'
-  estimated_hours: number
-  start_at: string
-  end_at?: string
-  type_id: string
-  assignee_name: string
-  state: string
-  solution_suggestion: string
+  Fields: string
   Status: 'pending' | 'success' | 'failed'
   ErrorMessage: string
-  match?: DuplicateMatch | null
 }
 
 export interface TaskDetail {

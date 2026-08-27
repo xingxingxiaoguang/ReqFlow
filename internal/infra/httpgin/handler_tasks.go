@@ -76,7 +76,8 @@ func (h *handlers) patchTask(c *gin.Context) {
 	ok(c, gin.H{"task": task})
 }
 
-// taskItems POST /api/tasks/:id/items {items:[{id?, draft}]} → 批量保存门内草稿。
+// taskItems POST /api/tasks/:id/items {items:[{id?, fields: <字段对象>}]} → 批量保存门内草稿
+// （fields 为 schema 字段袋，形状由任务类型的产出 schema 驱动）。
 func (h *handlers) taskItems(c *gin.Context) {
 	var req struct {
 		Items []app.DraftSaveInput `json:"items"`

@@ -8,7 +8,7 @@
 ## 1. 项目是什么（30 秒版）
 
 - **现状**：Task 生命周期管理 + AI agent loop 驱动的项目管理辅助平台，**任务与任务通过数据集衔接**（不依赖任何外部协作平台，已全量剪除 PingCode）。需求导入任务化：上传解析 → 确认门 → **AI 分析（agent 工具驱动：经 read_document/search_document 自主阅读原文，write_work_items 分批产出草稿，关键决策点 ask_human 问人）** → 查重确认 → 生成需求数据集。提示词零固定模板——按任务类型 profile 动态装配（指令头注册表 + schema 渲染字段规范 + 工具集同源组装指南）。数据集为第一等公民（结果集浏览、查重与关联匹配的统一语料）。长程流程在任务详情页全程跟踪（步骤时间线 + 分阶段工作区），支持暂停/继续（分析走会话检查点、数据集生成幂等重建）、编辑、手动完成，进度落库可重放，执行脱离页面（断开照跑、服务重启自动标暂停、SSE 断线自动重连）。任务类型定义已收敛为聚合注册表（`app/registry.go` 一处声明），元数据目录（M1，前端「元数据」tab）提供聚合定义只读视图 + 提示词预览（设计见 `docs/METADATA.md`，分波计划见 `docs/METADATA_PLAN.md`）。
-- **下一步**：第二波 Bug 链路任务化（消费需求数据集 → 产出 Bug 数据集，方案定稿在 `internal/app/bug/doc.go`，见 §5.1）；元数据管理后续波次（M2 草稿字段袋化 → M3 受控编辑，见 docs/METADATA_PLAN.md）；多客户端上线补全（认证 / LLM 并发限流，见 §5.4）；技术债清理（§5.3）。
+- **下一步**：第二波 Bug 链路任务化（消费需求数据集 → 产出 Bug 数据集，方案定稿在 `internal/app/bug/doc.go`，见 §5.1）；元数据管理后续波次（M3 受控编辑 → M4 工作流外置，见 docs/METADATA_PLAN.md；M2 草稿字段袋化已交付——草稿全链路 schema 字段袋驱动，新任务类型零 struct 接入）；多客户端上线补全（认证 / LLM 并发限流，见 §5.4）；技术债清理（§5.3）。
 - **仓库**：`/Users/xxxg/demo/ReqFlow`，main 分支。项目自主演进（工具/提示词/装配范式自成体系，见 §4.6 与 §5.2）。
 
 ## 2. 怎么接手：跑起来
@@ -72,13 +72,17 @@ cmd/reqflow/
   static_dev.go      //go:build !embed：开发模式空实现（前端由 Vite 提供）
 
 internal/domain/
-  model/model.go     Dataset/DatasetItem/DraftItem/Task/TaskStep/TaskItem + 工作流元数据
-                     （Workflow/WorkflowStep/StepDependency/StepKind）+ 状态常量
+  model/model.go     Dataset/DatasetItem/Task/TaskStep/TaskItem（草稿字段袋：Fields 为
+                     schema 类型化字段 JSON 文本，与 DatasetItem.Fields 同构；Values()
+                     为读侧统一解析入口）+ 工作流元数据（Workflow/WorkflowStep/
+                     StepDependency/StepKind）+ 状态常量
   logic/             全部纯函数 + 单元测试（改这里不需要起任何服务）
     normalize.go       归一化精确匹配用（全角→半角含 U+3000、小写、空白压缩）
     similarity.go      余弦距离 0-2 → 分数 0-1
     lenientjson.go     LLM 宽松 JSON 恢复三级降级（剥围栏→截取[...]→修复截断数组）
-    draft.go           LLM 输出白名单归一化（priority 3 档/type 5 类/状态占位词清洗）
+    draft.go           ⭐ NormalizeValues：LLM 输出 → schema 字段袋归一化——默认值
+                       （Default 含 {current_time}）/枚举越界回落/数字宽松解析/清洗声明
+                       （Clean）全部来自 FieldSpec，代码零字段知识（M2 消灭 B1 双源）
 
 internal/port/
   repo.go            DatasetRepo/TaskRepo + 向量 DTO（DatasetItemVector/SimilarDatasetItem）
@@ -120,22 +124,26 @@ internal/app/        用例层；全部依赖构造注入，进度用回调上�
                      HTTP Answer 投递；pending 随 SSE 快照下发（刷新恢复弹窗）；ctx 取消
                      即空回答收束（任务暂停检查点语义不变）
   dataset.go         ⭐ DatasetWriter 数据集生成用例：草稿 → 向量化（分批）→ 幂等写入数据集；
-                     任务产物的落点，任务间衔接的载体；含 DraftInput/DraftSaveInput 草稿 DTO
+                     任务产物的落点，任务间衔接的载体；含 DraftSaveInput 草稿 DTO
+                     （{id,fields}——schema 字段袋，形状由任务类型产出 schema 驱动）
   prompt.go          ⭐ 提示词动态装配渲染器（零固定模板）：renderFieldSpecSection（schema →
                      字段规范段，类型/枚举值域/必填自动标注 + FieldSpec.Prompt 提取说明）/
                      renderAnalyzeHead（profile.Role 的 {field_spec} 占位替换）/ renderClassicOutputFormat
                      （单发契约 + 示例：profile.Example 覆盖或 schema 骨架生成）/ renderAgentSystem
                      （+ DocumentedTool 工具指南）/ renderDocManifest（agent 首轮文档清单 + 首步指引）
-  match.go           查重（两层匹配：归一化精确 + 向量语义，语料 = 需求数据集）
+  match.go           查重（两层匹配：归一化精确 + 向量语义，语料 = 需求数据集；入参为
+                     schema 字段袋，标题/向量文档口径由 requirement schema 驱动）
   parse.go settings.go overview.go
   bug/doc.go         ⭐ 第二波 bug 域完整设计（schema/用例流/关联落地方式）——做第二波先读它；
                      落地时以新 task 类型接入（见 §5.1），需求数据集为关联输入、Bug 数据集为产出
   tools/             ⭐ agent 过程工具（pi 工具模式，按运行构造，tools.BuildForRun）：read.go
                      （read_document 行号分页+续读提示+超长行硬拆）/ search.go（search_document
                      正则/字面量 grep 式输出+可行动截断提示）/ write.go（写入工具+DraftSink：
-                     WriteSpec 绑定任务产出 schema，同 key 覆盖增量产出、replace_all 整体重写、
-                     逐条校验即时回执；ReplayFrom 按同一 WriteSpec 从会话重放）/ ask.go（ask_human
-                     经 HumanAsker 阻塞问人，options 候选单选）；splitLines 全包共享，行号口径一致
+                     WriteSpec={Name,Schema} 绑定任务产出 schema；草稿为字段袋 map，key =
+                     ItemKeyOf（与数据集条目身份同一口径）；归一化走 logic.NormalizeValues，
+                     同 key 覆盖增量产出、replace_all 整体重写、逐条校验即时回执；ReplayFrom
+                     按同一 WriteSpec 从会话重放）/ ask.go（ask_human 经 HumanAsker 阻塞问人，
+                     options 候选单选）；splitLines 全包共享，行号口径一致
   agent/loop.go      pi 式 agent loop 骨架（Tool 接口 + 自然终止 + MaxIterations 安全阀 +
                      length 截断整批 fail + ToolOutput 的 output/details 拆分）；ctx 取消即
                      干净中止并返回已积累 Context——任务暂停检查点的载体
@@ -144,11 +152,12 @@ internal/infra/
   config/config.go   YAML+env 覆盖（反射走 env tag）、Validate（dsn 硬校验/其余降级 warns）、
                      FilledSecrets/CheckExampleLeak（安全自检）；example.yaml 内嵌（首启生成模板）
   database.go         GORM 连接（重试）+ 手写迁移器（内嵌 SQL，schema_migrations 表，幂等）
-  migrations/         0001_init（projects/work_items 等，已被 0005 剪除）/ 0003_tasks（任务三表，
-                       task_items 为需求草稿物理列）/ 0004_workflow（tasks.workflow 列）
-                       / 0005_datasets（datasets/dataset_items 建表 + 任务衔接列 + DROP 平台语料表）
-                       / 0006_dataset_generic（数据集通用底座：item_key/fingerprint/元数据列）
-                       / 0007_archive（归档表）；研发阶段无数据搬迁，改表直接推倒重建
+  migrations/         0001_init（projects/work_items 等，已被 0005 剪除）/ 0003_tasks（任务三表）
+                       / 0004_workflow（tasks.workflow 列）/ 0005_datasets（datasets/
+                       dataset_items 建表 + 任务衔接列 + DROP 平台语料表）/ 0006_dataset_generic
+                       （数据集通用底座：item_key/fingerprint/元数据列）/ 0007_archive（归档表）
+                       / 0008_task_items_fields（task_items 推倒重建为字段袋：fields TEXT JSON，
+                       与 dataset_items.fields 决策一致）；研发阶段无数据搬迁，改表直接推倒重建
   repository/        两个仓储实现（GORM + pgvector；dataset_repo 的 Raw SQL 向量检索注意
                       **显式列映射**——嵌套结构体 Scan 会丢 fields 列，踩过坑）
   llm/               双协议适配器（均移植自 pi，偏离清单见 §4.6）：client.go 工厂按 provider 分发
@@ -277,7 +286,7 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
 | `/tasks?status=&type=&limit=` | JSON | 列表 |
 | `/workflows` | JSON | 任务类型目录（工作流元数据：步骤链 + 每步依赖声明），创建入口展示用 |
 | `/tasks/:id` | JSON | PATCH 编辑 {title?,parsed_text?,special_requirements?}（awaiting/paused 可改） |
-| `/tasks/:id/items` | JSON | 批量保存门内草稿 {items:[{id?,draft}]} |
+| `/tasks/:id/items` | JSON | 批量保存门内草稿 {items:[{id?,fields:<字段袋>}]}（形状由任务类型产出 schema 驱动；items 回读时 Fields 为 JSON 文本） |
 | `/tasks/:id/parse` | multipart | fire-and-forget 上传解析（存 upload_dir，立即返回 {task_id}） |
 | `/tasks/:id/analyze` | JSON | fire-and-forget AI 分析（暂停恢复走 AgentContext 检查点） |
 | `/tasks/:id/dataset` | JSON | fire-and-forget 生成数据集 {mode: create\|merge\|upsert\|replace, dataset_id?, dataset_name?}（断点续跑幂等重建；预览走 /dataset/preview 分桶不落库） |
@@ -285,7 +294,7 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
 | `/tasks/:id/pause` `/resume` `/complete` | JSON | 生命周期：暂停（取消步骤 ctx）/ 继续（按暂停步骤重触发）/ 手动完成（awaiting→终态） |
 | `/tasks/:id/events` | SSE | **快照回放 + 实时**：snapshot（含 dialog pending 恢复）/ task / step / items / progress / token{delta,phase}（150ms 合并帧）/ tool_trace{phase,call_id,name,args?,details?,is_error?} / dialog{phase:ask\|close, call_id, question?, options?, reason?} / error + 5s ping 心跳；断开只退订，任务照跑 |
 | `/datasets` `/datasets/:id` | JSON | 数据集浏览（结果集 + 条目明细 + 来源任务追溯） |
-| `/match/duplicates` | JSON | {items:[DraftInput]} → {results:[{index,match|null}]}（语料 = 需求数据集） |
+| `/match/duplicates` | JSON | {items:[字段袋]} → {results:[{index,match|null}]}（语料 = 需求数据集，标题按 schema 标题字段口径） |
 | `/metadata` `/metadata/task-types/:type` | JSON | 元数据目录：总览（任务类型列表 + source）/ 聚合视图（workflow + schema + profile + 工具清单）——前端「元数据」tab 数据源 |
 | `/metadata/render/preview` | JSON | {task_type, special_requirements?} → 三段提示词实时渲染（与运行时装配同一函数） |
 | `/overview` | JSON | 概览（datasets/datasetItems/tasks + recentTasks/recentDatasets） |
@@ -383,7 +392,6 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 与过程工�
 | token 增量不落库 | 分析中途重连后思考/正文双区从空开始（工具轨迹从步骤 data 回放，结果以明细为准） | 刻意取舍：防会话膨胀；如确需重放全文再按轮次落库 |
 | 上传文件无清理 | 失败/暂停任务的 upload_dir 文件残留 | 终态清理 + 启动扫描兜底 |
 | classic 模式续跑重放 | 单发模式暂停后恢复会重放流式调用（同 prompt 重新生成，幂等但耗 token） | 暂停多在 agent 模式（检查点续跑不重放已确认轮次） |
-| **草稿字段袋化**（最大的一笔） | DraftItem 仍是 requirement 形状的 struct + task_items 物理列：新任务类型仍需写 struct/Normalize/ValuesOf，草稿字段无法按任务实例变化 | 元数据管理 M2 波次执行（**接手级上下文见 docs/METADATA_PLAN.md §M2**：现状地图 / 逐触点任务清单 / 设计决策 / 零兼容原则——开发阶段无正式数据，不做旧形状兼容）；完成前新任务类型接入仍需按现状写 struct |
 
 ### 5.4 多客户端上线补全（第三波，按顺序）
 

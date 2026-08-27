@@ -83,22 +83,12 @@ type taskStepRow struct {
 func (taskStepRow) TableName() string { return "task_steps" }
 
 type taskItemRow struct {
-	ID                  string    `gorm:"column:id;primaryKey"`
-	TaskID              string    `gorm:"column:task_id;index"`
-	Title               string    `gorm:"column:title"`
-	Description         string    `gorm:"column:description"`
-	ProjectName         string    `gorm:"column:project_name"`
-	TypeID              string    `gorm:"column:type_id"`
-	Priority            string    `gorm:"column:priority"`
-	EstimatedHours      *float64  `gorm:"column:estimated_hours"`
-	StartAt             *string   `gorm:"column:start_at"`
-	EndAt               *string   `gorm:"column:end_at"`
-	AssigneeName        *string   `gorm:"column:assignee_name"`
-	State               string    `gorm:"column:state"`
-	SolutionSuggestion  string    `gorm:"column:solution_suggestion"`
-	Status              string    `gorm:"column:status"`
-	ErrorMessage        *string   `gorm:"column:error_message"`
-	CreatedAt           time.Time `gorm:"column:created_at"`
+	ID           string    `gorm:"column:id;primaryKey"`
+	TaskID       string    `gorm:"column:task_id;index"`
+	Fields       string    `gorm:"column:fields"` // JSON 文本（schema 字段袋）
+	Status       string    `gorm:"column:status"`
+	ErrorMessage *string   `gorm:"column:error_message"`
+	CreatedAt    time.Time `gorm:"column:created_at"`
 }
 
 func (taskItemRow) TableName() string { return "task_items" }

@@ -190,7 +190,7 @@ func (m *TaskManager) ReplaceItems(ctx context.Context, id string, inputs []Draf
 	}
 	items := make([]model.TaskItem, len(inputs))
 	for i, in := range inputs {
-		items[i] = model.TaskItem{ID: in.ID, DraftItem: in.Draft.toModel(), Status: model.ItemStatusPending}
+		items[i] = in.toTaskItem()
 	}
 	return m.tasks.ReplaceTaskItems(ctx, id, items)
 }
@@ -246,7 +246,7 @@ func (m *TaskManager) PreviewDatasetWrite(ctx context.Context, id string, target
 	}
 	values := make([]map[string]any, len(items))
 	for i := range items {
-		values[i] = draftValuesOf(items[i].DraftItem)
+		values[i] = items[i].Values()
 	}
 	prepared, err := m.datasetWriter.Prepare(ctx, schema, t, task.ID, values)
 	if err != nil {

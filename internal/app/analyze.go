@@ -208,7 +208,7 @@ func (s *AnalyzeService) Resume(
 	} else if streamErr != nil {
 		onProgress(AnalyzeProgress{Stage: "analyzing", Message: fmt.Sprintf("流式中断，已从部分输出恢复 %d 个工作项", len(drafts))})
 	}
-	return s.finalize(in, logic.NormalizeDrafts(drafts, now), now, cc)
+	return s.finalize(in, normalizeDraftValues(profile.Schema(), drafts, now), now, cc)
 }
 
 // runAgent agent 模式主路径。handled=false 表示链路彻底失败应降级单发；
@@ -339,7 +339,19 @@ func (s *AnalyzeService) runClassic(
 		onProgress(AnalyzeProgress{Stage: "analyzing", Message: fmt.Sprintf("流式中断，已从部分输出恢复 %d 个工作项", len(drafts))})
 	}
 
-	return s.finalize(in, logic.NormalizeDrafts(drafts, now), now, llmCtx)
+	return s.finalize(in, normalizeDraftValues(profile.Schema(), drafts, now), now, llmCtx)
+}
+
+// normalizeDraftValues 单发输出的原始数组按产出 schema 归一化为字段袋
+// （非 map 元素跳过——宽松恢复的残渣）。
+func normalizeDraftValues(schema model.DatasetSchema, raws []any, now time.Time) []map[string]any {
+	out := make([]map[string]any, 0, len(raws))
+	for _, r := range raws {
+		if m, ok := r.(map[string]any); ok {
+			out = append(out, logic.NormalizeValues(schema, m, now))
+		}
+	}
+	return out
 }
 
 // checkpoint 暂停检查点产出：序列化已积累会话（续跑载体），不解析草稿。
@@ -351,11 +363,11 @@ func (s *AnalyzeService) checkpoint(in AnalyzeInput, now time.Time, llmCtx *port
 	return out, ErrTaskPaused
 }
 
-// finalize 原文存档 → 组装产出（items 应已归一化；不落库，由 TaskManager 持久化）。
-func (s *AnalyzeService) finalize(in AnalyzeInput, items []model.DraftItem, now time.Time, llmCtx *port.Context) (*AnalyzeOutcome, error) {
+// finalize 原文存档 → 组装产出（items 为已归一化的字段袋；不落库，由 TaskManager 持久化）。
+func (s *AnalyzeService) finalize(in AnalyzeInput, items []map[string]any, now time.Time, llmCtx *port.Context) (*AnalyzeOutcome, error) {
 	out := &AnalyzeOutcome{Items: make([]model.TaskItem, len(items))}
-	for i, d := range items {
-		out.Items[i] = model.TaskItem{DraftItem: d, Status: model.ItemStatusPending}
+	for i, v := range items {
+		out.Items[i] = model.TaskItem{Fields: marshalJSON(v), Status: model.ItemStatusPending}
 	}
 
 	// 原文存档只在成功产出时落盘（检查点不写，避免暂停产生孤儿文件）

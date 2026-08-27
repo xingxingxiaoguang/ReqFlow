@@ -241,44 +241,15 @@ func stepRowToModel(row *taskStepRow) model.TaskStep {
 }
 
 func itemToRow(id, taskID string, it model.TaskItem) taskItemRow {
-	row := taskItemRow{
-		ID: id, TaskID: taskID,
-		Title: it.Title, Description: it.Description, ProjectName: it.ProjectName,
-		TypeID: it.TypeID, Priority: it.Priority,
-		AssigneeName:       strPtr(it.AssigneeName),
-		State:              it.State,
-		SolutionSuggestion: it.SolutionSuggestion,
+	return taskItemRow{
+		ID: id, TaskID: taskID, Fields: it.Fields,
 		Status: it.Status, ErrorMessage: strPtr(it.ErrorMessage),
 	}
-	if it.EstimatedHours != 0 {
-		h := it.EstimatedHours
-		row.EstimatedHours = &h
-	}
-	if it.StartAt != "" {
-		s := it.StartAt
-		row.StartAt = &s
-	}
-	if it.EndAt != "" {
-		e := it.EndAt
-		row.EndAt = &e
-	}
-	return row
 }
 
 func itemRowToModel(row *taskItemRow) model.TaskItem {
-	d := model.DraftItem{
-		ProjectName: row.ProjectName, Title: row.Title, Description: row.Description,
-		Priority: row.Priority,
-		StartAt:  strVal(row.StartAt), EndAt: strVal(row.EndAt),
-		TypeID: row.TypeID, AssigneeName: strVal(row.AssigneeName),
-		State:              row.State,
-		SolutionSuggestion: row.SolutionSuggestion,
-	}
-	if row.EstimatedHours != nil {
-		d.EstimatedHours = *row.EstimatedHours
-	}
 	return model.TaskItem{
-		ID: row.ID, TaskID: row.TaskID, DraftItem: d,
+		ID: row.ID, TaskID: row.TaskID, Fields: row.Fields,
 		Status: row.Status, ErrorMessage: strVal(row.ErrorMessage),
 	}
 }

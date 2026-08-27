@@ -628,7 +628,7 @@ func TestTaskAnalyzePauseResume(t *testing.T) {
 		return t.Status == model.TaskStatusAwaiting && t.CurrentStep == 4
 	})
 	items := mustItems(t, repo, task.ID)
-	if len(items) != 1 || items[0].Title != "实现用户登录功能" {
+	if len(items) != 1 || items[0].Values()["title"] != "实现用户登录功能" {
 		t.Fatalf("续跑产出明细 = %+v", items)
 	}
 	steps := mustSteps(t, repo, task.ID)
@@ -701,8 +701,8 @@ func TestTaskGenerateDataset(t *testing.T) {
 
 	// 进入生成数据集门并预置草稿
 	_ = repo.ReplaceTaskItems(ctx, task.ID, []model.TaskItem{
-		{DraftItem: model.DraftItem{Title: "A"}, Status: model.ItemStatusPending},
-		{DraftItem: model.DraftItem{Title: "B"}, Status: model.ItemStatusPending},
+		{Fields: `{"title":"A"}`, Status: model.ItemStatusPending},
+		{Fields: `{"title":"B"}`, Status: model.ItemStatusPending},
 	})
 	task.Status = model.TaskStatusAwaiting
 	task.CurrentStep = 4
@@ -748,7 +748,7 @@ func TestTaskGenerateDatasetFailureRetry(t *testing.T) {
 	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusAwaiting })
 
 	_ = repo.ReplaceTaskItems(ctx, task.ID, []model.TaskItem{
-		{DraftItem: model.DraftItem{Title: "A"}, Status: model.ItemStatusPending},
+		{Fields: `{"title":"A"}`, Status: model.ItemStatusPending},
 	})
 	task.Status = model.TaskStatusAwaiting
 	task.CurrentStep = 4
@@ -784,7 +784,7 @@ func TestTaskGenerateDatasetPauseResume(t *testing.T) {
 	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusAwaiting })
 
 	_ = repo.ReplaceTaskItems(ctx, task.ID, []model.TaskItem{
-		{DraftItem: model.DraftItem{Title: "A"}, Status: model.ItemStatusPending},
+		{Fields: `{"title":"A"}`, Status: model.ItemStatusPending},
 	})
 	task.Status = model.TaskStatusAwaiting
 	task.CurrentStep = 4
@@ -973,7 +973,7 @@ func TestTaskRewriteDatasetAfterSucceeded(t *testing.T) {
 	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusAwaiting })
 
 	_ = repo.ReplaceTaskItems(ctx, task.ID, []model.TaskItem{
-		{DraftItem: model.DraftItem{Title: "A"}, Status: model.ItemStatusPending},
+		{Fields: `{"title":"A"}`, Status: model.ItemStatusPending},
 	})
 	task.Status = model.TaskStatusAwaiting
 	task.CurrentStep = 4
@@ -1006,8 +1006,8 @@ func TestTaskDatasetPreview(t *testing.T) {
 	ctx := context.Background()
 	task, _ := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
 	_ = repo.ReplaceTaskItems(ctx, task.ID, []model.TaskItem{
-		{DraftItem: model.DraftItem{Title: "需求A"}, Status: model.ItemStatusPending},
-		{DraftItem: model.DraftItem{Title: "需求D"}, Status: model.ItemStatusPending},
+		{Fields: `{"title":"需求A"}`, Status: model.ItemStatusPending},
+		{Fields: `{"title":"需求D"}`, Status: model.ItemStatusPending},
 	})
 
 	pv, err := mgr.PreviewDatasetWrite(ctx, task.ID, DatasetTarget{Mode: WriteModeMerge, DatasetID: "ds-x"})
