@@ -41,7 +41,7 @@ func TestRegistryDelegationConsistency(t *testing.T) {
 
 // 聚合视图：schema/profile/工具清单完整，写入绑定带出工具名。
 func TestMetadataTaskTypeView(t *testing.T) {
-	view, err := NewMetadataService(nil, nil).TaskTypeView("requirement_import")
+	view, err := NewMetadataService(nil, nil).TaskTypeView("requirement_import", false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -73,7 +73,7 @@ func TestMetadataTaskTypeView(t *testing.T) {
 
 // 未注册类型的聚合视图报错。
 func TestMetadataTaskTypeViewUnregistered(t *testing.T) {
-	if _, err := NewMetadataService(nil, nil).TaskTypeView("nope"); err == nil {
+	if _, err := NewMetadataService(nil, nil).TaskTypeView("nope", false); err == nil {
 		t.Fatal("未注册类型应报错")
 	}
 }

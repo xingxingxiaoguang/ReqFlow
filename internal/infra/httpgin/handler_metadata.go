@@ -6,15 +6,17 @@ import (
 	"reqflow/internal/app"
 )
 
-// metadataCatalog GET /api/metadata → 元数据目录总览（任务类型列表 + source）。
+// metadataCatalog GET /api/metadata → 元数据目录总览（任务类型列表 + 向导草稿组 + source）。
 func (h *handlers) metadataCatalog(c *gin.Context) {
-	ok(c, h.svc.Metadata.Catalog())
+	ok(c, h.svc.Metadata.Catalog(c.Request.Context()))
 }
 
 // metadataTaskType GET /api/metadata/task-types/:type → 任务类型聚合视图
-// （workflow + schema + profile + 工具清单）。
+// （workflow + schema + profile + 工具清单）。?include_draft=true 时对未生效的
+// 向导草稿返回草稿组合视图（验证入口）。
 func (h *handlers) metadataTaskType(c *gin.Context) {
-	view, err := h.svc.Metadata.TaskTypeView(c.Param("type"))
+	includeDraft := c.Query("include_draft") == "true"
+	view, err := h.svc.Metadata.TaskTypeView(c.Param("type"), includeDraft)
 	if err != nil {
 		fail(c, 404, err.Error())
 		return

@@ -81,11 +81,34 @@ func (m *memMetadata) ListAudit(_ context.Context, kind, key string, _ int) ([]p
 	defer m.mu.Unlock()
 	var out []port.MetadataAuditEntry
 	for _, a := range m.audits {
-		if a.Kind == kind && a.Key == key {
-			out = append(out, a)
+		if kind == "" || a.Kind == kind {
+			if key == "" || a.Key == key {
+				out = append(out, a)
+			}
 		}
 	}
+	// 新→旧（真实仓储按 created_at DESC；这里按写入序倒排等价）
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
 	return out, nil
+}
+
+// UpdateLatestEnabled 翻转 (kind,key) 最新版行的 enabled 标志（向导草稿启停的假实现）。
+func (m *memMetadata) UpdateLatestEnabled(_ context.Context, kind, key string, enabled bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	best := -1
+	for i, e := range m.entries {
+		if e.Kind == kind && e.Key == key && (best == -1 || e.Version > m.entries[best].Version) {
+			best = i
+		}
+	}
+	if best == -1 {
+		return fmt.Errorf("无版本行可翻转: %s/%s", kind, key)
+	}
+	m.entries[best].Enabled = enabled
+	return nil
 }
 
 /* ---- 测试基建 ---- */
@@ -95,7 +118,7 @@ func newEditSvc(t *testing.T) (*MetadataService, *memMetadata) {
 	t.Helper()
 	repo := &memMetadata{}
 	svc := NewMetadataService(repo, nil)
-	t.Cleanup(func() { setMetadataOverrides(nil, nil) })
+	t.Cleanup(func() { setMetadataOverrides(nil, nil, nil, nil) })
 	return svc, repo
 }
 
@@ -504,9 +527,9 @@ func TestHistoryPayloadRoundTrip(t *testing.T) {
 	if stored.Type != model.DatasetTypeRequirement || stored.Version != 2 || stored.Fields[4].Prompt != "历史回放" {
 		t.Fatalf("载荷应可往返解析（version=有效版本）: %+v", stored.Fields[4])
 	}
-	// 非法 kind 拒绝
-	if _, err := svc.History(context.Background(), "workflow", "x"); err == nil {
-		t.Fatal("M3 不支持的 kind 应报错")
+	// 非法 kind 拒绝（M4 起 workflow 已纳入合法 kind）
+	if _, err := svc.History(context.Background(), "nope", "x"); err == nil {
+		t.Fatal("未知 kind 应报错")
 	}
 }
 

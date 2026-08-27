@@ -142,6 +142,7 @@ type ArchiveRepo interface {
 const (
 	MetadataKindDatasetSchema  = "dataset_schema"  // key = 数据集类型
 	MetadataKindAnalyzeProfile = "analyze_profile" // key = 任务类型
+	MetadataKindWorkflow       = "workflow"        // key = 任务类型（M4 工作流定义外置 + 向导锚行）
 )
 
 // MetadataEntry 注册表条目（一个版本；版本历史同表保留不删）。
@@ -181,4 +182,7 @@ type MetadataRepo interface {
 	WriteAudit(ctx context.Context, a *MetadataAuditEntry) error
 	// ListAudit 审计查询（新→旧）。
 	ListAudit(ctx context.Context, kind, key string, limit int) ([]MetadataAuditEntry, error)
+	// UpdateLatestEnabled 就地翻转 (kind,key) 最新版行的 enabled 标志
+	// （向导草稿的启用/停用：内容版本不变，只改发布状态；无任何版本行时返回错误）。
+	UpdateLatestEnabled(ctx context.Context, kind, key string, enabled bool) error
 }

@@ -92,6 +92,22 @@ func (r *MetadataRepo) ListAudit(ctx context.Context, kind, key string, limit in
 	return out, nil
 }
 
+func (r *MetadataRepo) UpdateLatestEnabled(ctx context.Context, kind, key string, enabled bool) error {
+	// 子查询定位该 (kind,key) 最新版本行，单条 UPDATE 原地翻转发布标志（内容不动）
+	res := r.db.WithContext(ctx).Exec(
+		`UPDATE metadata_registry SET enabled = ?
+		 WHERE id = (SELECT id FROM (SELECT id FROM metadata_registry
+		            WHERE kind = ? AND key = ? ORDER BY version DESC LIMIT 1) latest)`,
+		enabled, kind, key)
+	if res.Error != nil {
+		return res.Error
+	}
+	if res.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound // 该 key 无任何版本行可翻转
+	}
+	return nil
+}
+
 func registryRowsToEntries(rows []metadataRegistryRow) []port.MetadataEntry {
 	out := make([]port.MetadataEntry, len(rows))
 	for i, row := range rows {

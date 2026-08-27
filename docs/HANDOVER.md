@@ -7,8 +7,8 @@
 
 ## 1. 项目是什么（30 秒版）
 
-- **现状**：Task 生命周期管理 + AI agent loop 驱动的项目管理辅助平台，**任务与任务通过数据集衔接**（不依赖任何外部协作平台，已全量剪除 PingCode）。需求导入任务化：上传解析 → 确认门 → **AI 分析（agent 工具驱动：经 read_document/search_document 自主阅读原文，write_work_items 分批产出草稿，关键决策点 ask_human 问人）** → 查重确认 → 生成需求数据集。提示词零固定模板——按任务类型 profile 动态装配（指令头注册表 + schema 渲染字段规范 + 工具集同源组装指南）。数据集为第一等公民（结果集浏览、查重与关联匹配的统一语料）。长程流程在任务详情页全程跟踪（步骤时间线 + 分阶段工作区），支持暂停/继续（分析走会话检查点、数据集生成幂等重建）、编辑、手动完成，进度落库可重放，执行脱离页面（断开照跑、服务重启自动标暂停、SSE 断线自动重连）。任务类型定义已收敛为聚合注册表（`app/registry.go` 一处声明）；元数据管理 M1~M3 已交付——聚合定义目录 + 提示词预览（前端「元数据」tab）+ **受控编辑（M3：schema/profile 经 DB 覆盖层编辑，兼容守卫 + 版本历史 + 审计 + 导入导出，seed/override/effective 三态生效）**（设计见 `docs/METADATA.md`，分波计划见 `docs/METADATA_PLAN.md`）。
-- **下一步**：第二波 Bug 链路任务化（消费需求数据集 → 产出 Bug 数据集，方案定稿在 `internal/app/bug/doc.go`，见 §5.1）；元数据管理 M4（工作流定义外置 + 新任务类型向导，与产品第四波合流）；多客户端上线补全（认证 / LLM 并发限流，见 §5.4）；技术债清理（§5.3）。
+- **现状**：Task 生命周期管理 + AI agent loop 驱动的项目管理辅助平台，**任务与任务通过数据集衔接**（不依赖任何外部协作平台，已全量剪除 PingCode）。需求导入任务化：上传解析 → 确认门 → **AI 分析（agent 工具驱动：经 read_document/search_document 自主阅读原文，write_work_items 分批产出草稿，关键决策点 ask_human 问人）** → 查重确认 → 生成需求数据集。提示词零固定模板——按任务类型 profile 动态装配（指令头注册表 + schema 渲染字段规范 + 工具集同源组装指南）。数据集为第一等公民（结果集浏览、查重与关联匹配的统一语料）。长程流程在任务详情页全程跟踪（步骤时间线 + 分阶段工作区），支持暂停/继续（分析走会话检查点、数据集生成幂等重建）、编辑、手动完成，进度落库可重放，执行脱离页面（断开照跑、服务重启自动标暂停、SSE 断线自动重连）。任务类型定义已收敛为聚合注册表（`app/registry.go` 一处声明）；元数据管理 M1~M4 已交付——聚合定义目录 + 提示词预览（前端「元数据」tab）+ **受控编辑（M3：schema/profile 经 DB 覆盖层编辑，兼容守卫 + 版本历史 + 审计 + 导入导出，seed/override/effective 三态生效）** + **工作流定义外置与新任务类型向导（M4：kind=workflow 覆盖热编辑仅影响新任务；向导编排既有 kind 注册全新类型，产物 disabled 入库人工启用）**（长效设计要点与不变量已并入本文档 §3.4；模块专项债见 `docs/DEBT.md` 台账）。
+- **下一步**：第二波 Bug 链路任务化（消费需求数据集 → 产出 Bug 数据集，方案定稿在 `internal/app/bug/doc.go`，见 §5.1；bug_import 可经 M4 向导范式注册）；多客户端上线补全（认证 / LLM 并发限流，见 §5.4）；技术债清理（§5.3）。
 - **仓库**：`/Users/xxxg/demo/ReqFlow`，main 分支。项目自主演进（工具/提示词/装配范式自成体系，见 §4.6 与 §5.2）。
 
 ## 2. 怎么接手：跑起来
@@ -91,6 +91,10 @@ internal/domain/
                        §4.4 规则表逐条判定（✅/⚠️/❌）；ValidateSchemaShape 形状硬校验
                        （字段 key 白名单 snake_case——key 会拼进过滤 SQL，注入面收口）；
                        ValidateProfileText + {{ 模板注入告警
+    workflow.go        工作流形状校验 + 兼容引擎（M4）：ValidateWorkflowShape（kind 封闭集/
+                       seq 连续/步骤名唯一——注入面与编排语法收口）/ CheckWorkflowCompat
+                       （按步骤名对齐；gate_removed/output_missing 等全 ✅⚠️ 无 ❌——快照
+                       天然隔离存量任务）/ IsValidIdentifier 标识符白名单
 
 internal/port/
   repo.go            DatasetRepo/TaskRepo/MetadataRepo（M3：registry/audit 仓储契约，
@@ -114,15 +118,22 @@ internal/app/        用例层；全部依赖构造注入，进度用回调上�
   workflow.go        工作流定义（半元数据驱动）：步骤链 + 依赖声明（StepKind:
                      parse/human/analyze/dataset）；创建任务时快照进 tasks.workflow
                      （任务自描述，不受定义演进影响）；查找入口委托聚合注册表
-  metadata.go        ⭐ 元数据目录用例（M1 只读部分）：Catalog（总览）/ TaskTypeView
-                     （聚合视图，含 schema_source/profile_source 分构件来源）/
+  metadata.go        ⭐ 元数据目录用例（M1 只读部分）：Catalog（总览 + M4 向导草稿组）/ TaskTypeView
+                     （聚合视图，含分构件 source + custom/draft 徽标字段）/
                      PromptPreview（三段提示词实时渲染，复用运行时渲染器与工具集
                      构造——预览即装配的精确复现）
   metadata_edit.go   ⭐ 元数据受控编辑（M3 写路径）：Reload（seed→override→effective
                      装载，写后整体刷新）/ UpdateSchema（形状校验→兼容引擎→❌拦截
                      ⚠️confirm_risky→版本递增+审计）/ UpdateProfile / Reset*（enabled=
                      false 最新版回退 seed，版本历史保留）/ History / Export / Import
-                     （逐项同一守卫）；effective 版本 = seed.Version + 注册表版本
+                     （逐项同一守卫；M4 起新类型按向导注册为草稿）/ UpdateWorkflow /
+                     ResetWorkflow / SetWorkflowStatus（启停翻锚行）/ Reload 装 kind=workflow +
+                     向导扩展类型（锚行 enabled 且三构件齐备才装载）；effective 版本 =
+                     seed.Version + 注册表版本（扩展类型无 seed 基线则仅行版本）
+  metadata_wizard.go ⭐ 新任务类型向导（M4）：RegisterTaskType 整体校验→三行落库
+                     （schema/profile 生效态就绪、workflow 锚行 disabled=草稿）→即时
+                     提示词预览；lookupDraftRows/WizardDraftView 草稿组合视图；
+                     composeExtensionDefinition 构件组装（Write 绑定 DefaultWriteSpec）
   task.go            ⭐ TaskManager 任务门面：CRUD/编辑/触发/暂停/继续/完成/Recover +
                      运行登记表（每任务单写者 goroutine）+ 数据集浏览透传——httpgin 唯一任务入口
   runner.go          ⭐ 步骤执行器小接口（parse/analyze/dataset 服务结构即满足，测试注入假实现）
@@ -190,8 +201,9 @@ internal/infra/
   parser/            parser.go（分发+docx 标准库 zip+XML）mineru.go（四步云端解析）xlsx.go（行级解析，第二波用）
   httpgin/           server.go（路由表）sse.go heartbeat.go handler_tasks.go（任务/工作流/数据集端点）
                      handler_misc.go handler_match.go handler_metadata.go（元数据目录 3 端点）
-                     handler_metadata_edit.go（M3 受控编辑 8 端点；守卫拦截 409 时判定明细
-                     随 data 载荷带回前端）
+                     handler_metadata_edit.go（M3 受控编辑 + M4 工作流/向导端点；守卫拦截
+                     409 时判定明细随 data 载荷带回前端：workflows/:type 的 check/PUT/DELETE/
+                     status 启停 + POST task-types 向导注册）
   database/migrations 见上
 
 web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-router
@@ -204,15 +216,19 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
   src/api/tasks.ts           任务 API 封装（创建/列表/详情/编辑/暂停/继续/完成/步骤触发/草稿保存/数据集浏览）
   src/pages/Tasks.tsx        任务列表（状态筛选 + 生命周期操作）
   src/pages/Datasets.tsx     数据集浏览（结果集 + 条目明细 + 来源任务追溯）
-  src/pages/Metadata.tsx     元数据目录：任务类型聚合视图（步骤链/字段合同/装配描述）
-                             + 提示词预览（可填额外要求实时渲染）+ 导出按钮（effective
-                             视图 JSON 留档），/metadata 路由
+  src/pages/Metadata.tsx     元数据目录：任务类型聚合视图（步骤链/工作流编辑/字段合同/
+                             装配描述）+ 提示词预览（可填额外要求实时渲染）+ 导出按钮 +
+                             「新建类型」入口 + 待启用草稿组（详情页一键启用），/metadata 路由
+  src/pages/MetadataWizard.tsx 新任务类型向导（M4）：类型标识/数据集类型 → 步骤链编排
+                             （StepsEditor 增删移位）→ 字段合同轻量编辑 → 指令头填写 →
+                             提交注册为草稿，右栏即时判定 + 三段提示词预览；?edit= 回填草稿
   src/pages/MetadataEditors.tsx ⭐ M3 受控编辑器：SchemaEditor（字段合同编辑：行点击
                              弹窗改 Label/枚举/属性/提取说明 → 保存自动 check → 判定
                              弹窗 ❌标红/⚠️勾选确认/影响面数据集表 → 保存生效）+
-                             ProfileEditor（指令头/示例）+ HistoryDrawer（版本历史，
-                             点选两版 LCS 行 diff）；409 守卫拦截不抛错——判定明细
-                             随响应 data 带回（api.putDetail）
+                             ProfileEditor（指令头/示例）+ WorkflowEditor（步骤链编排：
+                             StepModal 改名/kind/依赖、上下移、check 保存流）+
+                             HistoryDrawer（版本历史，kind 含 workflow；点选两版 LCS 行 diff）；
+                             409 守卫拦截不抛错——判定明细随响应 data 带回（api.putDetail）
   src/pages/tasks/           详情页 TaskDetail（头部+步骤时间线+按阶段工作区；analyze 步骤
                      标签按 settings.llm.agentMode 如实显示）+
                      panels/（ConfirmParsePanel / AnalysisPane（双区实时滚动+工具轨迹+人工
@@ -232,6 +248,27 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
 - **暂停语义**：analyze=取消 loop ctx → 已积累 `port.Context` 序列化进 `agent_context` → paused；继续=回放 Context 调 `Analyze.Resume`。dataset=向量化分批间取消 → paused（building 数据集保留）；继续=复用同一数据集幂等重建条目。parse=取消重跑（幂等）。
 - **步骤失败不杀任务**：requirement_import 步骤失败 → 回到对应人工门（awaiting）可重试；任务可手动完成（awaiting 态）进入终态。
 - **人工交互（dialog）是阻塞事件**：ask_human 工具经 DialogHub 登记 pending 后阻塞等待 `POST /tasks/:id/dialog` 应答（loop 顺序执行 → 每任务至多一个 pending）。可靠性走快照而不是瞬时事件：pending 随 SSE snapshot 下发（刷新/重连恢复弹窗），Broker 丢帧也能恢复；ctx 取消（暂停）以 IsError 回执收束——loop 先追加回执再退出，会话保持合法，续跑后模型可重新发问。
+
+### 3.4 元数据系统不变量（改 metadata/registry/兼容引擎前必读）
+
+> 原《元数据模块设计》（docs/METADATA.md）与《分波执行计划》（docs/METADATA_PLAN.md）已于 2026-08 合并删除，长效决策全部并入本节；历史代码注释中的「METADATA §N」编号指该文档，git 历史可溯。开发范式（定义即数据 / 半元数据驱动）见 PRODUCT §4 决策二。
+
+- **分层真相源（seed → override → effective 三态）**：`app/registry.go taskTypeDefinitions()` 是 code seed（随二进制发布的出厂默认）；`metadata_registry` 表是 DB 覆盖——每 `(kind,key)` 取最大 version 行，该行 enabled 才生效；运行时读 `TaskTypes()/TaskTypeOf()/effectiveSchemaOf()` 的合并视图。**红线：元数据永远进程内供给，绝不经 HTTP 取**。写路径与加载器同进程收口：每次写后 `Reload` 整体刷新缓存，单测钉住「写后立即读」防失效遗漏。
+- **合并层结构**：`metadataOverrides` 四张 map——schemas（按数据集类型）/ profiles、workflows（按任务类型）/ extDefs（向导扩展类型聚合定义）。map 只整体替换、绝不原地修改（读侧持旧引用即持旧快照，无竞态）；测试结束必须 `setMetadataOverrides(nil,nil,nil,nil)` 清进程级全局态。
+- **锚行双语义（M4 沉淀）**：kind=workflow 行 payload=`{dataset_type, workflow}`，兼作向导注册类型的「锚行」。对 seed 类型 `enabled=false` 表示覆盖关闭（回退 seed）；对向导扩展类型它是**发布开关**——disabled = 整型草稿，装载器跳过（运行时不可见、建任务被拒）。同一列两种语义，改动前先分清身份（`customTaskType()` 是 source 徽标/回退按钮/启停权限的判定枢纽）。
+- **数据集类型所有权不变量**：一个数据集类型只能被一个任务类型占用；向导注册必须新建 ds_type 且不得与任何既有定义冲突。ds_type 是任务间衔接的身份键（筛选 SQL、向量集合、item_key 都派生于它），共写一个结果集会打穿闭环——此约束是 M4 现场定案的产品级红线。
+- **快照三件套（热编辑安全性的来源）**：① 任务创建时把工作流定义快照进 `tasks.workflow`（存量任务自描述，ParseWorkflow 只在快照缺失时回退注册表）；② 数据集创建时记 `schema_version` 钉版；③ agent 会话检查点带 `port.Context.TaskSchema`（Resume 重放按执行时 schema 组装 WriteSpec）。因此受控编辑只影响新任务；工作流兼容引擎也据此全 ✅/⚠️ 无 ❌ 硬拦截。
+- **StepKind 封闭集（决策二红线）**：parse/human/analyze/dataset 四种，执行器永远是有类型的 Go 代码。向导只能编排既有 kind（`logic.ValidateWorkflowShape` 白名单拒绝未知值）。「新增任务类型」的正确路径 = 向导注册定义 + 复用/新增 kind 执行器；禁止 `if type ==` 分叉。
+- **兼容规则引擎（check dry-run 与保存共用的唯一判定口径）**：
+  schema 规则表——新增可选字段 ✅ / 新增必填 ⚠️（仅新写入生效）/ 删除字段·改类型·InKey 变更 · 枚举收窄 · 给自由字段加枚举 ❌ / 枚举扩值 ✅ / Label/Prompt 文案 ✅ / InVector 变更 ⚠️ 需重嵌（`FingerprintOf` 已纳入向量相关 schema 摘要盐——InKey/InVector/截断变更不再跳过重嵌；`logic.VectorBodyLimit=500` 写入/查询/指纹三方共用）；enum→string 特判按放宽处理。
+  工作流规则表——按**步骤名**对齐（位置增删不产生连锁误报）：step_added/order_changed ✅；step_removed/kind_changed/gate_removed（移除人工门）/output_missing/multi_analyze ⚠️。
+  保存流程恒为：形状校验 → 兼容判定 → ❌ 拦截（409 failWith 携判定明细）→ ⚠️ 必须显式 `confirm_risky` → 版本递增落库 → 审计必记 → Reload。
+- **安全护栏四道（写路径）**：① 提示词注入面收口——字段 key 与任务/数据集类型标识过 `logic.IsValidIdentifier`（snake_case 白名单；key 会拼进过滤 SQL `fieldCondSQL`，形状层是唯一防线）、Role/Prompt 有长度上限（MaxRoleLen 等）、文本含 `{{` 序列告警不拦截；② 写守卫见上；③ 审计（metadata_audit）失败只记日志不回滚业务写；④ 回退通道——Reset 追加 enabled=false 行并存回退目标载荷（版本历史保留），自定义类型无内置基线只能停用不能 Reset。
+- **回退双轨制（M4 起「版本行只增不改」有官方例外）**：内容变更（update/reset）恒追加新版本行；启停（SetWorkflowStatus）走 `repo.UpdateLatestEnabled` 就地翻转最新锚行标志——发布翻转不是内容变更，无需新版本。
+- **导出导入（DX 语义）**：effective 视图导出为 **JSON**（此前文档曾误写 YAML，以本条为准）；导入逐项复用 Update* 同一守卫，单项失败不中断；三件齐备的全新类型按向导注册为**草稿**（不直接生效，人工验证后启用）。
+- **新增 kind 的修改点清单（无编译手段防漏，四处手工同步）**：① Reload 的 switch（`metadata_edit.go`）；② History kind 白名单；③ 前端 HistoryDrawer 标题映射；④ Catalog/导出结构。现支持 dataset_schema / analyze_profile / workflow 三种。
+- **幽灵场景**：seed/custom 身份是启动时的动态判定——若未来给某个曾是向导注册的类型补了 seed（代码演进撞名），身份自动翻转：版本基线切换成 seed.Version+rowVersion、Reset 按钮出现、锚行语义从发布开关变成覆盖开关。给既有类型写 seed 前先查库同名行。
+- **测试接入双轨**：单元 golden 用 `extraTaskTypes` 代码缝注册玩具类型（生产恒空）；真机/E2E 用向导 API 注册。
 
 ## 4. 执行所必须的上下文
 
@@ -325,12 +362,15 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
 | `/tasks/:id/events` | SSE | **快照回放 + 实时**：snapshot（含 dialog pending 恢复）/ task / step / items / progress / token{delta,phase}（150ms 合并帧）/ tool_trace{phase,call_id,name,args?,details?,is_error?} / dialog{phase:ask\|close, call_id, question?, options?, reason?} / error + 5s ping 心跳；断开只退订，任务照跑 |
 | `/datasets` `/datasets/:id` | JSON | 数据集浏览（结果集 + 条目明细 + 来源任务追溯） |
 | `/match/duplicates` | JSON | {items:[字段袋]} → {results:[{index,match|null}]}（语料 = 需求数据集，标题按 schema 标题字段口径） |
-| `/metadata` `/metadata/task-types/:type` | JSON | 元数据目录：总览（任务类型列表 + source）/ 聚合视图（workflow + schema + profile + 工具清单）——前端「元数据」tab 数据源 |
+| `/metadata` `/metadata/task-types/:type` | JSON | 元数据目录：总览（任务类型 + 向导草稿组 + source/custom/draft）/ 聚合视图（`?include_draft=true` 可读草稿）——前端「元数据」tab 数据源 |
 | `/metadata/render/preview` | JSON | {task_type, special_requirements?} → 三段提示词实时渲染（与运行时装配同一函数） |
 | `/metadata/schemas/:type/check` | JSON | 兼容性 dry-run {schema} → 判定明细 + 存量数据集影响面（不落库） |
 | `/metadata/schemas/:type` `PUT`/`DELETE` | JSON | schema 受控保存 {schema, confirm_risky?, summary?}（❌ 拦截/⚠️ 需确认，409 携带判定明细）/ 回退到内置（版本历史保留） |
 | `/metadata/profiles/:type` `PUT`/`DELETE` | JSON | 指令头/示例编辑 {role, example, summary?} / 回退到内置 |
-| `/metadata/history/:kind/:key` | JSON | 版本历史（新→旧，含载荷原文；kind = dataset_schema\|analyze_profile） |
+| `/metadata/workflows/:type/check` `POST` · `/workflows/:type` `PUT`/`DELETE` | JSON | 工作流 dry-run / 受控保存（⚠️ confirm_risky，409 携带判定）/ 回退内置——热编辑仅影响新任务 |
+| `/metadata/workflows/:type/status` `PUT` | JSON | 启用/停用向导注册的任务类型 {enabled}（就地翻转锚行 enabled；内置类型拒绝） |
+| `/metadata/task-types` `POST` | JSON | 新任务类型向导注册：{type, dataset_type, workflow, schema, role, example?, summary?} 整体校验 → 三行落库（锚行 disabled=草稿）+ 即时提示词预览；重提同名草稿版本续链 |
+| `/metadata/history/:kind/:key` | JSON | 版本历史（新→旧，含载荷原文；kind = dataset_schema\|analyze_profile\|workflow） |
 | `/metadata/export` `/metadata/import` | JSON | effective 视图导出 / 导入（逐项同一守卫，单项失败不中断） |
 | `/overview` | JSON | 概览（datasets/datasetItems/tasks + recentTasks/recentDatasets） |
 | `/settings` `/settings/test-llm` | JSON | 脱敏视图/连通测试 |
@@ -414,6 +454,9 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 与过程工�
 - pi 的并行工具执行与 beforeToolCall 审批钩子暂不移植，需要时按 pi 源码 `agent-loop.ts` 对应段落补（见 §4.6 不移植清单）
 
 ### 5.3 技术债清单（如实）
+
+> 元数据模块专项债（提示词措辞模板化 B4 / 查重策略泛化 B3 / 启用在途检查等）已单独立账：[DEBT.md](./DEBT.md)——本表只列平台级通用债，两处修一销一。
+
 
 | 项 | 影响 | 处置建议 |
 |----|------|---------|

@@ -4,7 +4,7 @@
 > 技术栈：React 18 + Ant Design 5（前端）/ Go + Gin + GORM（后端）/ PostgreSQL 16 + pgvector（DB）。
 > 发布形态：`go:embed` 单二进制，配置全部本地 YAML，代码与产物零硬编码。
 
-📄 **文档**：[产品总纲](./docs/PRODUCT.md)（定位/功能全景/路线图） · [交接文档](./docs/HANDOVER.md)（架构/代码地图/流程/踩坑/第二波指南） · [元数据模块设计](./docs/METADATA.md) + [分波执行计划](./docs/METADATA_PLAN.md)（定义层统一管理，M1~M4）
+📄 **文档**：[产品总纲](./docs/PRODUCT.md)（定位/功能全景/路线图） · [交接文档](./docs/HANDOVER.md)（架构/代码地图/流程/踩坑/第二波指南；元数据系统不变量并入其中 §3.4） · [技术债台账](./docs/DEBT.md)
 
 ## 架构（四层，依赖只允许向内）
 
@@ -82,7 +82,9 @@ make build        # → bin/reqflow
 | POST | `/api/metadata/render/preview` | 提示词预览：`{task_type, special_requirements?}` → 三段提示词实时渲染（与运行时装配同一函数） |
 | POST | `/api/metadata/schemas/:type/check` | schema 兼容性 dry-run：规则表判定（✅/⚠️/❌）+ 存量数据集影响面 |
 | PUT/DELETE | `/api/metadata/schemas/:type` · `/api/metadata/profiles/:type` | 受控编辑（❌ 拦截 / ⚠️ confirm_risky + 版本递增 + 审计）/ 回退内置 |
-| GET/POST | `/api/metadata/history/:kind/:key` · `/api/metadata/export` · `/api/metadata/import` | 版本历史（含 diff 载荷）/ effective 视图导出 / 导入（同一守卫） |
+| PUT | `/api/metadata/workflows/:type`（`check` `POST` / `DELETE` 回退） | 工作流受控编辑（M4）：⚠️ 确认流 + 审计；热编辑仅影响新任务（存量按 tasks.workflow 快照） |
+| POST | `/api/metadata/task-types` | 新任务类型向导：编排既有 kind + 字段合同 + 指令头 → 产物 disabled 入库（草稿，`status` 端点人工启用） |
+| GET/POST | `/api/metadata/history/:kind/:key` · `/api/metadata/export` · `/api/metadata/import` | 版本历史（kind 含 workflow）/ effective 视图导出 / 导入（新类型按向导注册为草稿） |
 | POST | `/api/match/duplicates` | 同项目查重（标题精确 / 语义阈值） |
 | GET | `/api/datasets` `/api/datasets/:id` | 数据集与条目浏览 |
 | GET | `/api/datasets/schemas` | 数据集 schema 目录（字段合同：表格/筛选/向量组装驱动） |

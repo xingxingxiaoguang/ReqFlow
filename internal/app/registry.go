@@ -1,6 +1,7 @@
 package app
 
 import (
+	"sort"
 	"sync"
 
 	"reqflow/internal/domain/model"
@@ -44,9 +45,20 @@ func taskTypeDefinitions() []TaskTypeDefinition {
 	return append(all, extraTaskTypes...)
 }
 
+// seededTaskTypeOf 判断是否为代码 seed 注册的任务类型（向导注册的类型不算）。
+func seededTaskTypeOf(typ string) (TaskTypeDefinition, bool) {
+	for _, d := range taskTypeDefinitions() {
+		if d.Type == typ {
+			return d, true
+		}
+	}
+	return TaskTypeDefinition{}, false
+}
+
 // TaskTypes 全部已注册任务类型的聚合定义（effective；元数据目录/聚合 API 用）。
+// seed 定义与向导扩展类型统一过 override 合并层。
 func TaskTypes() []TaskTypeDefinition {
-	base := taskTypeDefinitions()
+	base := append(taskTypeDefinitions(), currentExtensionTypes()...)
 	for i := range base {
 		base[i] = applyMetadataOverrides(base[i])
 	}
@@ -55,7 +67,10 @@ func TaskTypes() []TaskTypeDefinition {
 
 // TaskTypeOf 按任务类型取聚合定义（effective）；未注册返回 false。
 func TaskTypeOf(typ string) (TaskTypeDefinition, bool) {
-	for _, d := range taskTypeDefinitions() {
+	if d, ok := seededTaskTypeOf(typ); ok {
+		return applyMetadataOverrides(d), true
+	}
+	for _, d := range currentExtensionTypes() {
 		if d.Type == typ {
 			return applyMetadataOverrides(d), true
 		}
@@ -65,7 +80,7 @@ func TaskTypeOf(typ string) (TaskTypeDefinition, bool) {
 
 /* ---- override 合并层（seed ∪ override = effective）---- */
 
-// profileOverride 装配描述的 DB 覆盖（指令头/示例；写入绑定与工作流是代码资产，不覆盖）。
+// profileOverride 装配描述的 DB 覆盖（指令头/示例；写入绑定是代码资产，不覆盖）。
 type profileOverride struct {
 	Role    string
 	Example string
@@ -76,14 +91,20 @@ type profileOverride struct {
 // map 只整体替换、绝不原地修改——读侧持旧引用即持旧快照，无竞态。
 var metadataOverrides struct {
 	sync.RWMutex
-	schemas  map[string]model.DatasetSchema // key = 数据集类型
-	profiles map[string]profileOverride     // key = 任务类型
+	schemas   map[string]model.DatasetSchema // key = 数据集类型
+	profiles  map[string]profileOverride     // key = 任务类型
+	workflows map[string]model.Workflow      // key = 任务类型（M4 工作流定义外置）
+	extDefs   []TaskTypeDefinition           // 向导注册的扩展类型（无 seed 基线，锚行 enabled 才装载）
 }
 
 // setMetadataOverrides 整体替换 override 视图（MetadataService.Reload 的落点）。
-func setMetadataOverrides(schemas map[string]model.DatasetSchema, profiles map[string]profileOverride) {
+func setMetadataOverrides(schemas map[string]model.DatasetSchema, profiles map[string]profileOverride,
+	workflows map[string]model.Workflow, extDefs []TaskTypeDefinition) {
 	metadataOverrides.Lock()
-	metadataOverrides.schemas, metadataOverrides.profiles = schemas, profiles
+	metadataOverrides.schemas = schemas
+	metadataOverrides.profiles = profiles
+	metadataOverrides.workflows = workflows
+	metadataOverrides.extDefs = extDefs
 	metadataOverrides.Unlock()
 }
 
@@ -94,14 +115,34 @@ func currentMetadataOverrides() (map[string]model.DatasetSchema, map[string]prof
 	return metadataOverrides.schemas, metadataOverrides.profiles
 }
 
+// currentWorkflows / currentExtensionTypes 读侧快照入口。
+func currentWorkflows() map[string]model.Workflow {
+	metadataOverrides.RLock()
+	defer metadataOverrides.RUnlock()
+	return metadataOverrides.workflows
+}
+
+func currentExtensionTypes() []TaskTypeDefinition {
+	metadataOverrides.RLock()
+	defer metadataOverrides.RUnlock()
+	return metadataOverrides.extDefs
+}
+
 // applyMetadataOverrides seed 定义叠加 DB 覆盖：schema 覆盖按数据集类型命中时，
-// 聚合定义的 schema 构面与 profile 的 schema/写入绑定同步替换（同一事实源）。
+// 聚合定义的 schema 构面与 profile 的 schema/写入绑定同步替换（同一事实源）；
+// 工作流/装配描述按任务类型命中替换。向导扩展类型同样走本函数——其构件本就来自
+// 同一组 override 行，重复应用结果幂等。
 func applyMetadataOverrides(d TaskTypeDefinition) TaskTypeDefinition {
 	schemas, profiles := currentMetadataOverrides()
+	workflows := currentWorkflows()
 	if sc, ok := schemas[d.DatasetType]; ok {
 		d.Schema = func() model.DatasetSchema { return sc }
 		d.Profile.Schema = d.Schema
 		d.Profile.Write.Schema = sc
+	}
+	if wf, ok := workflows[d.Type]; ok {
+		wf.Type = d.Type // Type 由注册表持有，payload 一律以路径为准
+		d.Workflow = wf
 	}
 	if p, ok := profiles[d.Type]; ok {
 		d.Profile.Role, d.Profile.Example = p.Role, p.Example
@@ -109,7 +150,12 @@ func applyMetadataOverrides(d TaskTypeDefinition) TaskTypeDefinition {
 	return d
 }
 
-// effectiveSchemaOf 按数据集类型取 effective schema（override → 域层 seed → 注册表扩展类型）。
+// allDefinitionsOf seed + 向导扩展类型的全量聚合定义（查找兜底遍历用）。
+func allDefinitionsOf() []TaskTypeDefinition {
+	return append(taskTypeDefinitions(), currentExtensionTypes()...)
+}
+
+// effectiveSchemaOf 按数据集类型取 effective schema（override → 域层 seed → 注册表定义）。
 // 查询/查重等按数据集类型工作的读侧统一走这里（M3 前直连 model.SchemaOf）。
 func effectiveSchemaOf(datasetType string) (model.DatasetSchema, bool) {
 	schemas, _ := currentMetadataOverrides()
@@ -119,7 +165,7 @@ func effectiveSchemaOf(datasetType string) (model.DatasetSchema, bool) {
 	if sc, ok := model.SchemaOf(datasetType); ok {
 		return sc, true
 	}
-	for _, d := range taskTypeDefinitions() {
+	for _, d := range allDefinitionsOf() {
 		if d.DatasetType == datasetType && d.Schema != nil {
 			return d.Schema(), true
 		}
@@ -127,7 +173,7 @@ func effectiveSchemaOf(datasetType string) (model.DatasetSchema, bool) {
 	return model.DatasetSchema{}, false
 }
 
-// schemaOverridden / profileOverridden source 判定（元数据目录徽标）。
+// schemaOverridden / profileOverridden / workflowOverridden source 判定（元数据目录徽标）。
 func schemaOverridden(datasetType string) bool {
 	schemas, _ := currentMetadataOverrides()
 	_, ok := schemas[datasetType]
@@ -138,6 +184,18 @@ func profileOverridden(taskType string) bool {
 	_, profiles := currentMetadataOverrides()
 	_, ok := profiles[taskType]
 	return ok
+}
+
+func workflowOverridden(taskType string) bool {
+	workflows := currentWorkflows()
+	_, ok := workflows[taskType]
+	return ok
+}
+
+// customTaskType 是否为向导注册的扩展类型（无内置基线：不支持「回退内置」，可停用）。
+func customTaskType(taskType string) bool {
+	_, seeded := seededTaskTypeOf(taskType)
+	return !seeded
 }
 
 // seedSchemaOf 按数据集类型取 seed schema（不含 override；版本基线与回退载荷用）。
@@ -151,4 +209,34 @@ func seedSchemaOf(datasetType string) (model.DatasetSchema, bool) {
 		}
 	}
 	return model.DatasetSchema{}, false
+}
+
+// effectiveSchemas 全部 effective schema 目录（seed ∪ 向导扩展定义 ∪ 覆盖层，
+// 按 Type 去重——覆盖优先，与 effectiveSchemaOf 同优先级）。
+// /datasets/schemas 端点与前端表格筛选用（M3 前是纯 seed 的 model.Schemas()）。
+func effectiveSchemas() []model.DatasetSchema {
+	out := map[string]model.DatasetSchema{}
+	for _, sc := range model.Schemas() {
+		out[sc.Type] = sc
+	}
+	for _, d := range allDefinitionsOf() {
+		if d.Schema != nil {
+			sc := d.Schema()
+			out[sc.Type] = sc
+		}
+	}
+	schemas, _ := currentMetadataOverrides()
+	for t, sc := range schemas {
+		out[t] = sc
+	}
+	types := make([]string, 0, len(out))
+	for t := range out {
+		types = append(types, t)
+	}
+	sort.Strings(types)
+	res := make([]model.DatasetSchema, 0, len(out))
+	for _, t := range types {
+		res = append(res, out[t])
+	}
+	return res
 }

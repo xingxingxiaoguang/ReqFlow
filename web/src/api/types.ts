@@ -31,10 +31,12 @@ export interface DuplicateResult {
 
 /** 任务状态机：pending → running → awaiting(人工门) | paused → running → succeeded | failed */
 export type TaskStatus = 'pending' | 'running' | 'awaiting' | 'paused' | 'succeeded' | 'failed'
-export type TaskType = 'requirement_import'
+/** 任务类型：M4 起向导可注册任意标识，字面量仅作既有类型的提示 */
+export type TaskType = string
+export type BuiltinTaskType = 'requirement_import'
 
-/** 数据集类型（任务产出的结果集） */
-export type DatasetType = 'requirement'
+/** 数据集类型（任务产出的结果集）——M4 起向导扩展类型动态增加 */
+export type DatasetType = string
 
 /** 数据集写入模式（任务 → 数据集的标准化接缝） */
 export type WriteMode = 'create' | 'merge' | 'upsert' | 'replace'
@@ -204,10 +206,15 @@ export interface TaskTypeSummary {
   dataset_type?: string
   schema_label?: string
   source: MetadataSource
+  /** M4：custom=向导注册类型（无内置基线）；draft=草稿（未启用，运行时不可见） */
+  custom?: boolean
+  draft?: boolean
 }
 
 export interface MetadataCatalog {
   task_types: TaskTypeSummary[]
+  /** 向导草稿组（仅供验证/启用入口，不进生产面） */
+  draft_types?: TaskTypeSummary[]
 }
 
 export interface MetadataWriteBinding {
@@ -230,7 +237,8 @@ export interface MetadataToolView {
 }
 
 /** 任务类型聚合视图（元数据页详情：workflow + schema + profile + 工具清单）
- *  M3：schema_source/profile_source 为分构件来源（编辑器徽标与回退按钮判定） */
+ *  M3：分构件 source 为编辑器徽标与回退按钮判定
+ *  M4：custom/draft 标注向导注册类型与草稿态 */
 export interface TaskTypeView {
   type: string
   name: string
@@ -238,6 +246,9 @@ export interface TaskTypeView {
   source: MetadataSource
   schema_source: MetadataSource
   profile_source: MetadataSource
+  workflow_source?: MetadataSource
+  custom?: boolean
+  draft?: boolean
   dataset_type: string
   workflow: Workflow
   schema: DatasetSchema
@@ -451,4 +462,38 @@ export interface MetadataImportResult {
     profile?: ProfileUpdateResult
     error?: string
   }[]
+}
+
+/* ---- M4：工作流定义外置 + 新任务类型向导 ---- */
+
+/** 工作流编辑/启用停用的统一返回（⚠️ 需 confirm_risky；工作流借快照只影响新任务，无 ❌ 硬拦截） */
+export interface WorkflowUpdateResult {
+  task_type: string
+  version: number
+  source: MetadataSource
+  report: CompatReport
+  saved: boolean
+  block_reason?: string
+}
+
+/** 向导注册结果（产物恒为草稿，启用走 status 端点） */
+export interface WizardResult {
+  type: string
+  dataset_type: string
+  draft: boolean
+  versions: { schema?: number; profile?: number; workflow?: number }
+  report: CompatReport
+  preview?: PromptPreview
+  saved: boolean
+  summary: string
+}
+
+export interface WizardInput {
+  type: string
+  dataset_type: string
+  workflow: Workflow
+  schema: DatasetSchema
+  role: string
+  example?: string
+  summary?: string
 }

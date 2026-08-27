@@ -1,14 +1,17 @@
 import { useEffect, useState } from 'react'
 import {
-  App, Button, Card, Col, Descriptions, Empty, Input, List, Row, Space, Spin,
+  Alert, App, Button, Card, Col, Descriptions, Empty, Input, List, Row, Space, Spin,
   Table, Tabs, Tag, Timeline, Typography,
 } from 'antd'
 import type { CSSProperties } from 'react'
-import { DownloadOutlined, PlayCircleOutlined, ReloadOutlined } from '@ant-design/icons'
+import {
+  DownloadOutlined, PlayCircleOutlined, PlusOutlined, ReloadOutlined, ThunderboltOutlined,
+} from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useNavigate } from 'react-router-dom'
 import { metadataApi } from '../api/metadata'
 import type { PromptPreview, StepKind, TaskTypeSummary, TaskTypeView } from '../api/types'
-import { ProfileEditor, SchemaEditor } from './MetadataEditors'
+import { ProfileEditor, SchemaEditor, WorkflowEditor } from './MetadataEditors'
 
 const { Text, Paragraph } = Typography
 
@@ -38,10 +41,12 @@ function PromptBlock({ title, text }: { title: string; text: string }) {
 }
 
 /** 元数据页：任务类型聚合定义的统一目录——看懂一个任务类型从「翻四个文件」变「开一个页面」；
- *  M3 起字段合同/装配描述可受控编辑（保存前自动兼容检查，❌ 拦截 / ⚠️ 需确认） */
+ *  M3 起字段合同/装配描述可受控编辑；M4 起工作流定义外置（受控编辑）+ 新任务类型向导。
+ *  写路径保存前自动兼容检查（❌ 拦截 / ⚠️ 需确认）；向导产物先入库为草稿、人工启用。 */
 export default function Metadata() {
   const { message } = App.useApp()
   const queryClient = useQueryClient()
+  const navigate = useNavigate()
   const { data: catalog, isLoading } = useQuery({
     queryKey: ['metadata-catalog'],
     queryFn: metadataApi.catalog,
@@ -52,10 +57,12 @@ export default function Metadata() {
     if (!selected && catalog?.task_types.length) setSelected(catalog.task_types[0].type)
   }, [catalog, selected])
 
+  // 统一走 include_draft：生效类型忽略该参数，未启用向导类型回草稿组合视图
   const { data: view, isFetching: viewLoading } = useQuery({
     queryKey: ['metadata-task-type', selected],
-    queryFn: () => metadataApi.taskType(selected!),
+    queryFn: () => metadataApi.taskTypeWithDraft(selected!),
     enabled: !!selected,
+    retry: false,
   })
 
   /* 提示词预览：按需渲染（special 变化后手动刷新；切换任务类型自动重渲） */
@@ -66,8 +73,9 @@ export default function Metadata() {
     setPreviewLoading(true)
     try {
       setPreview(await metadataApi.promptPreview({ task_type: taskType, special_requirements: special }))
-    } catch (e) {
-      message.error((e as Error).message)
+    } catch {
+      // 草稿态没有运行时预览端点（向导提交时已给即时预览），静默置空
+      setPreview(null)
     } finally {
       setPreviewLoading(false)
     }
@@ -77,11 +85,22 @@ export default function Metadata() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selected])
 
-  /* 受控编辑保存/回退后：刷新聚合视图与目录（effective 即时生效），预览重渲 */
+  /* 受控编辑保存/回退/启停后：刷新聚合视图与目录（effective 即时生效），预览重渲 */
   const handleSaved = () => {
     void queryClient.invalidateQueries({ queryKey: ['metadata-task-type', selected] })
     void queryClient.invalidateQueries({ queryKey: ['metadata-catalog'] })
     if (selected) void renderPreview(selected)
+  }
+
+  /* 启用草稿（人工验证后放行进入运行时） */
+  const doEnableDraft = async (taskType: string) => {
+    try {
+      await metadataApi.setWorkflowStatus(taskType, true)
+      message.success(`任务类型 ${taskType} 已启用：创建入口与分析链路即刻可用`)
+      handleSaved()
+    } catch (e) {
+      message.error((e as Error).message)
+    }
   }
 
   /* 导出 effective 视图（JSON 文件留档 / 跨环境分发人工导入） */
@@ -101,11 +120,11 @@ export default function Metadata() {
   }
 
   if (isLoading) return <Card loading />
-  if (!catalog?.task_types.length) {
+  if (!catalog?.task_types.length && !catalog?.draft_types?.length) {
     return <Card><Empty description="注册表为空（无已注册任务类型）" /></Card>
   }
 
-  const renderSummary = (s: TaskTypeSummary) => (
+  const renderSummary = (s: TaskTypeSummary, isDraft = false) => (
     <List.Item
       style={{ cursor: 'pointer', padding: '10px 12px', borderRadius: 8,
         background: s.type === selected ? '#eef2ff' : undefined }}
@@ -114,6 +133,8 @@ export default function Metadata() {
       <List.Item.Meta
         title={<Space>
           <Text strong={s.type === selected}>{s.name}</Text>
+          {isDraft || s.draft ? <Tag style={{ marginInlineEnd: 0 }} color="gold">草稿</Tag> :
+            s.custom ? <Tag style={{ marginInlineEnd: 0 }} color="geekblue">向导</Tag> : null}
           <Tag style={{ marginInlineEnd: 0 }}>{s.source === 'builtin' ? '内置' : '覆盖'}</Tag>
         </Space>}
         description={<Text type="secondary" style={{ fontSize: 12 }}>
@@ -129,25 +150,41 @@ export default function Metadata() {
         <Card
           title={<Text strong>任务类型</Text>}
           styles={{ body: { padding: 8 } }}
-          extra={<Button size="small" icon={<DownloadOutlined />} onClick={doExport}>导出</Button>}
+          extra={
+            <Space size={4}>
+              <Button size="small" icon={<PlusOutlined />} onClick={() => navigate('/metadata/wizard')}>
+                新建类型
+              </Button>
+              <Button size="small" icon={<DownloadOutlined />} onClick={doExport}>导出</Button>
+            </Space>
+          }
         >
-          <List dataSource={catalog.task_types} renderItem={renderSummary} split={false} />
+          <List dataSource={catalog.task_types} renderItem={(s) => renderSummary(s)} split={false} />
+          {!!catalog.draft_types?.length && (
+            <>
+              <Typography.Title level={5} style={{ padding: '8px 12px 0', marginBottom: 0 }}>
+                待启用草稿
+              </Typography.Title>
+              <List dataSource={catalog.draft_types} renderItem={(s) => renderSummary(s, true)} split={false} />
+            </>
+          )}
         </Card>
       </Col>
       <Col span={18}>
         <Card loading={viewLoading && !view}>
           {!view ? <Spin /> : <TaskTypeDetail view={view} preview={preview} previewLoading={previewLoading}
             special={special} onSpecialChange={setSpecial} onRender={() => selected && void renderPreview(selected)}
-            onSaved={handleSaved} />}
+            onSaved={handleSaved}
+            onEnableDraft={() => selected && void doEnableDraft(selected)} />}
         </Card>
       </Col>
     </Row>
   )
 }
 
-/** 聚合详情：概览（步骤链）/ 字段合同（受控编辑）/ 装配描述（受控编辑）/ 提示词预览 */
+/** 聚合详情：概览（步骤链）/ 工作流（受控编辑）/ 字段合同 / 装配描述 / 提示词预览 */
 function TaskTypeDetail({
-  view, preview, previewLoading, special, onSpecialChange, onRender, onSaved,
+  view, preview, previewLoading, special, onSpecialChange, onRender, onSaved, onEnableDraft,
 }: {
   view: TaskTypeView
   preview: PromptPreview | null
@@ -156,14 +193,24 @@ function TaskTypeDetail({
   onSpecialChange: (v: string) => void
   onRender: () => void
   onSaved: () => void
+  onEnableDraft: () => void
 }) {
   return (
     <>
+      {view.draft && (
+        <Alert type="warning" showIcon style={{ marginBottom: 16 }}
+          message={`「${view.name}」当前为向导草稿——对运行时不可见，验证无误后点击右下角启用`}
+          action={
+            <Button size="small" type="primary" icon={<ThunderboltOutlined />} onClick={onEnableDraft}>
+              启用此任务类型
+            </Button>
+          }
+          description="草稿的提示词预览在向导提交结果中给出；此处字段合同/装配描述内容即为将生效的定义。" />
+      )}
       <Paragraph type="secondary" style={{ marginBottom: 16 }}>
         <Text strong>{view.name}</Text>（<Text code>{view.type}</Text>）· {view.desc}
       </Paragraph>
       <Tabs
-        defaultActiveKey="overview"
         items={[
           {
             key: 'overview',
@@ -172,9 +219,13 @@ function TaskTypeDetail({
               <>
                 <Descriptions bordered size="small" column={2}>
                   <Descriptions.Item label="来源">
-                    <Tag color={view.source === 'builtin' ? 'default' : 'purple'}>
-                      {view.source === 'builtin' ? '内置（随版本发布）' : '数据库覆盖'}
-                    </Tag>
+                    <Space>
+                      <Tag color={view.source === 'builtin' ? 'default' : 'purple'}>
+                        {view.source === 'builtin' ? '内置（随版本发布）' : view.draft ? '草稿定义' : '数据库覆盖'}
+                      </Tag>
+                      {view.custom && <Tag color="geekblue">向导注册（无内置基线）</Tag>}
+                      {view.draft && <Tag color="gold">草稿未启用</Tag>}
+                    </Space>
                   </Descriptions.Item>
                   <Descriptions.Item label="产出数据集类型"><Text code>{view.dataset_type}</Text></Descriptions.Item>
                   <Descriptions.Item label="字段合同">
@@ -202,6 +253,11 @@ function TaskTypeDetail({
                 />
               </>
             ),
+          },
+          {
+            key: 'workflow',
+            label: '工作流',
+            children: <WorkflowEditor view={view} onSaved={onSaved} />,
           },
           {
             key: 'schema',
@@ -252,7 +308,7 @@ function TaskTypeDetail({
                     渲染预览
                   </Button>
                 </div>
-                {preview && (
+                {preview ? (
                   <Tabs
                     items={[
                       { key: 'system', label: 'agent 系统提示词', children: <PromptBlock title="SystemPrompt（agent 模式）" text={preview.agent_system_prompt} /> },
@@ -260,7 +316,9 @@ function TaskTypeDetail({
                       { key: 'classic', label: '单发 prompt', children: <PromptBlock title="单发直调完整 prompt（默认模式 / agent 降级目标）" text={preview.classic_prompt} /> },
                     ]}
                   />
-                )}
+                ) : view.draft ? (
+                  <Empty description="草稿态无运行时预览——向导提交结果中已附即时预览，或启用后回到本页渲染" />
+                ) : <Spin />}
               </>
             ),
           },

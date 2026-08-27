@@ -103,8 +103,9 @@ func (m *TaskManager) Workflows() []model.Workflow {
 }
 
 // Schemas 数据集 schema 目录（前端表格/筛选与任务输入选择用，httpgin 经此暴露）。
+// M4 起为 effective 目录：seed ∪ 向导扩展 ∪ 受控覆盖（registry.effectiveSchemas）。
 func (m *TaskManager) Schemas() []model.DatasetSchema {
-	return model.Schemas()
+	return effectiveSchemas()
 }
 
 // ListDatasets 数据集列表（结果集浏览）。

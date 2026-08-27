@@ -7,6 +7,7 @@ import TaskDetail from './pages/tasks/TaskDetail'
 import Bugs from './pages/Bugs'
 import Datasets from './pages/Datasets'
 import Metadata from './pages/Metadata'
+import MetadataWizard from './pages/MetadataWizard'
 import Archives from './pages/Archives'
 import Settings from './pages/Settings'
 
@@ -24,6 +25,7 @@ export const router = createBrowserRouter([
       { path: 'bugs', element: <Bugs /> },
       { path: 'datasets', element: <Datasets /> },
       { path: 'metadata', element: <Metadata /> },
+      { path: 'metadata/wizard', element: <MetadataWizard /> },
       { path: 'archives', element: <Archives /> },
       { path: 'settings', element: <Settings /> },
     ],

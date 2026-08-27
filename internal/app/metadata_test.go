@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"strings"
 	"testing"
 )
@@ -37,7 +38,7 @@ func TestPromptPreviewRenders(t *testing.T) {
 // 预览的空 WriteSpec 兜底路径：零值运行依赖构造工具集按 requirement 默认绑定（钉住 orDefault 行为）。
 func TestPromptPreviewCatalog(t *testing.T) {
 	svc := NewMetadataService(nil, nil)
-	catalog := svc.Catalog()
+	catalog := svc.Catalog(context.Background())
 	if len(catalog.TaskTypes) == 0 {
 		t.Fatal("目录总览为空")
 	}

@@ -68,6 +68,11 @@ func New(svc Services) *gin.Engine {
 		api.DELETE("/metadata/schemas/:type", h.metadataSchemaReset)       // 回退到内置
 		api.PUT("/metadata/profiles/:type", h.metadataProfileUpdate)       // 指令头/示例编辑
 		api.DELETE("/metadata/profiles/:type", h.metadataProfileReset)     // 回退到内置
+		api.POST("/metadata/workflows/:type/check", h.metadataWorkflowCheck)   // 工作流 dry-run（M4）
+		api.PUT("/metadata/workflows/:type", h.metadataWorkflowUpdate)         // 工作流受控保存（M4）
+		api.DELETE("/metadata/workflows/:type", h.metadataWorkflowReset)       // 回退到内置工作流（M4）
+		api.PUT("/metadata/workflows/:type/status", h.metadataWorkflowStatus)  // 启用/停用向导类型（M4）
+		api.POST("/metadata/task-types", h.metadataTaskTypeRegister)           // 新任务类型向导注册（M4）
 		api.GET("/metadata/history/:kind/:key", h.metadataHistory)         // 版本历史
 		api.GET("/metadata/export", h.metadataExport)                     // effective 视图导出
 		api.POST("/metadata/import", h.metadataImport)                    // 导入（同一守卫）

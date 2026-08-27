@@ -126,3 +126,90 @@ func (h *handlers) metadataImport(c *gin.Context) {
 	}
 	ok(c, res)
 }
+
+/* ---- 工作流受控编辑（M4：定义外置） ---- */
+
+// metadataWorkflowCheck POST /api/metadata/workflows/:type/check {workflow}
+// → 兼容性 dry-run（形状校验 + 与 effective 定义比对；不落库）。
+func (h *handlers) metadataWorkflowCheck(c *gin.Context) {
+	var req app.WorkflowUpdateInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, "参数不完整（workflow 必填）")
+		return
+	}
+	req.TaskType = c.Param("type")
+	res, err := h.svc.Metadata.CheckWorkflow(req)
+	if err != nil {
+		fail(c, 400, err.Error())
+		return
+	}
+	ok(c, res)
+}
+
+// metadataWorkflowUpdate PUT /api/metadata/workflows/:type {workflow, confirm_risky?, summary?}
+// → 受控保存（⚠️ 需确认；版本递增 + 审计 + effective 刷新；存量任务按快照不受影响）。
+func (h *handlers) metadataWorkflowUpdate(c *gin.Context) {
+	var req app.WorkflowUpdateInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, "参数不完整（workflow 必填）")
+		return
+	}
+	req.TaskType = c.Param("type")
+	res, err := h.svc.Metadata.UpdateWorkflow(c.Request.Context(), req)
+	switch {
+	case err != nil && res != nil: // 守卫拦截：携带判定明细
+		failWith(c, 409, err.Error(), gin.H{"data": res})
+	case err != nil:
+		fail(c, 404, err.Error())
+	default:
+		ok(c, res)
+	}
+}
+
+// metadataWorkflowReset DELETE /api/metadata/workflows/:type → 回退到内置工作流。
+func (h *handlers) metadataWorkflowReset(c *gin.Context) {
+	res, err := h.svc.Metadata.ResetWorkflow(c.Request.Context(), c.Param("type"))
+	if err != nil {
+		fail(c, 404, err.Error())
+		return
+	}
+	ok(c, res)
+}
+
+// metadataWorkflowStatus PUT /api/metadata/workflows/:type/status {enabled}
+// → 启用/停用向导注册的任务类型（就地翻转锚行发布标志）。
+func (h *handlers) metadataWorkflowStatus(c *gin.Context) {
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, "参数不完整（enabled 必填）")
+		return
+	}
+	res, err := h.svc.Metadata.SetWorkflowStatus(c.Request.Context(), c.Param("type"), req.Enabled)
+	if err != nil {
+		fail(c, 404, err.Error())
+		return
+	}
+	ok(c, res)
+}
+
+/* ---- 新任务类型向导（M4） ---- */
+
+// metadataTaskTypeRegister POST /api/metadata/task-types {type, dataset_type, workflow,
+// schema, role, example?, summary?} → 整体校验 + 三行落库（工作流锚行 disabled 草稿）
+// + 即时提示词预览。人工验证后经 status 端点启用。
+func (h *handlers) metadataTaskTypeRegister(c *gin.Context) {
+	var req app.TaskTypeWizardInput
+	if err := c.ShouldBindJSON(&req); err != nil {
+		fail(c, 400, "参数不完整（type/dataset_type/workflow/schema/role 必填）")
+		return
+	}
+	res, err := h.svc.Metadata.RegisterTaskType(c.Request.Context(), req)
+	switch {
+	case err != nil:
+		fail(c, 400, err.Error())
+	default:
+		ok(c, res)
+	}
+}

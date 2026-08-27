@@ -8,7 +8,7 @@ import { useQuery } from '@tanstack/react-query'
 import { metadataApi } from '../api/metadata'
 import type {
   AffectedDataset, CompatFinding, CompatLevel, CompatReport, DatasetSchema, FieldSpec,
-  MetadataVersionView, TaskTypeView,
+  MetadataVersionView, TaskTypeView, StepDependency, Workflow, WorkflowStep,
 } from '../api/types'
 
 const { Text, Paragraph } = Typography
@@ -24,7 +24,8 @@ const levelMeta: Record<CompatLevel, { label: string; color: string }> = {
   block: { label: '❌ 不兼容', color: 'red' },
 }
 
-function SourceBadge({ source }: { source: string }) {
+export { levelMeta }
+export function SourceBadge({ source }: { source: string }) {
   return (
     <Tag color={source === 'builtin' ? 'default' : 'purple'}>
       {source === 'builtin' ? '内置' : '已覆盖'}
@@ -269,7 +270,7 @@ export function SchemaEditor({ view, onSaved }: { view: TaskTypeView; onSaved: (
         <Button type="primary" icon={<SaveOutlined />} loading={saving} onClick={runCheck}
           disabled={!dirty}>保存（自动检查）</Button>
         <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>版本历史</Button>
-        {view.schema_source === 'overridden' && (
+        {!view.custom && view.schema_source === 'overridden' && (
           <Popconfirm title="回退到内置定义？（版本历史保留，可再查看）" onConfirm={doReset}>
             <Button icon={<RollbackOutlined />}>回退到内置</Button>
           </Popconfirm>
@@ -378,7 +379,7 @@ export function ProfileEditor({ view, onSaved }: { view: TaskTypeView; onSaved: 
           保存
         </Button>
         <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>版本历史</Button>
-        {view.profile_source === 'overridden' && (
+        {!view.custom && view.profile_source === 'overridden' && (
           <Popconfirm title="回退到内置定义？（版本历史保留）" onConfirm={doReset}>
             <Button icon={<RollbackOutlined />}>回退到内置</Button>
           </Popconfirm>
@@ -455,7 +456,7 @@ export function HistoryDrawer({
   open, kind, target, onClose,
 }: {
   open: boolean
-  kind: 'dataset_schema' | 'analyze_profile'
+  kind: 'dataset_schema' | 'analyze_profile' | 'workflow'
   target: string
   onClose: () => void
 }) {
@@ -467,11 +468,12 @@ export function HistoryDrawer({
   const [picked, setPicked] = useState<number[]>([])
   useEffect(() => { setPicked([]) }, [kind, target, data])
 
+  const kindLabel = kind === 'dataset_schema' ? '字段合同' : kind === 'workflow' ? '工作流' : '装配描述'
   const pickedVersions = (data ?? []).filter((v) => picked.includes(v.version))
   const twoPicked = pickedVersions.length === 2
 
   return (
-    <Drawer title={`版本历史 · ${kind === 'dataset_schema' ? '字段合同' : '装配描述'} · ${target}`}
+    <Drawer title={`版本历史 · ${kindLabel} · ${target}`}
       open={open} onClose={onClose} width={760}>
       {isLoading ? <Spin /> : !data?.length ? <Empty description="无历史版本（尚未编辑过，当前为内置定义）" /> : (
         <>
@@ -509,5 +511,225 @@ export function HistoryDrawer({
         </>
       )}
     </Drawer>
+  )
+}
+
+/* ---- 工作流编辑器（M4：定义外置——步骤链编排，封闭集 kind） ---- */
+
+const stepKindOptions = [
+  { value: 'parse', label: 'parse · 文档解析' },
+  { value: 'human', label: 'human · 人工确认门' },
+  { value: 'analyze', label: 'analyze · AI 分析' },
+  { value: 'dataset', label: 'dataset · 生成数据集' },
+]
+
+function StepModal({
+  open, step, isNew, onClose, onSubmit,
+}: {
+  open: boolean
+  step: WorkflowStep | null
+  isNew: boolean
+  onClose: () => void
+  onSubmit: (s: WorkflowStep) => void
+}) {
+  const [draft, setDraft] = useState<WorkflowStep>(step ?? { seq: 0, name: '', kind: 'parse', deps: [] })
+  useEffect(() => { if (open) setDraft(step ? { ...step, deps: step.deps?.map((d) => ({ ...d })) } : { seq: 0, name: '', kind: 'parse', deps: [] }) }, [open, step])
+  const depText = (deps?: StepDependency[]) => (deps ?? []).map((d) => `${d.data || ''} ⇒ ${d.tool || ''}`)
+
+  return (
+    <Modal
+      title={isNew ? '添加步骤' : `编辑步骤 · ${step?.name}`}
+      open={open} onCancel={onClose}
+      onOk={() => {
+        if (!draft.name.trim()) return
+        onSubmit({ ...draft, deps: (draft.deps ?? []).filter((d) => d.data || d.tool) })
+      }} okText="确定" destroyOnClose
+    >
+      <Space direction="vertical" style={{ width: '100%' }} size={12}>
+        <Space.Compact style={{ width: '100%' }}>
+          <Input style={{ width: '45%' }} placeholder="步骤名（唯一）" value={draft.name}
+            onChange={(e) => setDraft((d) => ({ ...d, name: e.target.value }))} />
+          <Select style={{ width: '55%' }} value={draft.kind} options={stepKindOptions}
+            onChange={(v) => setDraft((d) => ({ ...d, kind: v }))} />
+        </Space.Compact>
+        <div>
+          <Paragraph type="secondary" style={{ marginBottom: 4 }}>
+            依赖声明（展示用元数据；一行一条「数据依赖 ⇒ 工具依赖」）
+          </Paragraph>
+          <Select
+            mode="tags" open={false} style={{ width: '100%' }}
+            placeholder="例：parsed_text（上一步产物） ⇒ agent_loop(read_document / write_work_items)"
+            value={depText(draft.deps)}
+            onChange={(arr) => setDraft((d) => ({
+              ...d,
+              deps: arr.map((s) => {
+                const [data, tool] = s.split('⇒')
+                return { data: (data ?? '').trim(), tool: (tool ?? '').trim() }
+              }),
+            }))}
+          />
+        </div>
+      </Space>
+    </Modal>
+  )
+}
+
+/** 步骤链编排器：向导只能编排既有 kind（封闭集合），新增 kind 执行器仍是代码开发 */
+export function StepsEditor({
+  steps, onChange,
+}: {
+  steps: WorkflowStep[]
+  onChange: (next: WorkflowStep[]) => void
+}) {
+  const [editing, setEditing] = useState<{ open: boolean; index: number }>({ open: false, index: -1 })
+
+  const renumber = (list: WorkflowStep[]) => list.map((s, i) => ({ ...s, seq: i + 1 }))
+  const move = (i: number, dir: -1 | 1) => {
+    const j = i + dir
+    if (j < 0 || j >= steps.length) return
+    const next = [...steps]
+    ;[next[i], next[j]] = [next[j], next[i]]
+    onChange(renumber(next))
+  }
+  const remove = (i: number) => onChange(renumber(steps.filter((_, k) => k !== i)))
+
+  const kindColor: Record<string, string> = { parse: 'blue', human: 'orange', analyze: 'purple', dataset: 'green' }
+  return (
+    <>
+      <Table<WorkflowStep>
+        rowKey="seq" size="small" pagination={false} dataSource={steps}
+        onRow={(_, i) => ({ onClick: () => setEditing({ open: true, index: i ?? -1 }), style: { cursor: 'pointer' } })}
+        columns={[
+          { title: '#', dataIndex: 'seq', width: 46 },
+          { title: '步骤', dataIndex: 'name', width: 160, render: (v: string) => <Text strong>{v}</Text> },
+          { title: '类型', dataIndex: 'kind', width: 120, render: (k: string) => <Tag color={kindColor[k] ?? 'default'}>{k}</Tag> },
+          {
+            title: '依赖声明', key: 'deps', ellipsis: true, render: (_, s) =>
+              (s.deps?.length
+                ? <Text type="secondary">{s.deps.map((d) => `${d.data || ''}${d.tool ? ` ⇒ ${d.tool}` : ''}`).join('；')}</Text>
+                : <Text type="secondary">—</Text>),
+          },
+          {
+            title: '', key: 'ops', width: 130,
+            render: (_, _s) => null,
+          },
+        ]}
+      />
+      <Space style={{ marginTop: 8 }}>
+        <Button icon={<PlusOutlined />} onClick={() => setEditing({ open: true, index: -1 })}>添加步骤</Button>
+        {steps.map((s, i) => (
+          <Space key={s.seq} size={0}>
+            <Button size="small" type="text" disabled={i === 0}
+              onClick={() => move(i, -1)}>↑</Button>
+            <Button size="small" type="text" disabled={i === steps.length - 1}
+              onClick={() => move(i, 1)}>↓</Button>
+            <Button size="small" type="text" danger onClick={() => remove(i)}>删「{s.name}」</Button>
+          </Space>
+        ))}
+      </Space>
+      <StepModal
+        open={editing.open} isNew={editing.index < 0}
+        step={editing.index >= 0 && editing.index < steps.length ? steps[editing.index] : null}
+        onClose={() => setEditing({ open: false, index: -1 })}
+        onSubmit={(s) => {
+          const next = [...steps]
+          if (editing.index >= 0) next[editing.index] = { ...s, seq: next[editing.index].seq }
+          else next.push(s)
+          onChange(renumber(next))
+          setEditing({ open: false, index: -1 })
+        }}
+      />
+    </>
+  )
+}
+
+/* ---- 工作流受控编辑器（元数据页「工作流」tab） ---- */
+
+export function WorkflowEditor({ view, onSaved }: { view: TaskTypeView; onSaved: () => void }) {
+  const { message } = App.useApp()
+  const [steps, setSteps] = useState<WorkflowStep[]>([])
+  const [dirty, setDirty] = useState(false)
+  const [saving, setSaving] = useState(false)
+  const [check, setCheck] = useState<(CompatReport & { datasets?: AffectedDataset[] }) | null>(null)
+  const [historyOpen, setHistoryOpen] = useState(false)
+
+  useEffect(() => {
+    setSteps(view.workflow.steps.map((s) => ({ ...s, deps: s.deps?.map((d) => ({ ...d })) })))
+    setDirty(false)
+  }, [view.workflow])
+
+  const buildWorkflow = (): Workflow => ({
+    ...view.workflow, type: view.type, steps,
+  })
+
+  const doSave = async (confirmed: boolean) => {
+    setSaving(true)
+    try {
+      const res = await metadataApi.updateWorkflow(view.type, { workflow: buildWorkflow(), confirm_risky: confirmed })
+      if (res.saved) {
+        message.success(`已保存 v${res.version}（新任务的步骤链即生效；存量任务按创建时快照执行展示）`)
+        setCheck(null)
+        setDirty(false)
+        onSaved()
+      } else {
+        setCheck(res.report ?? null)
+        if (res.block_reason) message.warning(res.block_reason)
+      }
+    } catch (e) {
+      message.error((e as Error).message)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const customHint = !!view.custom
+  return (
+    <>
+      {customHint && (
+        <Alert type="info" showIcon style={{ marginBottom: 12 }}
+          message="向导注册类型：工作流为其运行时定义本体，无「内置基线」（停用类型走状态切换）。" />
+      )}
+      <Space style={{ marginBottom: 12 }} wrap>
+        <Input style={{ width: 220 }} prefix="名称" value={view.workflow.name} disabled />
+        <Button type="primary" icon={<SaveOutlined />} loading={saving}
+          disabled={!dirty}
+          onClick={async () => {
+            try {
+              const res = await metadataApi.checkWorkflow(view.type, { workflow: buildWorkflow() })
+              setCheck(res.report ?? null)
+            } catch (e) {
+              message.error((e as Error).message)
+            }
+          }}>
+          保存（自动检查）
+        </Button>
+        <Button icon={<HistoryOutlined />} onClick={() => setHistoryOpen(true)}>版本历史</Button>
+        {!view.custom && view.workflow_source === 'overridden' && (
+          <Popconfirm title="回退到内置工作流？（版本历史保留；存量任务不受影响）"
+            onConfirm={async () => {
+              try {
+                const res = await metadataApi.resetWorkflow(view.type)
+                if (res.saved) message.success('已回退到内置工作流')
+                else message.info('当前已是内置定义')
+                onSaved()
+              } catch (e) {
+                message.error((e as Error).message)
+              }
+            }}>
+            <Button icon={<RollbackOutlined />}>回退到内置</Button>
+          </Popconfirm>
+        )}
+        <SourceBadge source={view.workflow_source ?? view.source} />
+        {dirty && <Text type="warning">有未保存修改（仅影响新任务）</Text>}
+      </Space>
+      <StepsEditor steps={steps} onChange={(n) => { setSteps(n); setDirty(true) }} />
+      <CheckResultModal
+        open={!!check} result={check} saving={saving}
+        onClose={() => setCheck(null)}
+        onConfirmSave={(confirmed) => void doSave(confirmed)}
+      />
+      <HistoryDrawer open={historyOpen} kind="workflow" target={view.type}
+        onClose={() => setHistoryOpen(false)} />
+    </>
   )
 }
