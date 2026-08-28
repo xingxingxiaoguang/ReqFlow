@@ -24,10 +24,10 @@ func (d DraftSaveInput) toTaskItem() model.TaskItem {
 /* ---- 写入目标（task → dataset 的标准化接缝） ---- */
 
 // 数据集写入模式（对齐数据集成行业的 append/dedupe/overwrite 范式）。
+// 目标数据集先于任务存在（创建任务时绑定，ready 空集或已有条目），三种策略均幂等
+// ——断点续跑/失败重试/终态重写安全；不再有"写入中新建数据集"路径。
 const (
-	// WriteModeCreate 新建数据集（默认；断点续跑为同一数据集全量重建）。
-	WriteModeCreate = "create"
-	// WriteModeMerge 并入已有数据集：仅插入新条目，已存在的 key 跳过（insert-if-absent）。
+	// WriteModeMerge 并入已有数据集（默认）：仅插入新条目，已存在的 key 跳过（insert-if-absent）。
 	WriteModeMerge = "merge"
 	// WriteModeUpsert 并入已有数据集：新条目插入，已存在 key 按内容更新（相同则跳过）。
 	WriteModeUpsert = "upsert"
@@ -36,29 +36,27 @@ const (
 )
 
 var writeModes = map[string]bool{
-	WriteModeCreate: true, WriteModeMerge: true, WriteModeUpsert: true, WriteModeReplace: true,
+	WriteModeMerge: true, WriteModeUpsert: true, WriteModeReplace: true,
 }
 
-// DatasetTarget 生成数据集门的人工声明：写入哪个数据集、以何种策略写入。
+// DatasetTarget 生成数据集门的人工声明：以何种策略写入目标数据集。
+// 目标数据集在创建任务时绑定（tasks.output_dataset_id）——字段定义随数据集带出；
+// 本声明只决定写入策略，不再承担"新建数据集"职责（数据集先于任务存在）。
 type DatasetTarget struct {
-	Mode      string `json:"mode"`                   // create | merge | upsert | replace
-	DatasetID string `json:"dataset_id,omitempty"`   // merge/upsert/replace：目标数据集
-	Name      string `json:"dataset_name,omitempty"` // create：新建数据集命名
+	Mode      string `json:"mode"`       // merge | upsert | replace
+	DatasetID string `json:"dataset_id"` // 目标数据集（空 = 任务绑定的产出数据集）
 }
 
-// Normalize 校验并补默认值（mode 空 → create）。
+// Normalize 校验并补默认值（mode 空 → merge）。
 func (t DatasetTarget) Normalize() (DatasetTarget, error) {
 	if t.Mode == "" {
-		t.Mode = WriteModeCreate
+		t.Mode = WriteModeMerge
 	}
 	if !writeModes[t.Mode] {
 		return t, fmt.Errorf("不支持的写入模式: %s", t.Mode)
 	}
-	if t.Mode == WriteModeCreate && t.Name == "" {
-		return t, fmt.Errorf("新建数据集需要命名")
-	}
-	if t.Mode != WriteModeCreate && t.DatasetID == "" {
-		return t, fmt.Errorf("该写入模式需要选择目标数据集")
+	if t.DatasetID == "" {
+		return t, fmt.Errorf("缺少目标数据集（请在创建任务时绑定）")
 	}
 	return t, nil
 }
@@ -108,10 +106,9 @@ type WriteStats struct {
 
 // PreparedWrite 两阶段写入的中间产物：Prepare（预览）与 Write（执行）共享同一分桶。
 type PreparedWrite struct {
-	Target  DatasetTarget
-	Schema  model.DatasetSchema
-	Fresh   bool // create 模式：目标数据集全新，全部 insert（全量重建）
-	Items   []PreparedItem
+	Target DatasetTarget
+	Schema model.DatasetSchema
+	Items  []PreparedItem
 	preview WritePreview
 }
 
@@ -136,14 +133,19 @@ func NewDatasetWriter(embedder port.Embedder, datasets port.DatasetRepo, batchSi
 // 向量文档 body 截断长度常量已下沉 domain（logic.VectorBodyLimit）——写入/查询/指纹共用。
 
 // Prepare 预览写入效果：schema 校验 + 目标数据集冲突分桶。不落库、不向量化。
+// schema 由调用方从目标数据集行解析（字段定义归属数据集——写入谁就按谁的合同校验）。
 func (s *DatasetWriter) Prepare(ctx context.Context, schema model.DatasetSchema, target DatasetTarget,
 	taskID string, values []map[string]any) (*PreparedWrite, error) {
 	target, err := target.Normalize()
 	if err != nil {
 		return nil, err
 	}
+	ds, err := s.datasets.GetDataset(ctx, target.DatasetID)
+	if err != nil {
+		return nil, fmt.Errorf("目标数据集不存在: %w", err)
+	}
 	prepared := &PreparedWrite{Target: target, Schema: schema,
-		preview: WritePreview{Mode: target.Mode, DatasetID: target.DatasetID, DatasetName: target.Name, Total: len(values)}}
+		preview: WritePreview{Mode: target.Mode, DatasetID: target.DatasetID, DatasetName: ds.Name, Total: len(values)}}
 
 	// 条目身份（key/指纹）与 schema 校验
 	for _, v := range values {
@@ -156,40 +158,27 @@ func (s *DatasetWriter) Prepare(ctx context.Context, schema model.DatasetSchema,
 		prepared.Items = append(prepared.Items, item)
 	}
 
-	if target.Mode == WriteModeCreate {
-		// 新数据集（或断点续跑全量重建）：无冲突概念，合法条目全部 insert
-		prepared.Fresh = true
-	} else {
-		ds, err := s.datasets.GetDataset(ctx, target.DatasetID)
-		if err != nil {
-			return nil, fmt.Errorf("目标数据集不存在: %w", err)
+	keyMap, err := s.datasets.GetDatasetItemKeyMap(ctx, target.DatasetID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range prepared.Items {
+		it := &prepared.Items[i]
+		if it.Action == ActionInvalid {
+			continue
 		}
-		if ds.Type != schema.Type {
-			return nil, fmt.Errorf("目标数据集类型 %s 与任务产出类型 %s 不匹配", ds.Type, schema.Type)
+		existing, ok := keyMap[it.Key]
+		// replace 模式：本任务旧条目将被清理，视同不存在
+		if ok && target.Mode == WriteModeReplace && existing.SourceTaskID == taskID {
+			ok = false
 		}
-		prepared.preview.DatasetName = ds.Name
-		keyMap, err := s.datasets.GetDatasetItemKeyMap(ctx, target.DatasetID)
-		if err != nil {
-			return nil, err
-		}
-		for i := range prepared.Items {
-			it := &prepared.Items[i]
-			if it.Action == ActionInvalid {
-				continue
-			}
-			existing, ok := keyMap[it.Key]
-			// replace 模式：本任务旧条目将被清理，视同不存在
-			if ok && target.Mode == WriteModeReplace && existing.SourceTaskID == taskID {
-				ok = false
-			}
-			switch {
-			case !ok:
-				it.Action = ActionInsert
-			case target.Mode == WriteModeMerge || existing.Fingerprint == it.Fingerprint:
-				it.Action = ActionUnchanged
-			default:
-				it.Action = ActionUpdate
-			}
+		switch {
+		case !ok:
+			it.Action = ActionInsert
+		case target.Mode == WriteModeMerge || existing.Fingerprint == it.Fingerprint:
+			it.Action = ActionUnchanged
+		default:
+			it.Action = ActionUpdate
 		}
 	}
 
@@ -207,27 +196,19 @@ func (s *DatasetWriter) Prepare(ctx context.Context, schema model.DatasetSchema,
 			if len(prepared.preview.Errors) < 5 {
 				prepared.preview.Errors = append(prepared.preview.Errors, it.InvalidMsg)
 			}
-		default: // create 模式合法条目尚未定动作
-			it.Action = ActionInsert
-			prepared.preview.Insert++
 		}
 	}
 	return prepared, nil
 }
 
-// Write 执行写入：仅对 insert/update 条目向量化（分批）→ 按模式落库。
-// create 走全量重建（断点续跑幂等）；replace 先清理本任务旧条目。
+// Write 执行写入：仅对 insert/update 条目向量化（分批）→ 按模式幂等落库。
+// replace 先清理本任务旧条目；merge/upsert 走 ON CONFLICT 幂等写入。
 func (s *DatasetWriter) Write(ctx context.Context, datasetID, taskID string, prepared *PreparedWrite,
 	report func(DatasetWriteProgress)) (WriteStats, error) {
 	if report == nil {
 		report = func(DatasetWriteProgress) {}
 	}
-	var pending []PreparedItem
-	if prepared.Fresh {
-		pending = filterByActions(prepared.Items, ActionInsert)
-	} else {
-		pending = filterByActions(prepared.Items, ActionInsert, ActionUpdate)
-	}
+	pending := filterByActions(prepared.Items, ActionInsert, ActionUpdate)
 	stats := WriteStats{Skipped: len(prepared.Items) - len(pending)}
 
 	vectors := make([]port.DatasetItemVector, len(pending))
@@ -261,25 +242,17 @@ func (s *DatasetWriter) Write(ctx context.Context, datasetID, taskID string, pre
 		}
 	}
 
-	switch {
-	case prepared.Fresh:
-		// embedding 未配置时降级纯精确匹配（向量留空，条目照常入库）
-		if err := s.datasets.ReplaceDatasetItems(ctx, datasetID, vectors); err != nil {
-			return stats, err
-		}
-	case prepared.Target.Mode == WriteModeReplace:
+	if prepared.Target.Mode == WriteModeReplace {
 		if _, err := s.datasets.DeleteDatasetItemsBySource(ctx, datasetID, taskID); err != nil {
 			return stats, err
 		}
-		fallthrough
-	default:
-		mode := port.UpsertInsertMissing
-		if prepared.Target.Mode == WriteModeUpsert {
-			mode = port.UpsertUpdateExisting
-		}
-		if err := s.datasets.UpsertDatasetItems(ctx, datasetID, taskID, vectors, mode); err != nil {
-			return stats, err
-		}
+	}
+	mode := port.UpsertInsertMissing
+	if prepared.Target.Mode == WriteModeUpsert {
+		mode = port.UpsertUpdateExisting
+	}
+	if err := s.datasets.UpsertDatasetItems(ctx, datasetID, taskID, vectors, mode); err != nil {
+		return stats, err
 	}
 	stats.Written = len(vectors)
 	report(DatasetWriteProgress{Current: len(vectors), Total: len(vectors)})

@@ -11,10 +11,12 @@ import (
 // ArchiveService 归档用例：任务/数据集的删除入档与恢复。
 // 已归档数据物理上离开主表——列表、查重语料、语义检索、统计等主业务循环自动不再触达；
 // 归档列表独立查询，支持原样恢复（数据集条目向量原生保留）。
+// indexer 为数据集动态索引钩子：FTS/筛选索引是 schema 的派生物，归档时回收、恢复时重建。
 type ArchiveService struct {
 	tasks    port.TaskRepo
 	datasets port.DatasetRepo
 	archives port.ArchiveRepo
+	indexer  port.DatasetIndexer
 }
 
 // 归档种类（HTTP 层用；转发 domain 常量，httpgin 不直接依赖 domain）。
@@ -23,9 +25,10 @@ const (
 	ArchiveKindDataset = model.ArchiveKindDataset
 )
 
-// NewArchiveService 构造用例。
-func NewArchiveService(tasks port.TaskRepo, datasets port.DatasetRepo, archives port.ArchiveRepo) *ArchiveService {
-	return &ArchiveService{tasks: tasks, datasets: datasets, archives: archives}
+// NewArchiveService 构造用例（indexer 可 nil——跳过动态索引维护，单测用）。
+func NewArchiveService(tasks port.TaskRepo, datasets port.DatasetRepo, archives port.ArchiveRepo,
+	indexer port.DatasetIndexer) *ArchiveService {
+	return &ArchiveService{tasks: tasks, datasets: datasets, archives: archives, indexer: indexer}
 }
 
 // ArchiveTask 归档任务（含步骤与明细快照）。运行中的任务不可归档（执行 goroutine 仍在写）。
@@ -63,6 +66,12 @@ func (s *ArchiveService) ArchiveDataset(ctx context.Context, datasetID string) e
 			return fmt.Errorf("任务「%s」正在引用该数据集，请等待其完成或暂停后归档", running[i].Title)
 		}
 	}
+	if s.indexer != nil {
+		// 动态索引带 dataset_id 谓词，随归档一并回收（恢复时按行内 schema 重建）
+		if err := s.indexer.DropIndexes(ctx, datasetID); err != nil {
+			return fmt.Errorf("回收动态索引失败: %w", err)
+		}
+	}
 	return s.archives.ArchiveDataset(ctx, datasetID)
 }
 
@@ -75,9 +84,20 @@ func (s *ArchiveService) RestoreTask(ctx context.Context, taskID string) (*model
 	return task, nil
 }
 
-// RestoreDataset 归档数据集（含条目）恢复到主表（查重/检索语料随之生效）。
+// RestoreDataset 归档数据集（含条目）恢复到主表（查重/检索语料随之生效；动态索引按
+// 行内 schema 重建——字段定义随数据集行归档，恢复即带出）。
 func (s *ArchiveService) RestoreDataset(ctx context.Context, datasetID string) error {
-	return s.archives.RestoreDataset(ctx, datasetID)
+	if err := s.archives.RestoreDataset(ctx, datasetID); err != nil {
+		return err
+	}
+	if s.indexer != nil {
+		if ds, err := s.datasets.GetDataset(ctx, datasetID); err == nil {
+			if schema, ok := model.ParseDatasetSchema(ds.Schema); ok {
+				return s.indexer.SyncIndexes(ctx, datasetID, schema)
+			}
+		}
+	}
+	return nil
 }
 
 // ArchiveView 归档列表视图（kind 分开的两个集合，按需取用）。

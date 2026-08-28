@@ -1,5 +1,8 @@
 services:
   postgres:
+    # 中文全文检索：默认镜像无中文分词（fts.ts_config=simple 按空白切词）。
+    # 需要 zhparser/pg_jieba 时换成含扩展的镜像（如 abcfy2/zhparser:pg16 或自建 Dockerfile），
+    # 并把 config.yaml 的 fts.ts_config 改为 zhparser 等对应配置名。
     image: pgvector/pgvector:pg16
     container_name: reqflow-pg
     environment:

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Card, Col, Row, Typography, Space, Button, Select, Table, Tag, InputNumber,
-  Input, Progress, Alert, App, Statistic, List, Radio, Tooltip,
+  Input, Progress, Alert, App, Statistic, List, Tooltip,
 } from 'antd'
 import type { TableProps } from 'antd'
 import {
@@ -12,7 +12,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../../api/client'
 import { tasksApi } from '../../../api/tasks'
 import type {
-  DraftFieldValues, FieldSpec, SettingsView, Task, TaskItem, WriteMode, WritePreview,
+  DraftFieldValues, DatasetSchema, FieldSpec, SettingsView, Task, TaskItem, WriteMode, WritePreview,
 } from '../../../api/types'
 import { parseDatasetItemFields } from '../../../api/types'
 import type { TaskStream } from '../../../hooks/useTaskEvents'
@@ -26,40 +26,35 @@ interface EditableRow {
   values: DraftFieldValues
 }
 
-/** 写入策略说明（select option 内嵌） */
+/** 写入策略说明（select option 内嵌；目标 = 创建任务时绑定的数据集，恒可幂等重写） */
 const MODE_OPTIONS: { value: WriteMode; label: string; desc: string }[] = [
   { value: 'merge', label: '补充（跳过已有）', desc: '只插入新条目；同名条目已存在则跳过，安全归档不覆盖' },
   { value: 'upsert', label: '并入并更新', desc: '新条目插入；同名条目内容有变化则更新，无变化跳过' },
   { value: 'replace', label: '覆盖本任务旧数据', desc: '先删除本任务此前写入的条目再写入（同源重跑）；其他来源数据不动' },
 ]
 
-/** 生成数据集门：查重 → 行内编辑草稿 → 声明写入目标（新建/并入 + 策略）→ 预览冲突 → 写入 */
+/** 生成数据集门：查重 → 行内编辑草稿（列由绑定数据集的字段定义驱动）→ 声明写入策略 → 预览冲突 → 写入。
+ * 目标数据集在创建任务时绑定（字段元数据随之带出），此处只选写入策略。 */
 export default function MatchImportPanel({
-  task, items, importing, stream,
-}: { task: Task; items: TaskItem[]; importing: boolean; stream: TaskStream }) {
+  task, items, schema, importing, stream,
+}: {
+  task: Task
+  items: TaskItem[]
+  schema?: DatasetSchema
+  importing: boolean
+  stream: TaskStream
+}) {
   const qc = useQueryClient()
   const { message } = App.useApp()
   const [rows, setRows] = useState<EditableRow[]>(() =>
     items.map((it) => ({ item: it, values: parseDatasetItemFields(it.Fields) })))
-  const [datasetName, setDatasetName] = useState<string>()
   const [writeMode, setWriteMode] = useState<WriteMode>('merge')
-  const [targetDatasetId, setTargetDatasetId] = useState<string>()
-  const [createNew, setCreateNew] = useState(true)
   const [preview, setPreview] = useState<WritePreview>()
   const [previewing, setPreviewing] = useState(false)
   const [saving, setSaving] = useState(false)
   const { importProgress, importLog } = stream
   const done = task.Status === 'succeeded'
 
-  // 本面板为 requirement_import 的 per-type 工作区：列/控件由 requirement schema 驱动
-  const { data: schemaData } = useQuery({
-    queryKey: ['schemas'],
-    queryFn: () => tasksApi.schemas(),
-  })
-  const schema = useMemo(
-    () => (schemaData?.schemas ?? []).find((s) => s.type === 'requirement'),
-    [schemaData],
-  )
   const textFields = useMemo(() => schema?.fields.filter((f) => f.type === 'text') ?? [], [schema])
 
   // 服务端明细变化（分析完成/重新分析）同步到编辑态
@@ -67,27 +62,10 @@ export default function MatchImportPanel({
     setRows(items.map((it) => ({ item: it, values: parseDatasetItemFields(it.Fields) })))
   }, [items])
 
-  // 已产出数据集的任务默认并入原数据集（终态重写场景）
-  useEffect(() => {
-    if (task.OutputDatasetID) {
-      setCreateNew(false)
-      setTargetDatasetId(task.OutputDatasetID)
-    }
-  }, [task.OutputDatasetID])
-
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: () => api.get<SettingsView>('/api/settings') })
-  const { data: dsData } = useQuery({
-    queryKey: ['datasets', 'requirement'],
-    queryFn: () => tasksApi.listDatasets({ type: 'requirement', limit: 100 }),
-  })
-  const targetableDatasets = (dsData?.datasets ?? []).filter((d) => d.Status === 'ready')
 
-  const target = useMemo(() => (
-    createNew
-      ? { mode: 'create' as const, dataset_name: datasetName?.trim() || '' }
-      : { mode: writeMode, dataset_id: targetDatasetId || '' }
-  ), [createNew, datasetName, writeMode, targetDatasetId])
-  const targetValid = createNew ? !!datasetName?.trim() : !!targetDatasetId
+  // 目标数据集：创建任务时绑定；写入策略声明缺省只带模式
+  const target = useMemo(() => ({ mode: writeMode, dataset_id: task.OutputDatasetID }), [writeMode, task.OutputDatasetID])
 
   /* 查重（语料 = 已有需求数据集，跨数据集） */
   const runDuplicates = useCallback(async () => {
@@ -171,7 +149,7 @@ export default function MatchImportPanel({
 
   return (
     <Row gutter={[16, 16]}>
-      {/* 概要 + 写入目标 */}
+      {/* 概要 + 写入策略 */}
       <Col span={24}>
         <Card size="small">
           <Row gutter={24} align="middle">
@@ -189,50 +167,21 @@ export default function MatchImportPanel({
             {done && (
               <Alert type="success" showIcon style={{ marginBottom: 10 }}
                 message="数据集已生成，任务完成。"
-                description="如需补充或修正数据，可在下方调整写入目标后再次写入（幂等，不会产生重复条目）。" />
+                description="如需补充或修正数据，可在下方调整写入策略后再次写入（幂等，不会产生重复条目）。" />
             )}
             <Space direction="vertical" size={10} style={{ width: '100%' }}>
-              <Radio.Group
-                value={createNew ? 'create' : 'existing'}
-                onChange={(e) => { setCreateNew(e.target.value === 'create'); setPreview(undefined) }}
-                disabled={importing}
-                optionType="button"
-                options={[
-                  { value: 'create', label: '新建数据集' },
-                  { value: 'existing', label: '写入已有数据集', disabled: targetableDatasets.length === 0 },
-                ]}
-              />
-              {createNew ? (
-                <Space.Compact style={{ width: '100%', maxWidth: 480 }}>
-                  <Input
-                    placeholder="数据集命名（如：订单中心需求集 v1）"
-                    value={datasetName}
-                    onChange={(e) => { setDatasetName(e.target.value); setPreview(undefined) }}
-                    disabled={importing}
-                  />
-                </Space.Compact>
-              ) : (
-                <Space wrap>
-                  <Select
-                    style={{ width: 280 }}
-                    placeholder="选择目标数据集"
-                    value={targetDatasetId}
-                    onChange={(v) => { setTargetDatasetId(v); setPreview(undefined) }}
-                    disabled={importing}
-                    options={targetableDatasets.map((d) => ({ value: d.ID, label: `${d.Name}（${d.ItemCount} 条）` }))}
-                  />
-                  <Select
-                    style={{ width: 200 }}
-                    value={writeMode}
-                    onChange={(v) => { setWriteMode(v); setPreview(undefined) }}
-                    disabled={importing}
-                    options={MODE_OPTIONS.map((m) => ({ value: m.value, label: m.label }))}
-                  />
-                  <Text type="secondary" style={{ fontSize: 12 }}>
-                    {MODE_OPTIONS.find((m) => m.value === writeMode)?.desc}
-                  </Text>
-                </Space>
-              )}
+              <Space wrap>
+                <Select
+                  style={{ width: 220 }}
+                  value={writeMode}
+                  onChange={(v) => { setWriteMode(v); setPreview(undefined) }}
+                  disabled={importing}
+                  options={MODE_OPTIONS.map((m) => ({ value: m.value, label: m.label }))}
+                />
+                <Text type="secondary" style={{ fontSize: 12 }}>
+                  写入目标：创建任务时绑定的数据集（{MODE_OPTIONS.find((m) => m.value === writeMode)?.desc}）
+                </Text>
+              </Space>
               <Text type="secondary" style={{ fontSize: 12 }}>
                 生成的数据集将作为后续任务（如 Bug 分析）的输入底料——任务与任务通过数据集衔接
               </Text>
@@ -253,20 +202,10 @@ export default function MatchImportPanel({
               ) : (
                 <>
                   <Button icon={<SaveOutlined />} loading={saving} onClick={onSave}>保存草稿</Button>
-                  <Button
-                    icon={<EyeOutlined />}
-                    loading={previewing}
-                    disabled={!targetValid}
-                    onClick={onPreview}
-                  >
+                  <Button icon={<EyeOutlined />} loading={previewing} onClick={onPreview}>
                     预览写入
                   </Button>
-                  <Button
-                    type="primary"
-                    icon={<DatabaseOutlined />}
-                    disabled={!targetValid}
-                    onClick={onWrite}
-                  >
+                  <Button type="primary" icon={<DatabaseOutlined />} onClick={onWrite}>
                     {done || task.ErrorMessage ? '再次写入' : '写入数据集'}
                   </Button>
                 </>
@@ -280,7 +219,7 @@ export default function MatchImportPanel({
           )}
           {preview ? (
             <Space size={24} wrap style={{ marginBottom: 4 }}>
-              <Text>目标：<Text strong>{preview.dataset_name || datasetName}</Text>
+              <Text>目标：<Text strong>{preview.dataset_name}</Text>
                 <Tag style={{ marginLeft: 8 }}>{MODE_OPTIONS.find((m) => m.value === preview.mode)?.label ?? preview.mode}</Tag></Text>
               <Text><Text type="secondary">新增</Text> <Text strong type="success">{preview.insert}</Text></Text>
               <Text><Text type="secondary">更新</Text> <Text strong>{preview.update}</Text></Text>
@@ -299,7 +238,7 @@ export default function MatchImportPanel({
         </Card>
       </Col>
 
-      {/* 明细表（列与编辑控件由 requirement schema 驱动；长文本字段走展开行） */}
+      {/* 明细表（列与编辑控件由绑定数据集的字段定义驱动；长文本字段走展开行） */}
       <Col span={24}>
         <Card size="small" title={<Space><AimOutlined style={{ color: '#4F46E5' }} /><Text strong>需求明细</Text><Text type="secondary">（可直接编辑）</Text></Space>}>
           <Table

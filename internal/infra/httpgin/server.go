@@ -13,6 +13,7 @@ type Services struct {
 	Settings     *app.SettingsService
 	Overview     *app.OverviewService
 	DatasetQuery *app.DatasetQueryService
+	DatasetAdmin *app.DatasetAdminService
 	Archive      *app.ArchiveService
 	Metadata     *app.MetadataService
 
@@ -50,10 +51,14 @@ func New(svc Services) *gin.Engine {
 
 		api.GET("/workflows", h.listWorkflows)             // 任务类型目录（工作流元数据）
 		api.GET("/datasets", h.listDatasets)               // 数据集浏览（任务产出的结果集）
-		api.GET("/datasets/schemas", h.listDatasetSchemas) // 数据集 schema 目录（表格/筛选驱动）
+		api.GET("/datasets/schemas", h.listDatasetSchemas) // 数据集类型模板目录（新建数据集带出）
+		api.POST("/datasets", h.createDataset)             // 新建数据集（字段定义从模板带出或自定义）
 		api.GET("/datasets/:id", h.getDataset)
-		api.GET("/datasets/:id/items", h.queryDatasetItems) // 条目筛选 + 语义检索
-		api.DELETE("/datasets/:id", h.archiveDataset)       // 归档（含条目与向量，可恢复）
+		api.GET("/datasets/:id/items", h.queryDatasetItems)      // 条目筛选 + 语义检索
+		api.POST("/datasets/:id/search", h.searchDatasetFTS)     // 字段全文检索（FTS 动态索引）
+		api.POST("/datasets/:id/schema/check", h.datasetSchemaCheck) // 字段定义 dry-run
+		api.PUT("/datasets/:id/schema", h.datasetSchemaUpdate)       // 字段定义受控保存
+		api.DELETE("/datasets/:id", h.archiveDataset)            // 归档（含条目与向量，可恢复）
 
 		api.GET("/archives", h.listArchives)                      // 归档列表
 		api.POST("/archives/:kind/:id/restore", h.restoreArchive) // 归档恢复

@@ -1,7 +1,10 @@
 // 数据集 schema（类型化字段的声明式合同）。
-// 写入校验、向量文档组装、表格渲染、条目身份（item_key）全部由此驱动——
-// 新任务类型接入数据集只需注册 schema，不改 Writer/仓储/前端表格。
+// 真相源在数据集行（datasets.schema，JSONB）——写入校验、向量文档组装、表格渲染、
+// 条目身份（item_key）、FTS/筛选动态索引全部由此驱动；类型级注册（Schemas/SchemaOf）
+// 降级为「数据集类型模板」，仅供新建数据集时带出初始定义。
 package model
+
+import "encoding/json"
 
 // FieldType 字段值类型（筛选器与校验依据）。
 type FieldType string
@@ -30,7 +33,8 @@ type FieldSpec struct {
 	Type       FieldType  `json:"type"`
 	Required   bool       `json:"required,omitempty"`
 	Enum       []string   `json:"enum,omitempty"`
-	Filterable bool       `json:"filterable,omitempty"` // 可作为检索/筛选条件下推
+	Filterable bool       `json:"filterable,omitempty"` // 可作为检索/筛选条件下推（动态 btree 表达式索引）
+	FTS        bool       `json:"fts,omitempty"`        // 全文检索（PG 表达式 GIN 索引，随 schema 动态建删）
 	InVector   VectorRole `json:"in_vector,omitempty"`  // 向量文档组装角色
 	InKey      bool       `json:"in_key,omitempty"`     // 参与条目主键 item_key
 	// Default 归一化兜底默认值（空值/越界回落于此；支持 {current_time} 占位符
@@ -76,12 +80,25 @@ func (s DatasetSchema) KeyFields() []FieldSpec {
 	return out
 }
 
-// Schemas 全部已注册数据集 schema（目录：创建/筛选入口展示用）。
+// ParseDatasetSchema 数据集行内 schema 载荷（JSONB 文本）→ 结构（读侧统一入口）。
+// 空/非法/缺字段定义一律返回 false——调用方按「数据集定义缺失」处理，不做类型兜底。
+func ParseDatasetSchema(payload string) (DatasetSchema, bool) {
+	if payload == "" {
+		return DatasetSchema{}, false
+	}
+	var s DatasetSchema
+	if json.Unmarshal([]byte(payload), &s) != nil || s.Type == "" || len(s.Fields) == 0 {
+		return DatasetSchema{}, false
+	}
+	return s, true
+}
+
+// Schemas 全部已注册数据集类型模板（目录：新建数据集时带出初始字段定义）。
 func Schemas() []DatasetSchema {
 	return []DatasetSchema{RequirementSchema()}
 }
 
-// SchemaOf 按数据集类型取 schema；未注册返回 false。
+// SchemaOf 按数据集类型取模板；未注册返回 false。
 func SchemaOf(typ string) (DatasetSchema, bool) {
 	for _, s := range Schemas() {
 		if s.Type == typ {
@@ -102,7 +119,7 @@ func DatasetTypeOfTask(taskType string) (string, bool) {
 	return "", false
 }
 
-// RequirementSchema 需求数据集 schema。
+// RequirementSchema 需求数据集类型模板（新建需求数据集时带出的初始字段定义）。
 // item_key = 归一化标题 + 归一化分组：同组同名视为同一条需求。
 // 默认值（Default）与清洗（Clean）在此声明——归一化（logic.NormalizeValues）、
 // 提示词（Prompt）与写入校验共用本合同，单一事实源。
@@ -112,15 +129,15 @@ func RequirementSchema() DatasetSchema {
 		Label:   "需求",
 		Version: 1,
 		Fields: []FieldSpec{
-			{Key: "title", Label: "标题", Type: FieldString, Required: true, InVector: VectorTitle, InKey: true,
+			{Key: "title", Label: "标题", Type: FieldString, Required: true, InVector: VectorTitle, InKey: true, FTS: true,
 				Default: "未命名工作项",
 				Prompt:  "工作项的简洁标题，10-50 字，动宾结构，如「实现用户登录功能」"},
 			{Key: "project_name", Label: "分组", Type: FieldString, InKey: true,
 				Default: "未分类项目",
 				Prompt:  "该工作项所属的项目名称。从文档中识别项目名称；未明确时根据需求内容推断合理名称；多项目需求需正确区分"},
-			{Key: "description", Label: "描述", Type: FieldText, InVector: VectorBody,
+			{Key: "description", Label: "描述", Type: FieldText, InVector: VectorBody, FTS: true,
 				Prompt: "详细描述，包含需求背景、实现细节、验收标准，保留原文关键信息"},
-			{Key: "solution_suggestion", Label: "解决方案建议", Type: FieldText, InVector: VectorBody,
+			{Key: "solution_suggestion", Label: "解决方案建议", Type: FieldText, InVector: VectorBody, FTS: true,
 				Prompt: "解决方案建议，具体可执行、含技术细节；按类型给出：story/feature 给开发建议与技术选型，task 给实现步骤，bug 给排查思路与修复建议，epic 给拆分建议与风险点"},
 			{Key: "priority", Label: "优先级", Type: FieldEnum, Enum: []string{"High", "Medium", "Low"}, Filterable: true,
 				Default: "Medium",

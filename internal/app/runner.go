@@ -440,6 +440,13 @@ func (m *TaskManager) execAnalyzeStep(workCtx, pc context.Context, task *model.T
 		Text: in.ParsedText, Special: in.SpecialRequirements,
 		Dialog: m.dialogs,
 	}
+	// 字段定义归属数据集：绑定产出数据集（创建任务时选定）的 schema 注入分析装配
+	// ——提示词字段规范/写入校验/示例骨架全部按该数据集自身的字段口径。
+	if task.OutputDatasetID != "" {
+		if ds, err := m.datasets.GetDataset(pc, task.OutputDatasetID); err == nil {
+			ain.SchemaJSON = ds.Schema
+		}
+	}
 	defer m.dialogs.Clear(task.ID) // 人工交互兜底清理（Ask 出口自清，通常无事可做）
 	if cc != nil {
 		out, err = m.analyze.Resume(workCtx, cc, ain, onProgress, onToken, onTool)
@@ -503,7 +510,7 @@ func (m *TaskManager) execDatasetStep(workCtx, pc context.Context, task *model.T
 		return
 	}
 
-	target, schema, err := datasetWritePlan(task)
+	target, schema, err := m.datasetWritePlanFor(pc, task, writeTargetOf(task))
 	if err != nil {
 		m.failStep(pc, step, "写入声明无效: "+err.Error())
 		m.enterGate(pc, task, step, "写入声明无效，可调整后重试", err.Error())
@@ -530,7 +537,7 @@ func (m *TaskManager) execDatasetStep(workCtx, pc context.Context, task *model.T
 		return
 	}
 
-	datasetID, err := m.resolveWriteTarget(pc, task, target, schema)
+	datasetID, err := m.resolveWriteTarget(pc, task, target)
 	if err != nil {
 		m.failStep(pc, step, "定位目标数据集失败: "+err.Error())
 		m.enterGate(pc, task, step, "定位目标数据集失败，可重试", err.Error())
@@ -592,58 +599,46 @@ func (m *TaskManager) execDatasetStep(workCtx, pc context.Context, task *model.T
 	m.publishItems(pc, task.ID)
 }
 
-// resolveWriteTarget 定位写入目标：create 复用 building 数据集（断点续跑/失败重试）或新建；
-// merge/upsert/replace 校验目标存在后直接采用。
-func (m *TaskManager) resolveWriteTarget(pc context.Context, task *model.Task,
-	target DatasetTarget, schema model.DatasetSchema) (string, error) {
-	if target.Mode != WriteModeCreate {
-		return target.DatasetID, nil
+// resolveWriteTarget 校验写入目标并回填产出引用。目标数据集在创建任务时绑定，
+// 此处不再有新建逻辑（数据集先于任务存在——字段定义随数据集带出）。
+func (m *TaskManager) resolveWriteTarget(pc context.Context, task *model.Task, target DatasetTarget) (string, error) {
+	if task.OutputDatasetID != target.DatasetID {
+		task.OutputDatasetID = target.DatasetID
+		m.saveTask(pc, task)
 	}
-	// create + 已有产出数据集：building 态复用（续跑），ready 态视为换目标重建（终态重写）
-	if task.OutputDatasetID != "" {
-		if ds, err := m.datasets.GetDataset(pc, task.OutputDatasetID); err == nil &&
-			ds.Status == model.DatasetStatusBuilding {
-			return ds.ID, nil
-		}
-	}
-	ds := &model.Dataset{
-		Type: schema.Type, Name: target.Name,
-		SourceTaskID: task.ID, Status: model.DatasetStatusBuilding,
-		SchemaVersion: schema.Version,
-	}
-	if err := m.datasets.CreateDataset(pc, ds); err != nil {
-		return "", err
-	}
-	task.OutputDatasetID = ds.ID
-	m.saveTask(pc, task)
-	return ds.ID, nil
+	return target.DatasetID, nil
 }
 
-// datasetWritePlan 解析任务的写入声明（兼容旧 dataset_name）与产出 schema。
-func datasetWritePlan(task *model.Task) (DatasetTarget, model.DatasetSchema, error) {
+// writeTargetOf 任务的写入目标：绑定产出数据集（创建任务时选定）；门内声明
+// （写入策略/显式改绑）优先。
+func writeTargetOf(task *model.Task) DatasetTarget {
 	in := taskInputOf(task)
-	target := in.DatasetTarget
-	if target == nil {
-		target = &DatasetTarget{Mode: WriteModeCreate, Name: in.DatasetName}
+	target := DatasetTarget{DatasetID: task.OutputDatasetID}
+	if in.DatasetTarget != nil {
+		if in.DatasetTarget.DatasetID != "" {
+			target.DatasetID = in.DatasetTarget.DatasetID
+		}
+		target.Mode = in.DatasetTarget.Mode
 	}
-	return datasetWritePlanFor(task, *target)
+	return target
 }
 
-// datasetWritePlanFor 以显式声明（预览请求/任务输入）解析写入计划
-// （任务类型 → 产出 schema 经聚合注册表一次解析，不再两级查找）。
-func datasetWritePlanFor(task *model.Task, target DatasetTarget) (DatasetTarget, model.DatasetSchema, error) {
+// datasetWritePlanFor 以显式声明解析写入计划：schema 一律取自目标数据集自身的
+// 字段定义——写入哪个数据集就按谁的合同校验（字段定义归属数据集，与任务类型解耦）。
+func (m *TaskManager) datasetWritePlanFor(pc context.Context, task *model.Task, target DatasetTarget) (DatasetTarget, model.DatasetSchema, error) {
 	t, err := target.Normalize()
 	if err != nil {
 		return t, model.DatasetSchema{}, err
 	}
-	def, ok := TaskTypeOf(task.Type)
+	ds, err := m.datasets.GetDataset(pc, t.DatasetID)
+	if err != nil {
+		return t, model.DatasetSchema{}, fmt.Errorf("目标数据集不存在: %w", err)
+	}
+	schema, ok := model.ParseDatasetSchema(ds.Schema)
 	if !ok {
-		return t, model.DatasetSchema{}, fmt.Errorf("任务类型 %s 未注册（聚合注册表 TaskTypeOf）", task.Type)
+		return t, model.DatasetSchema{}, fmt.Errorf("数据集「%s」缺少字段定义", ds.Name)
 	}
-	if def.Schema == nil {
-		return t, model.DatasetSchema{}, fmt.Errorf("任务类型 %s 未注册产出 schema", task.Type)
-	}
-	return t, def.Schema(), nil
+	return t, schema, nil
 }
 
 /* ---- 小工具 ---- */

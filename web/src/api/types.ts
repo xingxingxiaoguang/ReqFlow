@@ -38,14 +38,13 @@ export type BuiltinTaskType = 'requirement_import'
 /** 数据集类型（任务产出的结果集）——M4 起向导扩展类型动态增加 */
 export type DatasetType = string
 
-/** 数据集写入模式（任务 → 数据集的标准化接缝） */
-export type WriteMode = 'create' | 'merge' | 'upsert' | 'replace'
+/** 数据集写入模式（任务 → 数据集的标准化接缝；目标数据集创建任务时已绑定） */
+export type WriteMode = 'merge' | 'upsert' | 'replace'
 
-/** 写入声明：模式 + 目标数据集 */
+/** 写入策略声明（目标数据集缺省 = 任务绑定的产出数据集） */
 export interface DatasetTarget {
   mode: WriteMode
   dataset_id?: string
-  dataset_name?: string
 }
 
 /** 写入预览（冲突分桶） */
@@ -72,6 +71,8 @@ export interface FieldSpec {
   required?: boolean
   enum?: string[]
   filterable?: boolean
+  /** 全文检索（PG 表达式 GIN 索引，随 schema 动态建删） */
+  fts?: boolean
   in_vector?: VectorRole
   in_key?: boolean
   default?: any
@@ -112,11 +113,14 @@ export interface Task {
   FinishedAt: string
 }
 
-/** 数据集（任务产出的结果集，任务间衔接的载体） */
+/** 数据集（任务产出的结果集，任务间衔接的载体）。
+ * Schema 为字段定义真相源（DatasetSchema JSON 文本）——创建时从类型模板固化，
+ * 实例受控演进；任务绑定数据集后字段元数据自动带出。 */
 export interface Dataset {
   ID: string
   Type: DatasetType
   Name: string
+  Schema: string
   Description: string
   Tags: string[]
   SourceTaskID: string
@@ -145,6 +149,22 @@ export interface QueryHit extends DatasetItem {
   MatchType?: 'semantic'
 }
 
+/** 数据集详情（schema 为解析后的字段定义对象，列驱动免二次查询） */
+export interface DatasetDetail {
+  dataset: Dataset
+  items: DatasetItem[]
+  schema?: DatasetSchema
+}
+
+/** 新建数据集入参（schema 缺省 = 类型模板带出；提供时整体自定义） */
+export interface CreateDatasetInput {
+  name: string
+  type: string
+  description?: string
+  tags?: string[]
+  schema?: DatasetSchema
+}
+
 /** 归档种类 */
 export type ArchiveKind = 'task' | 'dataset'
 
@@ -170,6 +190,17 @@ export function parseDatasetItemFields(fields: string): Record<string, any> {
     return JSON.parse(fields) as Record<string, any>
   } catch {
     return {}
+  }
+}
+
+/** 解析数据集行内的字段定义（Dataset.Schema JSONB 文本 → 结构；空/非法返回 null） */
+export function parseDatasetSchema(payload: string | undefined | null): DatasetSchema | null {
+  if (!payload) return null
+  try {
+    const s = JSON.parse(payload) as DatasetSchema
+    return s.type && Array.isArray(s.fields) && s.fields.length > 0 ? s : null
+  } catch {
+    return null
   }
 }
 
@@ -286,7 +317,6 @@ export interface TaskInput {
   original_file_path?: string
   parsed_text?: string
   special_requirements?: string
-  dataset_name?: string
   dataset_target?: DatasetTarget
 }
 
@@ -314,10 +344,12 @@ export interface TaskItem {
   ErrorMessage: string
 }
 
+/** 任务详情（schema = 任务生效的字段定义，取自绑定数据集自身；门内表格列驱动源） */
 export interface TaskDetail {
   task: Task
   steps: TaskStep[]
   items: TaskItem[]
+  schema?: DatasetSchema
 }
 
 export interface SettingsView {

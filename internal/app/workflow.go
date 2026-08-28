@@ -81,7 +81,7 @@ func requirementImportWorkflow() model.Workflow {
 			{
 				Seq: 4, Name: "生成数据集", Kind: model.StepKindDataset,
 				Deps: []model.StepDependency{
-					{Data: "items（上一步产物）+ dataset_name（人工命名）", Tool: "match（精确+语义两层查重）→ dataset_writer（embedder 向量化写入）"},
+					{Data: "items（上一步产物）+ 写入策略（merge/upsert/replace，目标 = 创建任务时绑定的数据集）", Tool: "match（精确+语义两层查重）→ dataset_writer（embedder 向量化写入）"},
 				},
 			},
 		},

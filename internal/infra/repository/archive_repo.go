@@ -158,7 +158,7 @@ func (r *ArchiveRepo) ArchiveDataset(ctx context.Context, datasetID string) erro
 }
 
 // 归档表比主表多 archived_at 列，恢复方向的 SELECT 必须显式列名（不能用 *）。
-const datasetCols = `id, type, name, description, tags, source_task_id, status,
+const datasetCols = `id, type, name, schema, description, tags, source_task_id, status,
 	item_count, schema_version, extra, created_at, updated_at`
 const datasetItemCols = `id, dataset_id, fields, item_key, fingerprint, metadata,
 	source_task_id, embedding, created_at, updated_at`

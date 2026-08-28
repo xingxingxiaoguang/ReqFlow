@@ -61,10 +61,13 @@ type AnalyzeOutcome struct {
 type AnalyzeInput struct {
 	TaskID   string
 	TaskType string // 任务类型 → AnalyzeProfileOf 装配（提示词/工具/校验）；空回退 requirement
-	FileName string
-	Text     string           // 待分析全文（agent 模式下原文不进上下文，经工具阅读）
-	Special  string           // 用户附加要求
-	Dialog   tools.HumanAsker // 人工交互桥（TaskManager 注入 DialogHub；单测可 nil）
+	// SchemaJSON 绑定数据集的字段定义（数据集行原样载荷）：字段规范渲染、写入工具
+	// 校验、示例骨架的唯一口径——字段定义归属数据集，任务类型定义降级为模板兜底。
+	SchemaJSON string
+	FileName   string
+	Text       string           // 待分析全文（agent 模式下原文不进上下文，经工具阅读）
+	Special    string           // 用户附加要求
+	Dialog     tools.HumanAsker // 人工交互桥（TaskManager 注入 DialogHub；单测可 nil）
 }
 
 // AnalyzeService 需求文档 LLM 分析用例。
@@ -158,6 +161,8 @@ func (s *AnalyzeService) Resume(
 	if err != nil {
 		return nil, err
 	}
+	// 绑定数据集的字段定义覆写任务类型模板（字段定义归属数据集）
+	profile = profileWithInputSchema(in, profile)
 	// 快照隔离（METADATA §4.5）：续跑按会话携带的 schema 快照重放/续写——
 	// 元数据热编辑（M3 受控编辑）不影响进行中任务。
 	profile = profileWithSnapshot(cc, profile)
@@ -228,6 +233,7 @@ func (s *AnalyzeService) runAgent(
 	if err != nil {
 		return nil, true, err
 	}
+	profile = profileWithInputSchema(in, profile)
 	sink := tools.NewDraftSink()
 	toolset := buildToolset(in, sink, profile)
 	cc := &port.Context{
@@ -303,6 +309,7 @@ func (s *AnalyzeService) runClassic(
 	if err != nil {
 		return nil, err
 	}
+	profile = profileWithInputSchema(in, profile)
 	// pi Context：单发提取 = 一条 user 消息；会话同样产出（续跑/refine 的载体）
 	llmCtx := &port.Context{
 		Messages:   []port.Message{port.NewUserMessage(renderAnalyzePrompt(in.Text, now, in.Special, profile))},
@@ -359,6 +366,23 @@ func normalizeDraftValues(schema model.DatasetSchema, raws []any, now time.Time)
 		}
 	}
 	return out
+}
+
+// profileWithInputSchema 绑定数据集的字段定义（AnalyzeInput.SchemaJSON，由
+// TaskManager 从数据集行注入）覆写 profile 的 schema 构面——提示词字段规范、写入
+// 工具校验、示例骨架全部按数据集自身口径（字段定义归属数据集，与任务类型解耦）。
+// 非法/空载荷静默回退任务类型模板。
+func profileWithInputSchema(in AnalyzeInput, profile AnalyzeProfile) AnalyzeProfile {
+	if in.SchemaJSON == "" {
+		return profile
+	}
+	schema, ok := model.ParseDatasetSchema(in.SchemaJSON)
+	if !ok {
+		return profile
+	}
+	profile.Schema = func() model.DatasetSchema { return schema }
+	profile.Write.Schema = schema
+	return profile
 }
 
 // profileWithSnapshot 会话携带 schema 快照时以快照覆写 profile 的 schema 构面

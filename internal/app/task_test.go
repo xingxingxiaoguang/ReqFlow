@@ -391,6 +391,23 @@ func (r *memDatasets) SearchSimilarDatasetItemsFiltered(ctx context.Context, vec
 	return nil, nil
 }
 
+func (r *memDatasets) UpdateDatasetSchema(ctx context.Context, datasetID, payload string, version int) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := range r.datasets {
+		if r.datasets[i].ID == datasetID {
+			r.datasets[i].Schema = payload
+			r.datasets[i].SchemaVersion = version
+			return nil
+		}
+	}
+	return fmt.Errorf("数据集不存在")
+}
+
+func (r *memDatasets) SearchDatasetItemsFTS(ctx context.Context, datasetID string, fields []string, q string, n int) ([]model.DatasetItem, error) {
+	return nil, nil
+}
+
 /* ---- 假写入器（生命周期测试：不关心分桶细节，全量 insert） ---- */
 
 type fakeDatasetWriter struct {
@@ -406,7 +423,7 @@ func (f *fakeDatasetWriter) Prepare(ctx context.Context, schema model.DatasetSch
 	if err != nil {
 		return nil, err
 	}
-	p := &PreparedWrite{Target: target, Schema: schema, Fresh: target.Mode == WriteModeCreate,
+	p := &PreparedWrite{Target: target, Schema: schema,
 		preview: WritePreview{Mode: target.Mode, Total: len(values), Insert: len(values)}}
 	for _, v := range values {
 		p.Items = append(p.Items, PreparedItem{Values: v, Fields: marshalJSON(v), Action: ActionInsert})
@@ -518,6 +535,35 @@ func taskOfType(t *testing.T, repo *memTasks, typ string) *model.Task {
 	return &lists[0]
 }
 
+// newTestDataset 预置带 requirement 模板 schema 的数据集（新流程基线：字段定义
+// 随数据集行，任务创建即绑定）。
+func newTestDataset(t *testing.T, datasets *memDatasets) *model.Dataset {
+	t.Helper()
+	return seedTestDataset(t, datasets, model.RequirementSchema(), "需求数据集")
+}
+
+// seedTestDataset 预置带指定 schema 的数据集（字段定义随数据集行落数据集）。
+func seedTestDataset(t *testing.T, datasets *memDatasets, sc model.DatasetSchema, name string) *model.Dataset {
+	t.Helper()
+	d := &model.Dataset{Name: name, Type: sc.Type, Status: model.DatasetStatusReady,
+		Schema: marshalJSON(sc), SchemaVersion: sc.Version}
+	if err := datasets.CreateDataset(context.Background(), d); err != nil {
+		t.Fatalf("预置数据集: %v", err)
+	}
+	return d
+}
+
+// createBoundTask 预置需求数据集并绑定创建任务（requirement 系测试的常规起点）。
+func createBoundTask(t *testing.T, mgr *TaskManager, datasets *memDatasets, title string) *model.Task {
+	t.Helper()
+	ds := newTestDataset(t, datasets)
+	task, err := mgr.Create(context.Background(), model.TaskTypeRequirementImport, title, ds.ID)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	return task
+}
+
 func newTestManager(repo *memTasks, parse parseStepRunner, analyze analyzeStepRunner,
 	datasets *memDatasets, writer datasetStepRunner) *TaskManager {
 	if datasets == nil {
@@ -530,15 +576,20 @@ func newTestManager(repo *memTasks, parse parseStepRunner, analyze analyzeStepRu
 
 func TestTaskCreateSeedsSteps(t *testing.T) {
 	repo := newMemTasks()
-	mgr := newTestManager(repo, &fakeParse{text: "解析结果"}, nil, nil, nil)
+	datasets := newMemDatasets()
+	mgr := newTestManager(repo, &fakeParse{text: "解析结果"}, nil, datasets, nil)
 
 	ctx := context.Background()
-	task, err := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
+	ds := newTestDataset(t, datasets)
+	task, err := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx", ds.ID)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 	if task.Status != model.TaskStatusPending {
 		t.Fatalf("新建任务状态 = %s", task.Status)
+	}
+	if task.OutputDatasetID != ds.ID {
+		t.Fatalf("创建任务应绑定目标数据集: %s", task.OutputDatasetID)
 	}
 	// 工作流定义快照：任务自描述（步骤链 + 依赖声明）
 	if task.Workflow == "" || !strings.Contains(task.Workflow, `"kind":"parse"`) {
@@ -549,18 +600,19 @@ func TestTaskCreateSeedsSteps(t *testing.T) {
 		t.Fatalf("requirement_import 步骤 = %+v", steps)
 	}
 
-	if _, err := mgr.Create(ctx, "bug_import", "x"); err == nil {
+	if _, err := mgr.Create(ctx, "bug_import", "x", ds.ID); err == nil {
 		t.Fatal("第二波类型不应可创建")
 	}
 }
 
 func TestTaskParseToGate(t *testing.T) {
 	repo := newMemTasks()
+	datasets := newMemDatasets()
 	parse := &fakeParse{text: "## 解析后的需求全文"}
-	mgr := newTestManager(repo, parse, nil, nil, nil)
+	mgr := newTestManager(repo, parse, nil, datasets, nil)
 
 	ctx := context.Background()
-	task, _ := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
+	task := createBoundTask(t, mgr, datasets, "需求.docx")
 	if err := mgr.TriggerParse(ctx, task.ID, "/tmp/upload.docx"); err != nil {
 		t.Fatalf("TriggerParse: %v", err)
 	}
@@ -587,10 +639,11 @@ func TestTaskAnalyzePauseResume(t *testing.T) {
 	}}, entered: make(chan struct{})}
 	analyze := NewAnalyzeService(llm, "")
 	analyze.EnableAgentMode(0)
-	mgr := newTestManager(repo, parse, analyze, nil, nil)
+	datasets := newMemDatasets()
+	mgr := newTestManager(repo, parse, analyze, datasets, nil)
 
 	ctx := context.Background()
-	task, _ := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
+	task := createBoundTask(t, mgr, datasets, "需求.docx")
 	_ = mgr.TriggerParse(ctx, task.ID, "/tmp/x.docx")
 	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusAwaiting })
 
@@ -651,10 +704,11 @@ func TestTaskAnalyzeFailureGoesToGate(t *testing.T) {
 	llm := &scriptedLLM{responses: []*port.Message{nil}} // agent 首轮即失败 → 降级也失败
 	analyze := NewAnalyzeService(llm, "")
 	analyze.EnableAgentMode(0)
-	mgr := newTestManager(repo, parse, analyze, nil, nil)
+	datasets := newMemDatasets()
+	mgr := newTestManager(repo, parse, analyze, datasets, nil)
 
 	ctx := context.Background()
-	task, _ := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
+	task := createBoundTask(t, mgr, datasets, "需求.docx")
 	_ = mgr.TriggerParse(ctx, task.ID, "/tmp/x.docx")
 	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusAwaiting })
 
@@ -695,7 +749,7 @@ func TestTaskGenerateDataset(t *testing.T) {
 	mgr := newTestManager(repo, &fakeParse{text: testDoc}, nil, datasets, writer)
 
 	ctx := context.Background()
-	task, _ := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
+	task := createBoundTask(t, mgr, datasets, "需求.docx")
 	_ = mgr.TriggerParse(ctx, task.ID, "/tmp/x.docx")
 	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusAwaiting })
 
@@ -708,7 +762,7 @@ func TestTaskGenerateDataset(t *testing.T) {
 	task.CurrentStep = 4
 	_ = repo.UpdateTask(ctx, task)
 
-	if err := mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeCreate, Name: "订单中心需求集"}); err != nil {
+	if err := mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeMerge, DatasetID: task.OutputDatasetID}); err != nil {
 		t.Fatalf("TriggerGenerateDataset: %v", err)
 	}
 	got := waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusSucceeded })
@@ -720,7 +774,7 @@ func TestTaskGenerateDataset(t *testing.T) {
 	if err != nil {
 		t.Fatalf("数据集未创建: %v", err)
 	}
-	if ds.Name != "订单中心需求集" || ds.Status != model.DatasetStatusReady || ds.ItemCount != 2 {
+	if ds.Name != "需求数据集" || ds.Status != model.DatasetStatusReady || ds.ItemCount != 2 {
 		t.Fatalf("数据集状态 = %+v", ds)
 	}
 	if writer.written != 2 {
@@ -743,7 +797,7 @@ func TestTaskGenerateDatasetFailureRetry(t *testing.T) {
 	mgr := newTestManager(repo, &fakeParse{text: testDoc}, nil, datasets, writer)
 
 	ctx := context.Background()
-	task, _ := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
+	task := createBoundTask(t, mgr, datasets, "需求.docx")
 	_ = mgr.TriggerParse(ctx, task.ID, "/tmp/x.docx")
 	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusAwaiting })
 
@@ -754,7 +808,7 @@ func TestTaskGenerateDatasetFailureRetry(t *testing.T) {
 	task.CurrentStep = 4
 	_ = repo.UpdateTask(ctx, task)
 
-	_ = mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeCreate, Name: "订单中心需求集"})
+	_ = mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeMerge, DatasetID: task.OutputDatasetID})
 	got := waitStepStatus(t, repo, task.ID, 4, model.StepStatusFailed) // 生成失败 → 门步骤 failed
 	if got.Status != model.TaskStatusAwaiting || got.CurrentStep != 4 {
 		t.Fatalf("失败后应回到生成数据集门: %s step=%d", got.Status, got.CurrentStep)
@@ -765,7 +819,7 @@ func TestTaskGenerateDatasetFailureRetry(t *testing.T) {
 
 	// 重试成功：复用同一数据集
 	writer.err = nil
-	_ = mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeCreate, Name: "订单中心需求集"})
+	_ = mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeMerge, DatasetID: task.OutputDatasetID})
 	got2 := waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusSucceeded })
 	if got2.OutputDatasetID != got.OutputDatasetID {
 		t.Fatal("重试应复用同一数据集")
@@ -779,7 +833,7 @@ func TestTaskGenerateDatasetPauseResume(t *testing.T) {
 	mgr := newTestManager(repo, &fakeParse{text: testDoc}, nil, datasets, writer)
 
 	ctx := context.Background()
-	task, _ := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
+	task := createBoundTask(t, mgr, datasets, "需求.docx")
 	_ = mgr.TriggerParse(ctx, task.ID, "/tmp/x.docx")
 	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusAwaiting })
 
@@ -790,7 +844,7 @@ func TestTaskGenerateDatasetPauseResume(t *testing.T) {
 	task.CurrentStep = 4
 	_ = repo.UpdateTask(ctx, task)
 
-	_ = mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeCreate, Name: "订单中心需求集"})
+	_ = mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeMerge, DatasetID: task.OutputDatasetID})
 	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusRunning })
 	paused, err := mgr.Pause(ctx, task.ID)
 	if err != nil {
@@ -815,10 +869,11 @@ func TestTaskGenerateDatasetPauseResume(t *testing.T) {
 func TestTaskCompleteManual(t *testing.T) {
 	repo := newMemTasks()
 	parse := &fakeParse{text: "解析结果"}
-	mgr := newTestManager(repo, parse, nil, nil, nil)
+	datasets := newMemDatasets()
+	mgr := newTestManager(repo, parse, nil, datasets, nil)
 
 	ctx := context.Background()
-	task, _ := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
+	task := createBoundTask(t, mgr, datasets, "需求.docx")
 	_ = mgr.TriggerParse(ctx, task.ID, "/tmp/x.docx")
 	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusAwaiting })
 
@@ -840,10 +895,11 @@ func TestTaskCompleteManual(t *testing.T) {
 
 func TestTaskRecoverStuck(t *testing.T) {
 	repo := newMemTasks()
-	mgr := newTestManager(repo, &fakeParse{text: "x", block: true}, nil, nil, nil)
+	datasets := newMemDatasets()
+	mgr := newTestManager(repo, &fakeParse{text: "x", block: true}, nil, datasets, nil)
 
 	ctx := context.Background()
-	task, _ := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
+	task := createBoundTask(t, mgr, datasets, "需求.docx")
 	_ = mgr.TriggerParse(ctx, task.ID, "/tmp/x.docx")
 	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusRunning })
 
@@ -863,12 +919,13 @@ func TestTaskRecoverStuck(t *testing.T) {
 func seedTargetDataset(t *testing.T, datasets *memDatasets) model.DatasetSchema {
 	t.Helper()
 	ctx := context.Background()
-	_ = datasets.CreateDataset(ctx, &model.Dataset{ID: "ds-x", Type: model.DatasetTypeRequirement,
-		Name: "已有需求集", Status: model.DatasetStatusReady})
 	schema, ok := model.SchemaOf(model.DatasetTypeRequirement)
 	if !ok {
 		t.Fatal("requirement schema 未注册")
 	}
+	// 字段定义随数据集行（新流程）：目标数据集自带 schema，写入按其校验
+	_ = datasets.CreateDataset(ctx, &model.Dataset{ID: "ds-x", Type: model.DatasetTypeRequirement,
+		Name: "已有需求集", Status: model.DatasetStatusReady, Schema: marshalJSON(schema), SchemaVersion: schema.Version})
 	valuesA := map[string]any{"title": "需求A"}
 	valuesB := map[string]any{"title": "需求B", "description": "原始描述"}
 	_ = datasets.UpsertDatasetItems(ctx, "ds-x", "task-9", []port.DatasetItemVector{
@@ -968,7 +1025,7 @@ func TestTaskRewriteDatasetAfterSucceeded(t *testing.T) {
 	mgr := newTestManager(repo, &fakeParse{text: testDoc}, nil, datasets, writer)
 
 	ctx := context.Background()
-	task, _ := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
+	task := createBoundTask(t, mgr, datasets, "需求.docx")
 	_ = mgr.TriggerParse(ctx, task.ID, "/tmp/x.docx")
 	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusAwaiting })
 
@@ -979,7 +1036,7 @@ func TestTaskRewriteDatasetAfterSucceeded(t *testing.T) {
 	task.CurrentStep = 4
 	_ = repo.UpdateTask(ctx, task)
 
-	_ = mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeCreate, Name: "需求集 v1"})
+	_ = mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeMerge, DatasetID: task.OutputDatasetID})
 	got := waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusSucceeded })
 
 	// 终态任务停留于数据集步骤：可换策略重写（幂等安全）
@@ -1004,7 +1061,7 @@ func TestTaskDatasetPreview(t *testing.T) {
 	mgr := newTestManager(repo, &fakeParse{text: testDoc}, nil, datasets, writer)
 
 	ctx := context.Background()
-	task, _ := mgr.Create(ctx, model.TaskTypeRequirementImport, "需求.docx")
+	task := createBoundTask(t, mgr, datasets, "需求.docx")
 	_ = repo.ReplaceTaskItems(ctx, task.ID, []model.TaskItem{
 		{Fields: `{"title":"需求A"}`, Status: model.ItemStatusPending},
 		{Fields: `{"title":"需求D"}`, Status: model.ItemStatusPending},

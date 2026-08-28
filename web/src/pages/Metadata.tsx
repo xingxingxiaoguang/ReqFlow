@@ -205,7 +205,7 @@ function TaskTypeDetail({
               启用此任务类型
             </Button>
           }
-          description="草稿的提示词预览在向导提交结果中给出；此处字段合同/装配描述内容即为将生效的定义。" />
+          description="草稿的提示词预览在向导提交结果中给出；此处字段模板/装配描述内容即为将生效的定义（新建数据集时从模板带出字段定义）。" />
       )}
       <Paragraph type="secondary" style={{ marginBottom: 16 }}>
         <Text strong>{view.name}</Text>（<Text code>{view.type}</Text>）· {view.desc}
@@ -228,7 +228,7 @@ function TaskTypeDetail({
                     </Space>
                   </Descriptions.Item>
                   <Descriptions.Item label="产出数据集类型"><Text code>{view.dataset_type}</Text></Descriptions.Item>
-                  <Descriptions.Item label="字段合同">
+                  <Descriptions.Item label="字段模板">
                     {view.schema.label}（v{view.schema.version} · {view.schema.fields.length} 字段）
                   </Descriptions.Item>
                   <Descriptions.Item label="步骤数">{view.workflow.steps.length}</Descriptions.Item>
@@ -261,7 +261,7 @@ function TaskTypeDetail({
           },
           {
             key: 'schema',
-            label: '字段合同',
+            label: '字段模板（类型级）',
             children: <SchemaEditor view={view} onSaved={onSaved} />,
           },
           {

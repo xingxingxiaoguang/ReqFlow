@@ -76,7 +76,9 @@ func TestToyTaskTypeAgentFullChain(t *testing.T) {
 	mgr := newTestManager(repo, &fakeParse{text: "## 评审记录\n\n登录接口无防刷限制。"}, analyze, datasets, writer)
 
 	ctx := context.Background()
-	task, err := mgr.Create(ctx, toyTaskType, "评审记录.txt")
+	// 新流程：字段定义随数据集行——预置玩具 schema 数据集并绑定创建
+	ds := seedTestDataset(t, datasets, toySchema(), "评审发现集")
+	task, err := mgr.Create(ctx, toyTaskType, "评审记录.txt", ds.ID)
 	if err != nil {
 		t.Fatalf("Create: %v", err)
 	}
@@ -121,16 +123,16 @@ func TestToyTaskTypeAgentFullChain(t *testing.T) {
 		t.Fatalf("数字解析: %+v", b)
 	}
 
-	// 生成数据集：条目身份/校验/落库同样由玩具 schema 驱动
-	if err := mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeCreate, Name: "评审发现集"}); err != nil {
+	// 生成数据集：条目身份/校验/落库同样由数据集行上的玩具 schema 驱动（写入绑定数据集）
+	if err := mgr.TriggerGenerateDataset(ctx, task.ID, DatasetTarget{Mode: WriteModeMerge, DatasetID: ds.ID}); err != nil {
 		t.Fatalf("TriggerGenerateDataset: %v", err)
 	}
 	got := waitTask(t, repo, task.ID, func(tk *model.Task) bool { return tk.Status == model.TaskStatusSucceeded })
-	ds, err := datasets.GetDataset(ctx, got.OutputDatasetID)
-	if err != nil || ds.Type != toyDatasetType || ds.ItemCount != 2 {
-		t.Fatalf("数据集 = %+v err=%v", ds, err)
+	written, err := datasets.GetDataset(ctx, got.OutputDatasetID)
+	if err != nil || written.Type != toyDatasetType || written.ItemCount != 2 {
+		t.Fatalf("数据集 = %+v err=%v", written, err)
 	}
-	dsItems, _ := datasets.ListDatasetItems(ctx, ds.ID, 10)
+	dsItems, _ := datasets.ListDatasetItems(ctx, written.ID, 10)
 	first := parseFieldsValues(dsItems[0].Fields)
 	if first["finding"] != "登录接口无防刷限制" || first["severity"] != "p0" {
 		t.Fatalf("数据集条目 = %+v", first)

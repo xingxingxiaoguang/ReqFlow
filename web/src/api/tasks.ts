@@ -1,12 +1,14 @@
 import { api } from './client'
 import type {
-  ArchiveKind, ArchiveView, Dataset, DatasetItem, DatasetSchema, DatasetType,
-  QueryHit, Task, TaskDetail, TaskStatus, TaskType, Workflow, WritePreview,
+  ArchiveKind, ArchiveView, CompatReport, CreateDatasetInput, Dataset, DatasetDetail,
+  DatasetItem, DatasetSchema, DatasetType, QueryHit, Task, TaskDetail, TaskStatus, TaskType,
+  Workflow, WriteMode, WritePreview,
 } from './types'
 
-/** 任务 API 封装（生命周期：创建/列表/详情/编辑/暂停/继续/完成/步骤触发/草稿保存 + 数据集浏览与写入） */
+/** 任务 API 封装（生命周期：创建/列表/详情/编辑/暂停/继续/完成/步骤触发/草稿保存 + 数据集管理/浏览/写入） */
 export const tasksApi = {
   workflows: () => api.get<{ workflows: Workflow[] }>('/api/workflows'),
+  /** 数据集类型模板目录（新建数据集时带出字段定义；M5 起类型级定义降级为模板） */
   schemas: () => api.get<{ schemas: DatasetSchema[] }>('/api/datasets/schemas'),
   listDatasets: (params: { type?: DatasetType; limit?: number } = {}) => {
     const q = new URLSearchParams()
@@ -14,7 +16,17 @@ export const tasksApi = {
     if (params.limit) q.set('limit', String(params.limit))
     return api.get<{ datasets: Dataset[] }>(`/api/datasets?${q}`)
   },
-  getDataset: (id: string) => api.get<{ dataset: Dataset; items: DatasetItem[] }>(`/api/datasets/${id}`),
+  getDataset: (id: string) => api.get<DatasetDetail>(`/api/datasets/${id}`),
+  createDataset: (input: CreateDatasetInput) =>
+    api.post<{ dataset: Dataset }>('/api/datasets', input),
+  checkDatasetSchema: (id: string, schema: DatasetSchema) =>
+    api.post<{ report: CompatReport }>(`/api/datasets/${id}/schema/check`, { schema }),
+  updateDatasetSchema: (id: string, schema: DatasetSchema, opts: { confirm_risky?: boolean; summary?: string } = {}) =>
+    api.put<{ report: CompatReport }>(`/api/datasets/${id}/schema`, {
+      schema, confirm_risky: opts.confirm_risky ?? false, summary: opts.summary,
+    }),
+  searchDatasetFTS: (id: string, q: string, topN = 50) =>
+    api.post<{ items: DatasetItem[] }>(`/api/datasets/${id}/search`, { q, top_n: topN }),
   queryDatasetItems: (id: string, params: { q?: string; filters?: Record<string, string>; limit?: number } = {}) => {
     const search = new URLSearchParams()
     if (params.q) search.set('q', params.q)
@@ -22,7 +34,9 @@ export const tasksApi = {
     for (const [k, v] of Object.entries(params.filters ?? {})) search.set(`f[${k}]`, v)
     return api.get<{ items: QueryHit[]; total: number }>(`/api/datasets/${id}/items?${search}`)
   },
-  create: (type: TaskType, title: string) => api.post<{ task: Task }>('/api/tasks', { type, title }),
+  /** 创建任务：datasetId 必填——字段元数据随绑定数据集自动带出 */
+  create: (type: TaskType, title: string, datasetId: string) =>
+    api.post<{ task: Task }>('/api/tasks', { type, title, dataset_id: datasetId }),
   list: (params: { status?: TaskStatus; type?: TaskType; limit?: number } = {}) => {
     const q = new URLSearchParams()
     if (params.status) q.set('status', params.status)
@@ -41,9 +55,9 @@ export const tasksApi = {
     return api.post<{ task_id: string }>(`/api/tasks/${id}/parse`, form)
   },
   triggerAnalyze: (id: string) => api.post<{ task_id: string }>(`/api/tasks/${id}/analyze`, {}),
-  triggerGenerateDataset: (id: string, target: { mode: string; dataset_id?: string; dataset_name?: string }) =>
+  triggerGenerateDataset: (id: string, target: { mode: WriteMode; dataset_id?: string }) =>
     api.post<{ task_id: string }>(`/api/tasks/${id}/dataset`, target),
-  previewDatasetWrite: (id: string, target: { mode: string; dataset_id?: string; dataset_name?: string }) =>
+  previewDatasetWrite: (id: string, target: { mode: WriteMode; dataset_id?: string }) =>
     api.post<{ preview: WritePreview }>(`/api/tasks/${id}/dataset/preview`, target),
   pause: (id: string) => api.post<{ task: Task }>(`/api/tasks/${id}/pause`),
   resume: (id: string) => api.post<{ task: Task }>(`/api/tasks/${id}/resume`),

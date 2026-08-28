@@ -129,7 +129,7 @@ func (a *memArchives) ListArchivedDatasets(ctx context.Context, typ string, limi
 
 func newArchiveService(repo *memTasks, datasets *memDatasets) (*ArchiveService, *memArchives) {
 	archives := newMemArchives(repo, datasets)
-	return NewArchiveService(repo, datasets, archives), archives
+	return NewArchiveService(repo, datasets, archives, nil), archives
 }
 
 // TestArchiveTaskRoundTrip 归档任务：主循环消失 → 归档列表可见 → 恢复回主表。
@@ -245,8 +245,10 @@ func TestArchiveDatasetGuard(t *testing.T) {
 // CreateAwaitingTask 造一个停在确认门（awaiting）的任务（归档测试的常规起点）。
 func CreateAwaitingTask(t *testing.T, repo *memTasks) (*model.Task, error) {
 	t.Helper()
-	mgr := newTestManager(repo, &fakeParse{text: testDoc}, nil, nil, nil)
-	task, err := mgr.Create(context.Background(), model.TaskTypeRequirementImport, "需求.docx")
+	datasets := newMemDatasets()
+	mgr := newTestManager(repo, &fakeParse{text: testDoc}, nil, datasets, nil)
+	ds := newTestDataset(t, datasets)
+	task, err := mgr.Create(context.Background(), model.TaskTypeRequirementImport, "需求.docx", ds.ID)
 	if err != nil {
 		return task, err
 	}

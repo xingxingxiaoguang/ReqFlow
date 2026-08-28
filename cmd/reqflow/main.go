@@ -113,10 +113,12 @@ func main() {
 		},
 	})
 
-	datasetRepo := repository.NewDatasetRepo(db)
+	datasetRepo := repository.NewDatasetRepo(db, cfg.FTS.TSConfig)
 	taskRepo := repository.NewTaskRepo(db)
 	archiveRepo := repository.NewArchiveRepo(db)
 	metadataRepo := repository.NewMetadataRepo(db)
+	// 数据集动态索引管理器：FTS/筛选索引随数据集 schema 建删（表达式索引）
+	datasetIndexer := repository.NewDatasetIndexer(db, cfg.FTS.TSConfig)
 
 	/* ---- app 用例 ---- */
 	parseSvc := app.NewParseService(docParser)
@@ -130,7 +132,8 @@ func main() {
 	matchSvc := app.NewMatchService(datasetRepo, embedClient, cfg.Match.DuplicateThreshold)
 	datasetWriter := app.NewDatasetWriter(embedClient, datasetRepo, cfg.Embedding.BatchSize)
 	datasetQuery := app.NewDatasetQueryService(datasetRepo, embedClient)
-	archiveSvc := app.NewArchiveService(taskRepo, datasetRepo, archiveRepo)
+	datasetAdmin := app.NewDatasetAdminService(datasetRepo, datasetIndexer, metadataRepo)
+	archiveSvc := app.NewArchiveService(taskRepo, datasetRepo, archiveRepo, datasetIndexer)
 	overviewSvc := app.NewOverviewService(datasetRepo, taskRepo)
 	metadataSvc := app.NewMetadataService(metadataRepo, datasetRepo)
 	// 元数据覆盖层装载（seed → override → effective）：先于任何用例构造之后、服务就绪之前
@@ -155,7 +158,7 @@ func main() {
 	/* ---- HTTP ---- */
 	engine := httpgin.New(httpgin.Services{
 		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
-		DatasetQuery: datasetQuery, Archive: archiveSvc, Metadata: metadataSvc,
+		DatasetQuery: datasetQuery, DatasetAdmin: datasetAdmin, Archive: archiveSvc, Metadata: metadataSvc,
 		UploadDir: cfg.Workspace.UploadDir,
 		MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -60,6 +61,12 @@ type Config struct {
 	Match struct {
 		DuplicateThreshold float64 `yaml:"duplicate_threshold" env:"REQFLOW_MATCH_DUPLICATE_THRESHOLD"`
 	} `yaml:"match"`
+
+	FTS struct {
+		// TSConfig PG 全文检索分词配置（表达式索引与查询两侧必须一致）。
+		// simple：按空白切词（中文不分词）；中文场景建议安装 zhparser/pg_jieba 扩展后配置。
+		TSConfig string `yaml:"ts_config" env:"REQFLOW_FTS_TS_CONFIG"`
+	} `yaml:"fts"`
 
 	Parser struct {
 		MaxFileMB int `yaml:"max_file_mb" env:"REQFLOW_PARSER_MAX_FILE_MB"`
@@ -168,6 +175,9 @@ func applyDefaults(cfg *Config) {
 	if cfg.Workspace.DemandDir == "" {
 		cfg.Workspace.DemandDir = "./data/demands"
 	}
+	if cfg.FTS.TSConfig == "" {
+		cfg.FTS.TSConfig = "simple"
+	}
 }
 
 // Validate 校验配置完整性。
@@ -182,6 +192,10 @@ func (c *Config) Validate() (errs, warns []string) {
 	}
 	if c.LLM.Provider != "" && c.LLM.Provider != "openai" && c.LLM.Provider != "anthropic" {
 		errs = append(errs, fmt.Sprintf("llm.provider = %q 非法，必须为 openai 或 anthropic", c.LLM.Provider))
+	}
+	// fts.ts_config 会拼进索引与查询 SQL（表达式两侧），必须是合法的文本搜索配置标识
+	if !regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.]{0,62}$`).MatchString(c.FTS.TSConfig) {
+		errs = append(errs, fmt.Sprintf("fts.ts_config = %q 非法（须为 PG 文本搜索配置标识，如 simple / zhparser）", c.FTS.TSConfig))
 	}
 	if c.LLM.APIKey == "" {
 		warns = append(warns, "llm.api_key 未配置：需求文档 LLM 分析不可用（其余功能不受影响）")

@@ -15,9 +15,17 @@ import (
 	"reqflow/internal/port"
 )
 
-type DatasetRepo struct{ db *gorm.DB }
+type DatasetRepo struct {
+	db       *gorm.DB
+	tsConfig string // PG 全文检索分词配置（表达式索引与查询两侧必须一致）
+}
 
-func NewDatasetRepo(db *gorm.DB) *DatasetRepo { return &DatasetRepo{db: db} }
+func NewDatasetRepo(db *gorm.DB, tsConfig string) *DatasetRepo {
+	if strings.TrimSpace(tsConfig) == "" {
+		tsConfig = "simple"
+	}
+	return &DatasetRepo{db: db, tsConfig: tsConfig}
+}
 
 func (r *DatasetRepo) CreateDataset(ctx context.Context, d *model.Dataset) error {
 	if d.ID == "" {
@@ -38,6 +46,18 @@ func (r *DatasetRepo) UpdateDataset(ctx context.Context, d *model.Dataset) error
 			"description": d.Description,
 			"tags":        encodeTags(d.Tags),
 			"updated_at":  d.UpdatedAt,
+		}).Error
+}
+
+// UpdateDatasetSchema 数据集字段定义受控更新（只动 schema/schema_version/updated_at，
+// 不触碰写入器持有的 status/item_count——避免与写入路径竞态覆盖）。
+func (r *DatasetRepo) UpdateDatasetSchema(ctx context.Context, datasetID, payload string, version int) error {
+	return r.db.WithContext(ctx).Model(&datasetRow{}).
+		Where("id = ?", datasetID).
+		Updates(map[string]any{
+			"schema":         payload,
+			"schema_version": version,
+			"updated_at":     time.Now(),
 		}).Error
 }
 
@@ -144,7 +164,7 @@ func (r *DatasetRepo) UpsertDatasetItems(ctx context.Context, datasetID, sourceT
 				if i > 0 {
 					sb.WriteString(",")
 				}
-				sb.WriteString("(?, ?, ?, ?, ?, ?, now())")
+				sb.WriteString("(?, ?::jsonb, ?, ?, ?, ?, now())")
 				args = append(args, datasetID, it.Fields, it.ItemKey, it.Fingerprint, srcPtr, vectorPtr(it.Embedding))
 			}
 			sb.WriteString(` ON CONFLICT (dataset_id, item_key) WHERE item_key <> '' `)
@@ -236,9 +256,9 @@ func (r *DatasetRepo) ListDatasetItems(ctx context.Context, datasetID string, li
 	return out, nil
 }
 
-// fieldCondSQL 单个字段过滤条件 → SQL 片段与参数（fields 为 TEXT，逐条 cast 为 jsonb）。
+// fieldCondSQL 单个字段过滤条件 → SQL 片段与参数（fields 为原生 JSONB，直接取路径）。
 func fieldCondSQL(cond port.FieldCondition) (string, any, error) {
-	extract := "fields::jsonb ->> '" + strings.ReplaceAll(cond.Field, "'", "''") + "'"
+	extract := "fields ->> '" + strings.ReplaceAll(cond.Field, "'", "''") + "'"
 	switch cond.Op {
 	case "eq":
 		return extract + " = ?", cond.Value, nil
@@ -360,11 +380,72 @@ func (r *DatasetRepo) SearchSimilarDatasetItems(ctx context.Context, vec []float
 	return out, nil
 }
 
+/* ---- 全文检索（FTS） ---- */
+
+// SearchDatasetItemsFTS 全文检索：表达式 tsvector @@ websearch_to_tsquery，与
+// DatasetIndexer 动态建的表达式 GIN 索引两侧共用同一分词配置与表达式形状
+// （逐字一致才命中索引）。fields 为本数据集 schema 的 FTS 字段清单（多字段 OR，
+// 各自可 BitmapOr 命中索引）；排序按合成 tsvector 的 ts_rank（仅作用于命中子集）。
+func (r *DatasetRepo) SearchDatasetItemsFTS(ctx context.Context, datasetID string, fields []string, q string, n int) ([]model.DatasetItem, error) {
+	if n <= 0 || n > 200 {
+		n = 50
+	}
+	cfg := strings.ReplaceAll(r.tsConfig, "'", "")
+	conds := make([]string, 0, len(fields))
+	rankParts := make([]string, 0, len(fields))
+	for _, f := range fields {
+		if strings.Contains(f, "'") { // key 白名单上游已保证；此处纵深防御
+			continue
+		}
+		conds = append(conds, fmt.Sprintf("to_tsvector('%s', fields ->> '%s') @@ websearch_to_tsquery('%s', ?)", cfg, f, cfg))
+		rankParts = append(rankParts, fmt.Sprintf("coalesce(fields ->> '%s', '')", f))
+	}
+	if len(conds) == 0 {
+		return nil, fmt.Errorf("该数据集没有可全文检索的字段（schema 未标记 fts）")
+	}
+	rankExpr := fmt.Sprintf("to_tsvector('%s', concat_ws(' ', %s))", cfg, strings.Join(rankParts, ", "))
+	sql := `SELECT id, dataset_id, fields, item_key, fingerprint, source_task_id, created_at, updated_at
+		FROM dataset_items
+		WHERE dataset_id = ? AND (` + strings.Join(conds, " OR ") + `)
+		ORDER BY ts_rank(` + rankExpr + `, websearch_to_tsquery('` + cfg + `', ?)) DESC
+		LIMIT ?`
+	args := make([]any, 0, len(conds)+3)
+	args = append(args, datasetID)
+	for range conds {
+		args = append(args, q)
+	}
+	args = append(args, q, n)
+	// 显式列投影（嵌套带 TableName 的行结构会被 GORM 当关联表丢列——archive_repo 老坑）
+	var rows []struct {
+		ID           string     `gorm:"column:id"`
+		DatasetID    string     `gorm:"column:dataset_id"`
+		Fields       string     `gorm:"column:fields"`
+		ItemKey      string     `gorm:"column:item_key"`
+		Fingerprint  string     `gorm:"column:fingerprint"`
+		SourceTaskID *string    `gorm:"column:source_task_id"`
+		CreatedAt    time.Time  `gorm:"column:created_at"`
+		UpdatedAt    time.Time  `gorm:"column:updated_at"`
+	}
+	if err := r.db.WithContext(ctx).Raw(sql, args...).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	out := make([]model.DatasetItem, len(rows))
+	for i, row := range rows {
+		out[i] = model.DatasetItem{
+			ID: row.ID, DatasetID: row.DatasetID, Fields: row.Fields,
+			ItemKey: row.ItemKey, Fingerprint: row.Fingerprint,
+			SourceTaskID: strVal(row.SourceTaskID),
+			CreatedAt:    row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		}
+	}
+	return out, nil
+}
+
 /* ---- 行 <-> 模型转换 ---- */
 
 func datasetToRow(d *model.Dataset) *datasetRow {
 	return &datasetRow{
-		ID: d.ID, Type: d.Type, Name: d.Name,
+		ID: d.ID, Type: d.Type, Name: d.Name, Schema: d.Schema,
 		Description: d.Description, Tags: encodeTags(d.Tags),
 		SourceTaskID: strPtr(d.SourceTaskID), Status: d.Status,
 		ItemCount: d.ItemCount, SchemaVersion: d.SchemaVersion, Extra: d.Extra,
@@ -374,7 +455,7 @@ func datasetToRow(d *model.Dataset) *datasetRow {
 
 func datasetToModel(row *datasetRow) model.Dataset {
 	return model.Dataset{
-		ID: row.ID, Type: row.Type, Name: row.Name,
+		ID: row.ID, Type: row.Type, Name: row.Name, Schema: row.Schema,
 		Description: row.Description, Tags: decodeTags(row.Tags),
 		SourceTaskID: strVal(row.SourceTaskID), Status: row.Status,
 		ItemCount: row.ItemCount, SchemaVersion: row.SchemaVersion, Extra: row.Extra,

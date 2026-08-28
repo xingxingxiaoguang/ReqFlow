@@ -61,6 +61,7 @@ make build        # → bin/reqflow
 | embedding | base_url / api_key / model / dimensions / batch_size | 语义匹配向量（默认 bge-m3 1024 维）；不配置则自动降级为仅精确匹配 |
 | pingcode | host / client_id / client_secret / grant_type / workload_unit / import_concurrency / sync_* | 企业授权凭据；工时单位 minute/hour/day |
 | match | duplicate_threshold / project_top_n | 查重阈值（默认 0.75）与项目推荐数 |
+| fts | ts_config | PG 全文检索分词配置（默认 simple；中文全文检索需安装 zhparser/pg_jieba 扩展后改配置） |
 | parser | max_file_mb / mineru.* | 上传上限与 MinerU 云端 PDF 解析 |
 | security | encryption_key | 第二波敏感字段入库加密密钥（64 hex） |
 | workspace | name / upload_dir / demand_dir | 工作区名与数据目录 |
@@ -72,9 +73,13 @@ make build        # → bin/reqflow
 | POST | `/api/tasks/:id/parse` | multipart 上传 → fire-and-forget 解析步骤（进度走 SSE） |
 | POST | `/api/tasks/:id/analyze` | fire-and-forget AI 分析步骤（agent 模式：读取/检索/草稿写入/问人四工具） |
 | POST | `/api/tasks/:id/dialog` | 人工回答 agent 的提问（`{call_id, answer}`；ask_human 的出口） |
-| POST | `/api/tasks/:id/dataset` | fire-and-forget 写入数据集：`{mode: create\|merge\|upsert\|replace, dataset_id?, dataset_name?}`（写入声明见下） |
+| POST | `/api/tasks/:id/dataset` | fire-and-forget 写入数据集：`{mode: merge\|upsert\|replace, dataset_id?}`（目标缺省 = 创建任务时绑定的数据集） |
 | POST | `/api/tasks/:id/dataset/preview` | 写入预览：新增/更新/无变化/非法 分桶（不落库） |
-| GET/POST/PATCH | `/api/tasks`（`/:id`、`/:id/items`、`/:id/pause`、`/:id/resume`、`/:id/complete`、`/:id/events`） | 任务生命周期 + 门内草稿 + SSE 事件流 |
+| POST | `/api/tasks` | 创建任务 `{type, title, dataset_id}`——**创建即绑定目标数据集**，字段元数据随数据集自动带出 |
+| GET/POST/PATCH | `/api/tasks`（`/:id`、`/:id/items`、`/:id/pause`、`/:id/resume`、`/:id/complete`、`/:id/events`） | 任务生命周期 + 门内草稿 + SSE 事件流（详情含生效字段定义 `schema`） |
+| POST | `/api/datasets` | 新建数据集 `{name, type, description?, tags?, schema?}`——字段定义缺省从类型模板带出，可整体自定义 |
+| POST/PUT | `/api/datasets/:id/schema/check` · `/api/datasets/:id/schema` | 数据集字段定义 dry-run / 受控保存（兼容守卫 + 审计 + 动态索引同步） |
+| POST | `/api/datasets/:id/search` | 字段全文检索 `{q, top_n?}`（PG 表达式 tsvector，FTS 索引随 schema 动态建删） |
 | DELETE | `/api/tasks/:id` · `/api/datasets/:id` | 归档（移入独立归档表，可恢复，退出主业务循环） |
 | GET | `/api/archives?kind=task\|dataset&type=` | 归档列表（任务含明细快照；数据集含条目与向量） |
 | POST | `/api/archives/:kind/:id/restore` | 归档恢复到主表（数据集恢复后查重/检索语料随之生效） |
@@ -87,22 +92,22 @@ make build        # → bin/reqflow
 | GET/POST | `/api/metadata/history/:kind/:key` · `/api/metadata/export` · `/api/metadata/import` | 版本历史（kind 含 workflow）/ effective 视图导出 / 导入（新类型按向导注册为草稿） |
 | POST | `/api/match/duplicates` | 同项目查重（标题精确 / 语义阈值） |
 | GET | `/api/datasets` `/api/datasets/:id` | 数据集与条目浏览 |
-| GET | `/api/datasets/schemas` | 数据集 schema 目录（字段合同：表格/筛选/向量组装驱动） |
+| GET | `/api/datasets/schemas` | 数据集类型模板目录（新建数据集时带出字段定义） |
 | GET | `/api/datasets/:id/items` | 条目查询：`q=` 语义检索 + `f[字段]=值`（`|` 分隔为 in）筛选叠加 |
 | GET/POST | `/api/settings` `/api/settings/test-llm` | 脱敏配置与连通性测试 |
 
 ## 通用数据集（任务间衔接的标准化接缝）
 
-- **Schema 注册表**（`internal/domain/model/dataset_schema.go`）：数据集类型 = 声明式字段合同（类型/枚举/必填/可筛/向量角色/主键参与）。写入校验、语义向量文档组装、明细表格渲染、条目主键全部 schema 驱动——新任务类型只需注册 schema。
-- **条目身份**：`item_key`（schema 主键字段归一化拼接，同 key = 同一条目）+ `fingerprint`（内容哈希，相同则跳过更新与重嵌）。
-- **写入策略**（`POST /api/tasks/:id/dataset` 的 `mode`）：
-  - `create` 新建数据集（断点续跑为同集全量重建）
-  - `merge` 并入：仅插入新条目，已存在跳过
+- **字段定义归属数据集**（`datasets.schema`，JSONB）：数据集是字段定义的真相源——创建任务即绑定目标数据集，字段元数据自动带出，分析提示词、写入校验、门内表格、查询过滤全按数据集自身的字段执行。类型级定义（`model/dataset_schema.go` + 元数据页）是「数据集类型模板」：新建数据集时带出初始形状，实例可受控编辑独立演进（兼容守卫防打穿存量条目）。字段可标记 `fts`（全文检索）/ `filterable`（筛选下推）/ `in_vector`（向量角色）/ `in_key`（条目主键）。
+- **动态索引随 schema**：FTS 字段建表达式 GIN 索引（`to_tsvector(cfg, fields->>'k')`，中文需 zhparser/pg_jieba）、filterable 字段建表达式 btree——随 schema 受控编辑自动建删，归档回收、恢复重建。
+- **条目身份**：`item_key`（schema 主键字段归一化拼接，同 key = 同一条目）+ `fingerprint`（内容哈希，相同则跳过更新与重嵌）。字段袋为原生 JSONB。
+- **写入策略**（`POST /api/tasks/:id/dataset` 的 `mode`，目标 = 绑定数据集）：
+  - `merge` 并入（默认）：仅插入新条目，已存在跳过
   - `upsert` 并入并更新：新条目插入，已存在按内容更新
   - `replace` 覆盖本任务此前写入的条目（同源重跑；其他来源数据不动）
 - **终态可重写**：已完成的任务停留在数据集步骤时可换策略再次写入（幂等，不产生重复条目）。
-- **统一查询**：字段过滤（filterable 字段 SQL 下推）+ 语义检索叠加，数据集浏览、agent 工具、后续任务输入共用。
-- **归档**：任务与数据集的删除不是物理删除，而是事务性搬入独立归档表（`archived_*`，与主表同构直搬，不带索引不占检索成本）。已归档数据物理离开主表——列表、查重语料、语义检索、统计自动不再触达；归档页可查看、可原样恢复（数据集条目向量原生保留，任务含步骤/明细快照，恢复后可继续未走完的流程）。运行中任务与被进行中任务引用的数据集拒绝归档。
+- **统一查询**：字段过滤（filterable 字段 SQL 下推）+ 语义检索 / 全文检索（`/search`，tsvector 相关度排序）叠加，数据集浏览、agent 工具、后续任务输入共用。
+- **归档**：任务与数据集的删除不是物理删除，而是事务性搬入独立归档表（`archived_*`，与主表同构直搬，不带索引不占检索成本）。已归档数据物理离开主表——列表、查重语料、语义检索、统计自动不再触达；归档页可查看、可原样恢复（数据集条目向量原生保留，动态索引随行内 schema 重建，任务含步骤/明细快照，恢复后可继续未走完的流程）。运行中任务与被进行中任务引用的数据集拒绝归档。
 
 ## 开发命令
 

@@ -12,15 +12,24 @@ import (
 // Dataset 结果集：任务（如需求导入）产出的结构化数据集合，
 // 也是后续任务（如 bug 分析）的输入底料——任务 + 数据驱动的业务闭环。
 type Dataset struct {
-	ID            string
-	Type          string // requirement | bug | …（对应 DatasetSchema.Type）
-	Name          string
-	Description   string // 人类可读说明（列表页展示）
-	Tags          []string
-	SourceTaskID  string // 产生该数据集的任务（可选；merge/upsert 写入不改变来源）
-	Status        string // ready | building（写入中，未发布）
-	ItemCount     int
-	SchemaVersion int // 创建时 schema 版本（演进依据）
+	ID   string
+	Type string // 模板类型标识（新建时从类型模板带出初始 schema）
+	Name string
+	// V2: SchemaID 创建后不可变；Purpose 仅用于目录分类；CurrentSeq 是 Batch 提交位点。
+	WorkspaceID string
+	SchemaID    string
+	Purpose     DatasetPurpose
+	KeyFields   []string
+	CurrentSeq  int64
+	Schema      string // 字段定义真相源（DatasetSchema JSON 文本）：创建时从类型模板固化，
+	// 实例受控演进（schema_version 递增）——分析/写入/查询/展示全部按本字段解析
+	Description  string // 人类可读说明（列表页展示）
+	Tags         []string
+	SourceTaskID string // 产生该数据集的任务（可选；merge/upsert 写入不改变来源）
+	Status       string // ready | building（写入中，未发布）
+	ItemCount    int
+	// SchemaVersion 实例 schema 编辑计数（创建时取模板版本；受控编辑递增）。
+	SchemaVersion int
 	Extra         string
 	CreatedAt     time.Time
 	UpdatedAt     time.Time
@@ -32,9 +41,12 @@ type Dataset struct {
 type DatasetItem struct {
 	ID           string
 	DatasetID    string
+	BatchID      string
 	Fields       string // JSON 文本
 	ItemKey      string
 	Fingerprint  string
+	CommitSeq    int64
+	Provenance   string
 	SourceTaskID string
 	UpdatedAt    time.Time
 	CreatedAt    time.Time
@@ -54,18 +66,20 @@ const (
 
 /* ---- 分析草稿与任务 ---- */
 
-
 // Task 一轮长程流程（需求导入/bug…）的生命周期载体。
 // 状态机：pending → running → awaiting(人工门) | paused → running → succeeded | failed（终态）。
 type Task struct {
-	ID                string
-	Type              string // requirement_import | bug_*（第二波）
-	Title             string
-	Status            string
-	CurrentStep       int // 当前步骤序号（0=未开始；与 TaskStep.Seq 对应）
-	Workflow          string // 工作流定义快照（JSON 文本：步骤链 + 依赖声明，创建时从注册表写入）
-	Input             string // JSON 文本：文件信息/解析文本/附加要求
-	Output            string // JSON 文本：统计/数据集引用等
+	ID                 string
+	WorkspaceID        string
+	DefinitionID       string
+	DefinitionSnapshot string
+	Type               string // requirement_import | bug_*（第二波）
+	Title              string
+	Status             string
+	CurrentStep        int    // 当前步骤序号（0=未开始；与 TaskStep.Seq 对应）
+	Workflow           string // 工作流定义快照（JSON 文本：步骤链 + 依赖声明，创建时从注册表写入）
+	Input              string // JSON 文本：文件信息/解析文本/附加要求
+	Output             string // JSON 文本：统计/数据集引用等
 	// AgentContext 分析会话的 JSON 序列化（port.Context：系统提示 + 消息序列 + 工具表）。
 	// 暂停时落库、继续时回放——换模型续跑与 refine 微调的统一载体；空 = 未记录。
 	AgentContext      string
@@ -79,10 +93,10 @@ type Task struct {
 	// InputDatasetID 本任务消费的数据集（如 bug 分析 → 需求数据集，关联匹配底料）。
 	InputDatasetID string
 	ErrorMessage   string
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
-	StartedAt         time.Time // 零值 = 未开始
-	FinishedAt        time.Time // 零值 = 未终态
+	CreatedAt      time.Time
+	UpdatedAt      time.Time
+	StartedAt      time.Time // 零值 = 未开始
+	FinishedAt     time.Time // 零值 = 未终态
 }
 
 // TaskStep 任务步骤（执行轨迹，逐条落库供详情页时间线与重放）。
@@ -132,10 +146,10 @@ const (
 type StepKind string
 
 const (
-	StepKindParse    StepKind = "parse"    // 文档解析（DocParser）
-	StepKindHuman    StepKind = "human"    // 人工确认门（无执行器，等待人工操作）
-	StepKindAnalyze  StepKind = "analyze"  // AI agent 分析（agent loop + 任务专属工具）
-	StepKindDataset  StepKind = "dataset"  // 生成数据集（向量化写入，任务产出）
+	StepKindParse   StepKind = "parse"   // 文档解析（DocParser）
+	StepKindHuman   StepKind = "human"   // 人工确认门（无执行器，等待人工操作）
+	StepKindAnalyze StepKind = "analyze" // AI agent 分析（agent loop + 任务专属工具）
+	StepKindDataset StepKind = "dataset" // 生成数据集（向量化写入，任务产出）
 )
 
 // StepDependency 步骤依赖声明（元数据展示用：步骤依赖什么数据与工具）。

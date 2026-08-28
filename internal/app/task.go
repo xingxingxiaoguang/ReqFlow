@@ -17,8 +17,7 @@ type taskInputPayload struct {
 	OriginalFilePath    string         `json:"original_file_path"` // 解析步骤：上传暂存；分析后：原文存档
 	ParsedText          string         `json:"parsed_text"`
 	SpecialRequirements string         `json:"special_requirements"`
-	DatasetName         string         `json:"dataset_name"`             // 旧版兼容：生成数据集步骤的命名
-	DatasetTarget       *DatasetTarget `json:"dataset_target,omitempty"` // 写入声明：模式 + 目标数据集
+	DatasetTarget       *DatasetTarget `json:"dataset_target,omitempty"` // 写入策略声明（目标在创建任务时绑定）
 }
 
 // TaskManager 任务门面：CRUD + 人工门操作 + 生命周期触发（httpgin 的唯一入口）。
@@ -72,18 +71,28 @@ func (m *TaskManager) PendingDialog(taskID string) any {
 
 /* ---- 创建 / 查询 / 编辑 ---- */
 
-// Create 创建任务：从工作流注册表取定义，快照进 tasks.workflow 并按定义播种步骤。
+// Create 创建任务：从工作流注册表取定义，快照进 tasks.workflow 并按定义播种步骤；
+// 创建即绑定目标数据集（datasetID 必填）——字段定义随数据集带出，分析提示词、
+// 草稿校验、门内表格、写入全程按该数据集自身的 schema 执行。
 // 任务自描述（步骤链 + 依赖声明），不受定义后续演进影响。
-func (m *TaskManager) Create(ctx context.Context, typ, title string) (*model.Task, error) {
+func (m *TaskManager) Create(ctx context.Context, typ, title, datasetID string) (*model.Task, error) {
 	w, ok := WorkflowOf(typ)
 	if !ok {
 		return nil, fmt.Errorf("不支持的任务类型: %s", typ)
+	}
+	ds, err := m.datasets.GetDataset(ctx, datasetID)
+	if err != nil {
+		return nil, fmt.Errorf("目标数据集不存在: %w", err)
+	}
+	if _, ok := model.ParseDatasetSchema(ds.Schema); !ok {
+		return nil, fmt.Errorf("数据集「%s」缺少字段定义，无法绑定", ds.Name)
 	}
 	title = strings.TrimSpace(title)
 	if title == "" {
 		title = "未命名任务"
 	}
-	t := &model.Task{Type: typ, Title: title, Status: model.TaskStatusPending, Workflow: MarshalWorkflow(w)}
+	t := &model.Task{Type: typ, Title: title, Status: model.TaskStatusPending,
+		Workflow: MarshalWorkflow(w), OutputDatasetID: ds.ID}
 	if err := m.tasks.CreateTask(ctx, t); err != nil {
 		return nil, err
 	}
@@ -129,6 +138,28 @@ func (m *TaskManager) GetDataset(ctx context.Context, id string) (*model.Dataset
 // GetDatasetHeader 仅取数据集头信息（条目查询前的类型定位）。
 func (m *TaskManager) GetDatasetHeader(ctx context.Context, id string) (*model.Dataset, error) {
 	return m.datasets.GetDataset(ctx, id)
+}
+
+// EffectiveSchema 任务生效的字段定义：绑定数据集自身的 schema（创建任务时绑定；
+// 未绑定或载荷缺失返回 false）。门内表格列与创建表单字段预览的解析入口。
+func (m *TaskManager) EffectiveSchema(ctx context.Context, task *model.Task) (model.DatasetSchema, bool) {
+	if task == nil || task.OutputDatasetID == "" {
+		return model.DatasetSchema{}, false
+	}
+	ds, err := m.datasets.GetDataset(ctx, task.OutputDatasetID)
+	if err != nil {
+		return model.DatasetSchema{}, false
+	}
+	return model.ParseDatasetSchema(ds.Schema)
+}
+
+// DatasetSchemaOf 数据集行内字段定义的解析视图（详情响应附带 schema 对象，前端
+// 列驱动免二次查询；httpgin 不依赖 domain，经本方法透出）。
+func (m *TaskManager) DatasetSchemaOf(_ context.Context, ds *model.Dataset) (model.DatasetSchema, bool) {
+	if ds == nil {
+		return model.DatasetSchema{}, false
+	}
+	return model.ParseDatasetSchema(ds.Schema)
 }
 
 // List 任务列表（status/type 为空 = 不过滤）。
@@ -215,17 +246,20 @@ func (m *TaskManager) TriggerAnalyze(ctx context.Context, id string) error {
 	return m.triggerStep(ctx, id, model.StepKindAnalyze, nil)
 }
 
-// TriggerGenerateDataset 写入数据集步骤（查重确认后触发；target 为写入声明：模式 + 目标）。
+// TriggerGenerateDataset 写入数据集步骤（查重确认后触发；target 为写入策略声明，
+// 目标缺省 = 创建任务时绑定的产出数据集）。
 // 终态任务停留于本步骤时也可重触发（幂等写入策略下重写安全）。
 func (m *TaskManager) TriggerGenerateDataset(ctx context.Context, id string, target DatasetTarget) error {
-	target, err := target.Normalize()
-	if err != nil {
-		return err
-	}
 	return m.triggerStep(ctx, id, model.StepKindDataset, func(task *model.Task, _ model.WorkflowStep) error {
+		if target.DatasetID == "" {
+			target.DatasetID = task.OutputDatasetID
+		}
+		t, err := target.Normalize()
+		if err != nil {
+			return err
+		}
 		in := taskInputOf(task)
-		in.DatasetTarget = &target
-		in.DatasetName = target.Name
+		in.DatasetTarget = &t
 		task.Input = marshalJSON(in)
 		return m.tasks.UpdateTask(ctx, task)
 	})
@@ -241,7 +275,10 @@ func (m *TaskManager) PreviewDatasetWrite(ctx context.Context, id string, target
 	if err != nil {
 		return nil, err
 	}
-	t, schema, err := datasetWritePlanFor(task, target)
+	if target.DatasetID == "" {
+		target.DatasetID = task.OutputDatasetID
+	}
+	t, schema, err := m.datasetWritePlanFor(ctx, task, target)
 	if err != nil {
 		return nil, err
 	}

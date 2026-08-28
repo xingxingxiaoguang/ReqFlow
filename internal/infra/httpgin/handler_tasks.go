@@ -12,17 +12,19 @@ import (
 	"reqflow/internal/app"
 )
 
-// createTask POST /api/tasks {type, title} → 创建任务并播种步骤。
+// createTask POST /api/tasks {type, title, dataset_id} → 创建任务并播种步骤。
+// dataset_id 必填：创建即绑定目标数据集，字段元数据随数据集自动带出。
 func (h *handlers) createTask(c *gin.Context) {
 	var req struct {
-		Type  string `json:"type" binding:"required"`
-		Title string `json:"title"`
+		Type      string `json:"type" binding:"required"`
+		Title     string `json:"title"`
+		DatasetID string `json:"dataset_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
-		fail(c, 400, "参数不完整")
+		fail(c, 400, "参数不完整（type 与 dataset_id 必填）")
 		return
 	}
-	task, err := h.svc.Tasks.Create(c.Request.Context(), req.Type, req.Title)
+	task, err := h.svc.Tasks.Create(c.Request.Context(), req.Type, req.Title, req.DatasetID)
 	if err != nil {
 		fail(c, 400, err.Error())
 		return
@@ -46,14 +48,19 @@ func (h *handlers) listWorkflows(c *gin.Context) {
 	ok(c, gin.H{"workflows": h.svc.Tasks.Workflows()})
 }
 
-// getTask GET /api/tasks/:id → 任务 + 步骤 + 明细。
+// getTask GET /api/tasks/:id → 任务 + 步骤 + 明细 + 生效字段定义（绑定数据集的
+// schema，门内表格列/创建信息展示一次拿全）。
 func (h *handlers) getTask(c *gin.Context) {
 	task, steps, items, err := h.svc.Tasks.Get(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		fail(c, 404, "任务不存在")
 		return
 	}
-	ok(c, gin.H{"task": task, "steps": steps, "items": items})
+	resp := gin.H{"task": task, "steps": steps, "items": items}
+	if schema, ok := h.svc.Tasks.EffectiveSchema(c.Request.Context(), task); ok {
+		resp["schema"] = schema
+	}
+	ok(c, resp)
 }
 
 // patchTask PATCH /api/tasks/:id {title?, parsed_text?, special_requirements?} → 编辑任务。
@@ -136,8 +143,8 @@ func (h *handlers) taskAnalyze(c *gin.Context) {
 	ok(c, gin.H{"task_id": c.Param("id")})
 }
 
-// taskGenerateDataset POST /api/tasks/:id/dataset {mode, dataset_id?, dataset_name?}
-// → fire-and-forget 写入数据集步骤（写入声明见 app.DatasetTarget）。
+// taskGenerateDataset POST /api/tasks/:id/dataset {mode, dataset_id?}
+// → fire-and-forget 写入数据集步骤（dataset_id 缺省 = 绑定的产出数据集）。
 func (h *handlers) taskGenerateDataset(c *gin.Context) {
 	var req app.DatasetTarget
 	if err := c.ShouldBindJSON(&req); err != nil {
@@ -151,7 +158,7 @@ func (h *handlers) taskGenerateDataset(c *gin.Context) {
 	ok(c, gin.H{"task_id": c.Param("id")})
 }
 
-// taskDatasetPreview POST /api/tasks/:id/dataset/preview {mode, dataset_id?, dataset_name?}
+// taskDatasetPreview POST /api/tasks/:id/dataset/preview {mode, dataset_id?}
 // → 写入预览：新增/更新/无变化/非法分桶（不落库）。
 func (h *handlers) taskDatasetPreview(c *gin.Context) {
 	var req app.DatasetTarget
@@ -183,14 +190,18 @@ func (h *handlers) listDatasets(c *gin.Context) {
 	ok(c, gin.H{"datasets": datasets})
 }
 
-// getDataset GET /api/datasets/:id → 数据集 + 条目。
+// getDataset GET /api/datasets/:id → 数据集 + 条目 + 字段定义（解析后的 schema 对象）。
 func (h *handlers) getDataset(c *gin.Context) {
 	dataset, items, err := h.svc.Tasks.GetDataset(c.Request.Context(), c.Param("id"))
 	if err != nil {
 		fail(c, 404, "数据集不存在")
 		return
 	}
-	ok(c, gin.H{"dataset": dataset, "items": items})
+	resp := gin.H{"dataset": dataset, "items": items}
+	if schema, ok := h.svc.Tasks.DatasetSchemaOf(c.Request.Context(), dataset); ok {
+		resp["schema"] = schema
+	}
+	ok(c, resp)
 }
 
 // pauseTask POST /api/tasks/:id/pause → 暂停运行中的任务。

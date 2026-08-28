@@ -54,9 +54,9 @@ func (s *DatasetQueryService) Query(ctx context.Context, q DatasetQuery) ([]Quer
 	if q.TopN <= 0 || q.TopN > 500 {
 		q.TopN = 100
 	}
-	schema, ok := effectiveSchemaOf(q.Type)
-	if !ok {
-		return nil, fmt.Errorf("未注册的数据集类型: %s", q.Type)
+	schema, err := s.schemaFor(ctx, q)
+	if err != nil {
+		return nil, err
 	}
 	conds := make([]port.FieldCondition, 0, len(q.Filters))
 	for _, c := range q.Filters {
@@ -117,6 +117,50 @@ func (s *DatasetQueryService) Query(ctx context.Context, q DatasetQuery) ([]Quer
 		})
 	}
 	return limitHits(hits, q.TopN), nil
+}
+
+// SearchFTS 数据集内全文检索（PG 表达式 tsvector）：FTS 字段取自数据集自身 schema
+//（字段定义归属数据集），多字段 OR 命中动态表达式索引，按相关度排序。
+func (s *DatasetQueryService) SearchFTS(ctx context.Context, datasetID, q string, n int) ([]model.DatasetItem, error) {
+	ds, err := s.datasets.GetDataset(ctx, datasetID)
+	if err != nil {
+		return nil, fmt.Errorf("数据集不存在: %w", err)
+	}
+	schema, ok := model.ParseDatasetSchema(ds.Schema)
+	if !ok {
+		return nil, fmt.Errorf("数据集「%s」缺少字段定义", ds.Name)
+	}
+	fields := make([]string, 0, len(schema.Fields))
+	for _, f := range schema.Fields {
+		if f.FTS {
+			fields = append(fields, f.Key)
+		}
+	}
+	if len(fields) == 0 {
+		return nil, fmt.Errorf("数据集「%s」没有可全文检索的字段（schema 未标记 fts）", ds.Name)
+	}
+	return s.datasets.SearchDatasetItemsFTS(ctx, datasetID, fields, q, n)
+}
+
+// schemaFor 查询口径的字段定义：指定数据集时按其自身 schema（字段定义归属数据集，
+// 同类型的不同数据集可各自演进）；跨类型查询按类型模板解析。
+func (s *DatasetQueryService) schemaFor(ctx context.Context, q DatasetQuery) (model.DatasetSchema, error) {
+	if q.DatasetID != "" {
+		ds, err := s.datasets.GetDataset(ctx, q.DatasetID)
+		if err != nil {
+			return model.DatasetSchema{}, fmt.Errorf("数据集不存在: %w", err)
+		}
+		schema, ok := model.ParseDatasetSchema(ds.Schema)
+		if !ok {
+			return model.DatasetSchema{}, fmt.Errorf("数据集「%s」缺少字段定义", ds.Name)
+		}
+		return schema, nil
+	}
+	schema, ok := effectiveSchemaOf(q.Type)
+	if !ok {
+		return model.DatasetSchema{}, fmt.Errorf("未注册的数据集类型: %s", q.Type)
+	}
+	return schema, nil
 }
 
 // schemaTitleKey 取 schema 的向量标题字段 key（语义查询文本挂载位）。

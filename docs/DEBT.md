@@ -15,7 +15,7 @@
 
 **MD-1（B4 · 最高优）**：`internal/app/prompt.go:36` 硬编码「每个工作项草稿包含以下字段」、`:169` 「## 待分析文档」。M4 真机验收时评审导入的提示词预览已经渲染出这段字样——债务从设计文档里的理论项变成了用户可见现实。处置方向：措辞模板随 profile 声明（在 AnalyzeProfile 增名词性声明字段，如产出物称呼/输入文档称呼，渲染器从 profile 取、requirement seed 保持现值），属一次性小改造，但改动的是渲染器契约需同步既有测试断言。
 
-**MD-2（B3)**：HANDOVER §5.3 的「查重阈值 0.75 固定」登记的是用户感知症状；本条补充另一半——语料类型在 `app/match.go` 写死 requirement，向导注册类型产出的数据集不在语义查重语料内（当前无感知是因为前端查重面板是 requirement_import 专属工作区，一旦面板泛化即刻踩雷）。处置方向：语料按数据集类型参数化 + `kind=match_policy` 进元数据（§4.3 注释里预留的名字至今未兑现）。做 Bug 链路第二波时大概率顺路触发（bug 数据集同样需要查重）。
+**MD-2（B3)**：HANDOVER §5.3 的「查重阈值 0.75 固定」登记的是用户感知症状；本条补充另一半——语料类型在 `app/match.go` 写死 requirement，向导注册类型产出的数据集不在语义查重语料内。**M5 后影响面扩大**：数据集实例可各自持有字段定义，`match.go` 仍按 requirement 模板解析语料字段——跨 schema 的语义查重语料组装已失真。处置方向：查重语料随绑定数据集的 schema 解析（复用 `datasets.schema` 真相源）+ `kind=match_policy` 进元数据。做 Bug 链路第二波时大概率顺路触发（bug 数据集同样需要查重）。
 
 **MD-3**：快照三件套只保护工作流形状（tasks.workflow）；schema/profile 是运行时活解析（`profileFor` / `runner.go datasetWritePlanFor`），类型停用即整体离场。处置方向：SetWorkflowStatus disable 前检查该类型非终态任务并提示确认；或至少在返回文案明示语义。
 
@@ -33,3 +33,14 @@
 
 - ~~导出格式口径漂移~~（文档写 YAML / 实现为 JSON）：口径已在 HANDOVER §3.4 定为 JSON。
 - ~~锚行双语义、数据集类型所有权不变量无文档~~（代码有约束、设计无处可查）：均已并入 HANDOVER §3.4。
+
+## 数据集归属化专项（2026-08，M5 收尾盘点）
+
+> M5「字段定义归属数据集」改造（datasets.schema 真相源 + 动态 FTS/筛选索引 + 任务创建绑定 + create 模式退场）遗留：
+
+| 编号 | 债 | 影响 | 处置方向 | 优先级 |
+|------|-----|------|----------|--------|
+| DA-1 | 数据集级 schema 编辑无版本历史视图 | 审计已落 metadata_audit（kind=dataset_schema, key=数据集ID），但 HistoryDrawer 只认类型键——实例级回看无 UI | History 端点已按 (kind,key) 通用，前端加数据集维度入口即可 | 中 |
+| DA-2 | InVector 变更后存量条目向量懒更新 | 受控编辑只告警 NeedsReembed 不自动重嵌；存量条目在下次内容更新时才按新口径重嵌，期间语义检索口径混排 | 需要时提供「数据集重嵌」用例（照 DatasetWriter 向量化分批路径） | 中 |
+| DA-3 | 门内改绑异构数据集无字段映射 | 任务绑定数据集后若在门内显式改绑另一 schema 的数据集，草稿按新 schema 校验、缺失字段整批 invalid（预览可见，属显式决策） | 字段名相同即值透传的自动映射 + 差异提示 | 低 |
+| DA-4 | 归档动态索引回收依赖 ArchiveService 挂钩 | 直接 SQL 删数据集行（绕过用例）会残留 dsidx_* 索引（无害但累积）；无定期对账 | 启动时对账一次（pg_indexes vs datasets 全集） | 低 |

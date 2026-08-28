@@ -143,11 +143,11 @@ export default function TaskDetail() {
       case 3: return <AnalysisPane task={task} stream={{ ...stream, toolTrace }} />
       case 4: return (
         <MatchImportPanel
-          task={task} items={items} importing={task.Status === 'running'} stream={stream}
+          task={task} items={items} schema={data.schema} importing={task.Status === 'running'} stream={stream}
         />
       )
       default: return (
-        <MonitorView task={task} steps={steps} items={items} toolTrace={toolTrace} input={input} />
+        <MonitorView task={task} steps={steps} items={items} schema={data.schema} toolTrace={toolTrace} input={input} />
       )
     }
   })()
@@ -267,13 +267,22 @@ function StepStatusTag({ status }: { status: TaskStep['Status'] }) {
   return <Tag color={t.color} style={{ margin: 0, fontSize: 11 }}>{t.label}</Tag>
 }
 
-/** 监控态（未进入任何工作区阶段 / 终态回放）：概要 + 明细 + 工具轨迹 */
+/** 监控态（未进入任何工作区阶段 / 终态回放）：概要 + 明细 + 工具轨迹。
+ * 明细列由任务生效的字段定义驱动（绑定数据集的 schema；非文本字段前 4 列）。 */
 function MonitorView({
-  task, steps, items, toolTrace, input,
-}: { task: Task; steps: TaskStep[]; items: import('../../api/types').TaskItem[]; toolTrace: ToolTrace[]; input: TaskInput }) {
+  task, steps, items, schema, toolTrace, input,
+}: {
+  task: Task
+  steps: TaskStep[]
+  items: import('../../api/types').TaskItem[]
+  schema?: import('../../api/types').DatasetSchema
+  toolTrace: ToolTrace[]
+  input: TaskInput
+}) {
   const failed = items.filter((i) => i.Status === 'failed').length
   const imported = items.filter((i) => i.Status === 'success').length
   const analyzeStep = steps.find((s) => s.Seq === 3)
+  const briefFields = (schema?.fields ?? []).filter((f) => f.type !== 'text').slice(0, 4)
 
   return (
     <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -321,10 +330,10 @@ function MonitorView({
           <Table
             rowKey="ID" size="small" dataSource={items} pagination={false}
             columns={[
-              { title: '标题', ellipsis: true, render: (_, r) => parseDatasetItemFields(r.Fields)['title'] ?? '' },
-              { title: '项目', width: 120, ellipsis: true, render: (_, r) => parseDatasetItemFields(r.Fields)['project_name'] ?? '' },
-              { title: '类型', width: 80, render: (_, r) => parseDatasetItemFields(r.Fields)['type_id'] ?? '' },
-              { title: '优先级', width: 90, render: (_, r) => parseDatasetItemFields(r.Fields)['priority'] ?? '' },
+              ...briefFields.map((f) => ({
+                title: f.label, width: f.key === 'title' ? undefined : 120, ellipsis: true,
+                render: (_: unknown, r: import('../../api/types').TaskItem) => parseDatasetItemFields(r.Fields)[f.key] ?? '',
+              })),
               {
                 title: '结果', dataIndex: 'Status', width: 90,
                 render: (v) => v === 'success' ? <Tag color="green">成功</Tag> : v === 'failed' ? <Tag color="red">失败</Tag> : <Tag>待导入</Tag>,

@@ -61,6 +61,9 @@ type ItemFilter struct {
 type DatasetRepo interface {
 	CreateDataset(ctx context.Context, d *model.Dataset) error
 	UpdateDataset(ctx context.Context, d *model.Dataset) error
+	// UpdateDatasetSchema 数据集字段定义受控更新（只动 schema/schema_version 两列，
+	// 不触碰写入器持有的 status/item_count——避免与写入路径竞态覆盖）。
+	UpdateDatasetSchema(ctx context.Context, datasetID, payload string, version int) error
 	ListDatasets(ctx context.Context, typ string, limit int) ([]model.Dataset, error)
 	GetDataset(ctx context.Context, id string) (*model.Dataset, error)
 	CountDatasets(ctx context.Context, typ string) (int64, error)
@@ -85,6 +88,20 @@ type DatasetRepo interface {
 	SearchSimilarDatasetItems(ctx context.Context, vec []float32, typ string, n int) ([]SimilarDatasetItem, error)
 	// SearchSimilarDatasetItemsFiltered 语义检索 + 范围/字段过滤（统一查询）。
 	SearchSimilarDatasetItemsFiltered(ctx context.Context, vec []float32, f ItemFilter, n int) ([]SimilarDatasetItem, error)
+	// SearchDatasetItemsFTS 全文检索（PG 表达式 tsvector @@ websearch_to_tsquery，
+	// 命中随 schema 动态建的表达式 GIN 索引；fields 为本数据集 schema 的 FTS 字段 key 清单）。
+	SearchDatasetItemsFTS(ctx context.Context, datasetID string, fields []string, q string, n int) ([]model.DatasetItem, error)
+}
+
+// DatasetIndexer 数据集动态索引管理：FTS（表达式 GIN）与筛选（表达式 btree）索引
+// 随数据集 schema 建删。字段定义在数据集行上，索引是它的派生物——非迁移资产，
+// 生命周期 = 数据集生命周期（创建/受控编辑时同步，归档时回收、恢复时重建）。
+type DatasetIndexer interface {
+	// SyncIndexes 按 schema 同步某数据集的动态索引（FTS/Filterable 字段 diff 建删；
+	// 已正确存在的索引不动，分词配置变更的 FTS 索引重建）。
+	SyncIndexes(ctx context.Context, datasetID string, schema model.DatasetSchema) error
+	// DropIndexes 删除某数据集的全部动态索引（归档时回收；幂等）。
+	DropIndexes(ctx context.Context, datasetID string) error
 }
 
 // TaskFilter 任务列表查询。

@@ -19,7 +19,7 @@ const preStyle: CSSProperties = {
   maxHeight: 420, overflow: 'auto', fontSize: 12, whiteSpace: 'pre-wrap', wordBreak: 'break-word',
 }
 
-/** 字段行内小表（向导用的轻量字段合同编辑；完整编辑器在元数据页） */
+/** 字段行内小表（向导用的轻量字段模板编辑；完整编辑器在元数据页） */
 function WizardFields({
   fields, onChange,
 }: {
@@ -112,7 +112,7 @@ export default function MetadataWizard() {
   const localValidate = (): string | null => {
     if (!/^[a-z][a-z0-9_]{0,62}$/.test(type)) return '任务类型标识须为小写字母开头的 snake_case'
     if (!/^[a-z][a-z0-9_]{0,62}$/.test(datasetType)) return '数据集类型须为小写字母开头的 snake_case'
-    if (!schemaLabel.trim()) return '请填写字段合同名称'
+    if (!schemaLabel.trim()) return '请填写字段模板名称'
     if (!fields.length) return '至少添加一个字段'
     if (!steps.some((s) => s.kind === 'analyze')) return '步骤链至少需要一个 AI 分析步骤'
     return null
@@ -187,7 +187,7 @@ export default function MetadataWizard() {
           </Space>
           <StepsEditor steps={steps} onChange={setSteps} />
 
-          <Typography.Title level={5} style={{ marginTop: 24 }}>② 字段合同</Typography.Title>
+          <Typography.Title level={5} style={{ marginTop: 24 }}>② 数据集字段模板</Typography.Title>
           <Space direction="vertical" style={{ width: '100%', marginBottom: 12 }}>
             <Input style={{ width: 320 }} placeholder="合同名称（如：评审记录）" value={schemaLabel}
               onChange={(e) => setSchemaLabel(e.target.value)} />
