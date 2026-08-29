@@ -178,8 +178,24 @@ func main() {
 		logger.Error("llm.extract Executor 初始化失败", "err", err)
 		os.Exit(1)
 	}
+	v2Cleaning, err := apppipeline.NewCleaningService(pipelineRepo)
+	if err != nil {
+		logger.Error("V2 Cleaning Pipeline 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	dataTransformExecutor, err := apppipeline.NewDataTransformExecutor(v2Cleaning)
+	if err != nil {
+		logger.Error("data.transform Executor 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	dataValidateExecutor, err := apppipeline.NewDataValidateExecutor(v2Cleaning)
+	if err != nil {
+		logger.Error("data.validate Executor 初始化失败", "err", err)
+		os.Exit(1)
+	}
 	// V2 Registry 只注册已经具备真实资源持久化与恢复语义的 Executor。
-	v2Registry, err := apporchestrator.NewRegistry(sourceParseExecutor, llmExtractExecutor)
+	v2Registry, err := apporchestrator.NewRegistry(sourceParseExecutor, llmExtractExecutor,
+		dataTransformExecutor, dataValidateExecutor)
 	if err != nil {
 		logger.Error("V2 Executor Registry 初始化失败", "err", err)
 		os.Exit(1)
@@ -219,7 +235,7 @@ func main() {
 		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
 		DatasetQuery: datasetQuery, DatasetAdmin: datasetAdmin, Archive: archiveSvc, Metadata: metadataSvc,
 		V2Definitions: v2Definitions, V2Runtime: v2Runtime, V2Datasets: v2Datasets,
-		V2Assets: v2Assets, V2Extractions: v2Extractions,
+		V2Assets: v2Assets, V2Extractions: v2Extractions, V2Cleaning: v2Cleaning,
 		UploadDir: cfg.Workspace.UploadDir, MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})
 	mountStatic(engine)

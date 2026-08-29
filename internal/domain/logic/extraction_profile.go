@@ -17,9 +17,7 @@ const (
 	MaxExtractionProfileJSONBytes = 256 << 10
 )
 
-// NormalizeExtractionProfile 校验并规范化不可变抽取配置。NormalizationRules 和
-// ValidationRules 在对应确定性 Executor 的 DSL 落地前只允许空数组，防止先存入
-// 一批运行时实际不会执行的“配置”。
+// NormalizeExtractionProfile 校验并规范化不可变抽取与清洗配置。
 func NormalizeExtractionProfile(profile model.ExtractionProfile, schema model.DatasetSchemaDefinition) (model.ExtractionProfile, string, error) {
 	profile.Name = strings.TrimSpace(profile.Name)
 	profile.RecordGranularity = strings.TrimSpace(profile.RecordGranularity)
@@ -48,11 +46,8 @@ func NormalizeExtractionProfile(profile model.ExtractionProfile, schema model.Da
 	if err != nil {
 		return profile, "", err
 	}
-	profile.NormalizationRules, err = normalizeReservedRules("normalization_rules", profile.NormalizationRules)
-	if err != nil {
-		return profile, "", err
-	}
-	profile.ValidationRules, err = normalizeReservedRules("validation_rules", profile.ValidationRules)
+	profile.NormalizationRules, profile.ValidationRules, err = NormalizeCleaningRules(
+		profile.NormalizationRules, profile.ValidationRules, schema.JSONSchema)
 	if err != nil {
 		return profile, "", err
 	}
@@ -168,21 +163,4 @@ func decodeStrictSingleJSON(payload []byte, dst any) error {
 		return err
 	}
 	return nil
-}
-
-func normalizeReservedRules(name string, raw json.RawMessage) (json.RawMessage, error) {
-	if len(strings.TrimSpace(string(raw))) == 0 {
-		return json.RawMessage(`[]`), nil
-	}
-	if len(raw) > MaxExtractionProfileJSONBytes {
-		return nil, fmt.Errorf("%s 超过大小限制", name)
-	}
-	var rules []any
-	if err := decodeSingleJSON(raw, &rules); err != nil {
-		return nil, fmt.Errorf("%s 必须是 JSON array: %w", name, err)
-	}
-	if len(rules) != 0 {
-		return nil, fmt.Errorf("%s 的声明式 DSL 尚未启用，当前必须为空数组", name)
-	}
-	return json.RawMessage(`[]`), nil
 }

@@ -80,12 +80,13 @@ make build        # → bin/reqflow
 - `GET /api/v2/parsed-documents/:id/blocks?after_ordinal=&limit=`
 - `POST /api/v2/extraction-profiles`、`GET /api/v2/extraction-profiles/:id`
 - `GET /api/v2/record-draft-sets/:id`
+- `GET /api/v2/transformed-record-sets/:id`、`GET /api/v2/validation-result-sets/:id`
 - `POST /api/v2/task-definitions`、`POST /api/v2/tasks`
 - `POST /api/v2/tasks/:id/start|pause|resume`
 - `POST /api/v2/tasks/:id/steps/:step_id/retry|approve`
 - `GET /api/v2/tasks/:id`、`GET /api/v2/tasks/:id/events`
 
-V2 Schema/Profile 不提供 PUT/PATCH；结构或抽取合同变化必须创建新资源。`source.parse` 将内容寻址 Asset 解析为带逐文件状态的 `ParsedDocumentSet`；`llm.extract` 按稳定 Block 分块生成 `RecordDraftSet`，严格校验 Schema 字段、置信度和 Asset/Block/原文 quote 来源，重试只重跑失败分块。当前前端仍是 Legacy 页面，其余机器 Executor 随产品规格清洗纵向切片逐步注册。
+V2 Schema/Profile 不提供 PUT/PATCH；结构或抽取合同变化必须创建新资源。`source.parse` 将内容寻址 Asset 解析为带逐文件状态的 `ParsedDocumentSet`；`llm.extract` 按稳定 Block 分块生成 `RecordDraftSet`，严格校验 Schema 字段、置信度和 Asset/Block/原文 quote 来源，重试只重跑失败分块；`data.transform` 使用受控规则完成类型、单位、枚举、日期/布尔与派生字段转换，`data.validate` 在固定 Dataset `through_seq` 上生成 Schema/业务规则/Batch 重复/已有 key 冲突结果。四个 Executor 的输出均为可恢复、可审计的不可变 Manifest。当前前端仍是 Legacy 页面，审核与发布 Executor 随产品规格清洗纵向切片继续接入。
 Task 输入绑定接受具体 `resource_id`；Dataset 也可传 `resource_alias`，创建时会解析为具体 Dataset，并为 `dataset_boundary` 固化当时的 `through_seq`。
 
 ### Legacy（待 V2 前端切流后删除）

@@ -9,6 +9,7 @@ import (
 	"io"
 	"math"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -344,12 +345,23 @@ func validateJSONValue(schema map[string]any, value any, path string) error {
 				}
 			}
 		}
+		requiredNames := make([]string, 0, len(required))
 		for name := range required {
+			requiredNames = append(requiredNames, name)
+		}
+		sort.Strings(requiredNames)
+		for _, name := range requiredNames {
 			if _, exists := object[name]; !exists {
 				return fmt.Errorf("字段 %s.%s 为必填项", path, name)
 			}
 		}
-		for name, childValue := range object {
+		objectFields := make([]string, 0, len(object))
+		for name := range object {
+			objectFields = append(objectFields, name)
+		}
+		sort.Strings(objectFields)
+		for _, name := range objectFields {
+			childValue := object[name]
 			raw, exists := props[name]
 			if !exists {
 				return fmt.Errorf("字段 %s.%s 未在 Schema 中声明", path, name)

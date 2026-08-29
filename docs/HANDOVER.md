@@ -95,6 +95,8 @@ internal/domain  实体模型 + 纯领域逻辑（零三方依赖，仅标准库
 | `internal/app/pipeline/dataset_service.go` | 创建不可变 Schema/Dataset，创建和提交追加型 Batch；提交前完成字段校验和稳定排序 |
 | `internal/app/pipeline/{asset_service,source_parse_executor}.go` | Asset/AssetSet 用例、逐文件结构化解析、缓存恢复、checkpoint/progress 与首个机器 Executor |
 | `internal/app/pipeline/{extraction_service,llm_extract_executor}.go` | Profile 用例、稳定分块、严格 LLM 抽取、原文证据校验、逐单元恢复和 `llm.extract` Executor |
+| `internal/domain/logic/record_cleaning.go` | 受控归一化/校验 DSL、确定性类型编码、字段 Diff 与业务规则纯函数 |
+| `internal/app/pipeline/{cleaning_service,cleaning_executors}.go` | TransformedRecordSet/ValidationResultSet 用例、逐记录恢复和 `data.transform`/`data.validate` Executor |
 | `internal/app/orchestrator/definition_service.go` | 创建 TaskDefinition；创建 Task 时固化定义快照、输入资源和 StepRun |
 | `internal/app/orchestrator/{executor,scheduler,worker,runtime_service}.go` | Stage B 执行内核：Registry、资源解析、ready-set、lease Worker、暂停/恢复/重试和人工 Gate |
 | `internal/app/orchestrator/api.go` | V2 TaskDefinition/Task 入站 DTO 与通用任务快照；HTTP 不直接依赖 domain |
@@ -107,11 +109,13 @@ internal/domain  实体模型 + 纯领域逻辑（零三方依赖，仅标准库
 | `internal/infra/{blobstore,parser}` | 内容寻址本地 Blob 实现；Markdown/DOCX/PDF 结构化区块解析 |
 | `internal/infra/repository/asset_repo.go` | Asset/AssetSet/ParsedDocument/Manifest 持久化和 producer attempt fencing |
 | `internal/infra/repository/extraction_repo.go` | Profile/RecordDraft 持久化、逐单元恢复和 Step lease + producer attempt 双重 fencing |
+| `internal/infra/repository/cleaning_repo.go` | 转换/校验 Manifest、固定 Dataset through_seq、逐记录幂等和 producer fencing |
 | `internal/infra/repository/orchestrator_repo.go` | TaskDefinition JSONB 快照、Task 输入绑定和 StepRun 的事务写入 |
 | `internal/infra/httpgin/handler_v2_*.go` | `/api/v2` 最小独立入口；Task SSE 从数据库快照 diff，不以进程 Broker 为事实源 |
 | `internal/infra/database/migrations/0012_pipeline_v2_foundation.*.sql` | V2 分阶段开发迁移；Legacy 删除后压平为新 `0001` |
 | `internal/infra/database/migrations/0013_asset_parse_manifests.*.sql` | `source.parse` 多文件输出 Manifest 与逐文件状态 |
 | `internal/infra/database/migrations/0014_extraction_drafts.*.sql` | `llm.extract` 输出 Manifest、稳定 ExtractionUnit 与可追溯 RecordDraft |
+| `internal/infra/database/migrations/0015_transform_validation_manifests.*.sql` | `data.transform`/`data.validate` 不可变 Manifest、记录 Diff、问题和分类结果 |
 | `internal/infra/repository/pipeline_integration_test.go` | PostgreSQL 真机验证 Batch、Outbox、Task 快照和资源绑定 |
 
 #### Legacy 代码地图（理解和拆除用）
@@ -635,7 +639,9 @@ AssetSet → source.parse → llm.extract → data.transform → data.validate
 
 完成标准：第二次任务能向同一 Dataset 追加 Batch，且所有新 Item 都能追溯到 Asset/Block。
 
-当前完成到 `llm.extract`：解析输出是独立 `ParsedDocumentSet`，抽取输出是独立 `RecordDraftSet`；后者把稳定分块、逐单元状态、字段置信度、Asset/Block/quote provenance 和跨 attempt 请求/token 用量一并持久化。任何单元失败都会先形成 partial/failed Manifest，再让 Step 失败；重试同一 StepRun 时只重跑未成功单元，旧 attempt 无法覆盖新结果。下一提交从确定性的 `data.transform` 与 `data.validate` 开始，单位、日期、枚举、布尔和最终类型编码不得交给 LLM。
+当前完成到 `data.validate`：解析输出是独立 `ParsedDocumentSet`，抽取输出是独立 `RecordDraftSet`；后者把稳定分块、逐单元状态、字段置信度、Asset/Block/quote provenance 和跨 attempt 请求/token 用量一并持久化。`data.transform` 通过受控 DSL 和 Schema 确定性生成 `TransformedRecordSet`，保留字段 before/after Diff 与转换问题；`data.validate` 在首次运行时固定目标 Dataset `through_seq`，生成 Schema/业务规则、Batch 重复和已有 ItemKey 冲突分类。四类 Manifest 都有 Step attempt fencing，重试只补齐缺失记录，旧 Worker 不能覆盖新结果。
+
+下一提交实现审核与发布：审核必须从 ValidationResultSet 创建不可变 ApprovedRecordSet，记录修改、排除和确认依据；`data.publish` 只消费 ApprovedRecordSet，并复用现有 DatasetService/Batch 提交事务。不要让 Human Gate 直接接收前端任意 UUID，也不要把编辑结果放进 Step progress。
 
 ### 5.4 后续：查询 Dataset、混合检索和业务任务
 
@@ -652,7 +658,7 @@ AssetSet → source.parse → llm.extract → data.transform → data.validate
 ### 5.5 当前现场状态和常见误区
 
 - 不假设工作区干净；每次接手先看 `git status --short`，不要用 reset/checkout 回退他人修改。
-- 本机开发库已经执行过 `0012`。如果迁移文件继续变化导致本地列不一致，直接重建开发数据库，不为本地草稿状态追加兼容迁移。
+- 本机开发库已经执行到 `0015`。如果已合入迁移继续变化导致本地列不一致，直接重建开发数据库，不为本地草稿状态追加兼容迁移。
 - `0012` 最终会被压平，不要围绕旧 `datasets.schema/schema_version`、`task_steps` 或 `metadata_registry` 设计新外键和新功能。
 - `DatasetService.CommitBatch` 当前逐条 INSERT，正确性优先。真实批量压测出现瓶颈后再改成参数化批量 SQL，必须保持同一事务与 seq 顺序。
 - `resource_id` 当前是通用 UUID，没有数据库级多态外键；资源类型和存在性应由 app service 校验。

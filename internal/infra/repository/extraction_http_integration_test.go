@@ -47,7 +47,13 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 	}
 	parseExecutor, _ := apppipeline.NewSourceParseExecutor(assets)
 	extractExecutor, _ := apppipeline.NewLLMExtractExecutor(extractions)
-	registry, err := apporchestrator.NewRegistry(parseExecutor, extractExecutor)
+	cleaning, err := apppipeline.NewCleaningService(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	transformExecutor, _ := apppipeline.NewDataTransformExecutor(cleaning)
+	validateExecutor, _ := apppipeline.NewDataValidateExecutor(cleaning)
+	registry, err := apporchestrator.NewRegistry(parseExecutor, extractExecutor, transformExecutor, validateExecutor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -64,7 +70,7 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 		t.Fatal(err)
 	}
 	engine := httpgin.New(httpgin.Services{V2Datasets: apppipeline.NewDatasetService(repo),
-		V2Assets: assets, V2Extractions: extractions, V2Definitions: definitions,
+		V2Assets: assets, V2Extractions: extractions, V2Cleaning: cleaning, V2Definitions: definitions,
 		V2Runtime: runtime, MaxFileMB: 2})
 	workspaceID := fmt.Sprintf("extract-http-%d", time.Now().UnixNano())
 
@@ -78,7 +84,17 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 		"workspace_id": workspaceID, "name": "产品规格抽取", "target_schema_id": schemaID,
 		"record_granularity": "每个产品一条记录", "system_instruction": "抽取 SKU 和产品名称",
 		"field_guides": map[string]any{"sku": "原文中的 SKU", "name": "产品名称"},
+		"validation_rules": []any{map[string]any{"field": "sku", "operation": "regex",
+			"pattern": "^[A-Z]-[0-9]+$", "severity": "warning"}},
 	})
+	datasetID := postID(t, engine, "/api/v2/datasets", "dataset", map[string]any{
+		"workspace_id": workspaceID, "name": "产品基础数据", "purpose": "base",
+		"schema_id": schemaID, "key_fields": []string{"sku"},
+	})
+	existingBatchID := postID(t, engine, "/api/v2/datasets/"+datasetID+"/batches", "batch", map[string]any{})
+	postJSON(t, engine, http.MethodPost, "/api/v2/batches/"+existingBatchID+"/commit", map[string]any{
+		"items": []any{map[string]any{"fields": map[string]any{"sku": "A-100", "name": "已存在产品"}}},
+	}, http.StatusOK)
 	assetID, _ := uploadV2Asset(t, engine, workspaceID, "product.md", "text/markdown",
 		[]byte("# 产品 A\n\nSKU: A-100\n\n名称：产品 A"), http.StatusCreated)
 	assetSetID := postID(t, engine, "/api/v2/asset-sets", "asset_set", map[string]any{
@@ -86,11 +102,13 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 	})
 	definitionID := postID(t, engine, "/api/v2/task-definitions", "definition", map[string]any{
 		"workspace_id": workspaceID, "key": fmt.Sprintf("extract_%d", time.Now().UnixNano()),
-		"name": "解析并抽取", "status": "active",
-		"input_ports": map[string]any{"source": map[string]any{
-			"resource_type": "asset_set", "required": true}},
-		"output_ports":    map[string]any{"drafts": map[string]any{"resource_type": "record_drafts"}},
-		"output_bindings": map[string]any{"drafts": "$step.extract.drafts"},
+		"name": "解析、抽取、转换并校验", "status": "active",
+		"input_ports": map[string]any{
+			"source": map[string]any{"resource_type": "asset_set", "required": true},
+			"target": map[string]any{"resource_type": "dataset", "required": true},
+		},
+		"output_ports":    map[string]any{"validation": map[string]any{"resource_type": "validation_results"}},
+		"output_bindings": map[string]any{"validation": "$step.validate.validation"},
 		"steps": []any{
 			map[string]any{"id": "parse", "name": "解析", "kind": "source.parse",
 				"inputs":  map[string]any{"assets": "$task.source"},
@@ -99,12 +117,20 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 				"depends_on": []string{"parse"}, "inputs": map[string]any{"documents": "$step.parse.documents"},
 				"outputs": map[string]any{"drafts": "record_drafts"},
 				"config":  map[string]any{"extraction_profile_id": profileID}},
+			map[string]any{"id": "transform", "name": "确定性转换", "kind": "data.transform",
+				"depends_on": []string{"extract"}, "inputs": map[string]any{"drafts": "$step.extract.drafts"},
+				"outputs": map[string]any{"records": "transformed_records"}},
+			map[string]any{"id": "validate", "name": "校验", "kind": "data.validate",
+				"depends_on": []string{"transform"}, "inputs": map[string]any{
+					"records": "$step.transform.records", "dataset": "$task.target"},
+				"outputs": map[string]any{"validation": "validation_results"}},
 		},
 	})
 	taskID := postID(t, engine, "/api/v2/tasks", "task", map[string]any{
-		"definition_id": definitionID, "title": "抽取产品", "bindings": []any{map[string]any{
-			"port_name": "source", "resource_type": "asset_set", "resource_id": assetSetID,
-		}},
+		"definition_id": definitionID, "title": "抽取并校验产品", "bindings": []any{
+			map[string]any{"port_name": "source", "resource_type": "asset_set", "resource_id": assetSetID},
+			map[string]any{"port_name": "target", "resource_type": "dataset", "resource_id": datasetID},
+		},
 	})
 	postJSON(t, engine, http.MethodPost, "/api/v2/tasks/"+taskID+"/start", nil, http.StatusOK)
 	if err := worker.RunOnce(context.Background()); err != nil {
@@ -138,13 +164,62 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 	if llm.calls != firstAttemptCalls+1 {
 		t.Fatalf("retry must call LLM only for the failed unit: first=%d total=%d", firstAttemptCalls, llm.calls)
 	}
+	if err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	snapshot := requestJSON(t, engine, http.MethodGet, "/api/v2/tasks/"+taskID, nil, http.StatusOK)
 	data := snapshot["data"].(map[string]any)
 	if data["task"].(map[string]any)["status"] != string(model.TaskStatusSucceeded) {
-		t.Fatalf("parse+extract task failed: %+v", data)
+		t.Fatalf("parse+extract+transform+validate task failed: %+v", data)
 	}
 	outputs := data["outputs"].([]any)
-	draftSetID := outputs[0].(map[string]any)["resource_id"].(string)
+	validationSetID := outputs[0].(map[string]any)["resource_id"].(string)
+	validationResponse := requestJSON(t, engine, http.MethodGet,
+		"/api/v2/validation-result-sets/"+validationSetID, nil, http.StatusOK)
+	validationSet := validationResponse["data"].(map[string]any)["validation_result_set"].(map[string]any)
+	if validationSet["status"] != model.ValidationResultSetSucceeded ||
+		validationSet["record_count"].(float64) == 0 || validationSet["target_dataset_id"] != datasetID ||
+		int64(validationSet["validated_through_seq"].(float64)) != 1 {
+		t.Fatalf("validation manifest=%+v", validationSet)
+	}
+	foundExistingConflict := false
+	for _, rawResult := range validationSet["results"].([]any) {
+		for _, rawIssue := range rawResult.(map[string]any)["issues"].([]any) {
+			if rawIssue.(map[string]any)["code"] == "conflict_existing_key" {
+				foundExistingConflict = true
+			}
+		}
+	}
+	if !foundExistingConflict {
+		t.Fatalf("validation did not detect key conflict at pinned seq: %+v", validationSet)
+	}
+	transformedSetID := validationSet["transformed_record_set_id"].(string)
+	transformedResponse := requestJSON(t, engine, http.MethodGet,
+		"/api/v2/transformed-record-sets/"+transformedSetID, nil, http.StatusOK)
+	transformedSet := transformedResponse["data"].(map[string]any)["transformed_record_set"].(map[string]any)
+	if transformedSet["status"] != model.TransformedRecordSetSucceeded || transformedSet["transformed_count"].(float64) == 0 {
+		t.Fatalf("transformed manifest=%+v", transformedSet)
+	}
+	storedTransform, storedRecords, err := cleaning.GetTransformedRecordSet(context.Background(), transformedSetID)
+	if err != nil || len(storedRecords) == 0 {
+		t.Fatalf("读取转换结果: set=%+v records=%d err=%v", storedTransform, len(storedRecords), err)
+	}
+	if err := repo.SaveTransformedRecord(context.Background(), transformedSetID, storedTransform.ProducerAttempt,
+		&storedRecords[0]); !errors.Is(err, port.ErrStaleResourceExecution) {
+		t.Fatalf("终态 Step 必须拒绝过期转换写入: %v", err)
+	}
+	storedValidation, storedResults, err := cleaning.GetValidationResultSet(context.Background(), validationSetID)
+	if err != nil || len(storedResults) == 0 {
+		t.Fatalf("读取校验结果: set=%+v results=%d err=%v", storedValidation, len(storedResults), err)
+	}
+	if err := repo.SaveValidationResult(context.Background(), validationSetID, storedValidation.ProducerAttempt,
+		&storedResults[0]); !errors.Is(err, port.ErrStaleResourceExecution) {
+		t.Fatalf("终态 Step 必须拒绝过期校验写入: %v", err)
+	}
+	draftSetID := transformedSet["record_draft_set_id"].(string)
 	response := requestJSON(t, engine, http.MethodGet,
 		"/api/v2/record-draft-sets/"+draftSetID, nil, http.StatusOK)
 	draftSet := response["data"].(map[string]any)["record_draft_set"].(map[string]any)
@@ -179,6 +254,7 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 		_ = db.Exec(`DELETE FROM task_definitions WHERE id = ?`, definitionID).Error
 		_ = db.Exec(`DELETE FROM asset_sets WHERE id = ?`, assetSetID).Error
 		_ = db.Exec(`DELETE FROM assets WHERE id = ?`, assetID).Error
+		_ = db.Exec(`DELETE FROM datasets WHERE id = ?`, datasetID).Error
 		_ = db.Exec(`DELETE FROM extraction_profiles WHERE id = ?`, profileID).Error
 		_ = db.Exec(`DELETE FROM dataset_schemas WHERE id = ?`, schemaID).Error
 	})

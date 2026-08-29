@@ -1,13 +1,13 @@
 # ReqFlow 异构数据管线 V2 落地方案
 
-> 状态：实施中（阶段 A + 阶段 B 后端完成；阶段 C 已完成结构化解析与 LLM 候选抽取）
+> 状态：实施中（阶段 A + 阶段 B 后端完成；阶段 C 已完成解析、候选抽取、确定性转换与校验）
 > 日期：2026-08-29
 > 适用范围：ReqFlow 当前未上线版本
 > 关联文档：[产品总纲](./PRODUCT.md) · [交接文档](./HANDOVER.md) · [技术债台账](./DEBT.md)
 
 ## 0. 实施状态
 
-截至 2026-08-29，阶段 A 核心底座、阶段 B 后端和阶段 C 的解析/抽取链路已经落地：
+截至 2026-08-29，阶段 A 核心底座、阶段 B 后端和阶段 C 的解析/抽取/转换/校验链路已经落地：
 
 - [x] Asset、ParsedDocument、不可变 DatasetSchemaDefinition、DatasetBatch、ResourceBinding、TaskDefinition、StepRun、RetrievalSnapshot 和 Artifact 领域模型。
 - [x] JSON Schema 受控子集校验、规范化和稳定哈希。
@@ -28,8 +28,11 @@
 - [x] 不可变 ExtractionProfile、目标 Schema/工作区校验和稳定 ProfileHash。
 - [x] `llm.extract` Executor、Schema 驱动工具参数、严格 JSON、原文 quote 校验和候选 RecordDraft 资源。
 - [x] 稳定 ExtractionUnit、逐单元状态、partial Manifest、成功单元复用、跨 attempt token 聚合和 producer attempt fencing。
+- [x] 受控归一化/校验 DSL：类型、单位、枚举、日期/布尔、数组拆分、派生字段及业务规则，不接受脚本或任意表达式。
+- [x] `data.transform` Executor、不可变 TransformedRecordSet、逐记录恢复、字段修改 Diff、问题明细和 producer attempt fencing。
+- [x] `data.validate` Executor、固定 Dataset `through_seq` 的 ValidationResultSet、Schema/业务规则、Batch 重复与已有 ItemKey 冲突分类。
 - [ ] V2 通用 Task Detail 前端入口。
-- [ ] 确定性归一化/校验、审核/发布纵向切片、查询数据集和混合检索。
+- [ ] 审核/发布纵向切片、查询数据集和混合检索。
 
 V2 开发期间暂以 `0012_pipeline_v2_foundation` 叠加现有迁移，目的是让每批代码可以独立构建和验证；旧运行路径切除后按本文第 14 节压平为新的初始迁移。这不是产品兼容层，V2 服务不通过旧 API 或旧模型读写。
 
@@ -592,11 +595,18 @@ task_id + step_id + input_hash + config_hash + attempt
 → 枚举别名映射
 → 日期/布尔标准化
 → 派生字段
-→ item_key 生成
-→ fingerprint 生成
 ```
 
 LLM 不负责决定最终单位、日期格式和枚举编码。
+
+首期声明式规则只开放可穷举、可校验的操作：`enum_alias`、`boolean_alias`、
+`date`、`unit_scale`、`split` 和 `concat`。平台同时按目标 Schema 做递归类型转换；
+规则不接受脚本、表达式或任意函数名。每条输出保存字段级 before/after Diff 和问题明细，
+并由独立 `TransformedRecordSet` 固化 Profile、Schema 与转换引擎版本。
+
+`item_key` 和 `fingerprint` 在 `data.validate` 生成，而不是在通用转换阶段生成：
+`key_fields` 属于目标 Dataset 实例，不属于 ExtractionProfile。这样同一份转换结果可以针对
+不同目标 Dataset 做独立校验，不会把实例级身份规则错误固化进抽取合同。
 
 ### 6.4 校验与冲突处理
 
@@ -609,6 +619,11 @@ LLM 不负责决定最终单位、日期格式和枚举编码。
 - `conflict_existing_key`：与 Dataset 已提交 ItemKey 冲突。
 
 首期 `conflict_existing_key` 不自动覆盖，用户只能排除该条或选择重建 Dataset。
+
+业务规则 DSL 首期开放 `required`、`regex`、`range`、`length`、`one_of` 和
+`compare`，每条规则明确 `warning/error`。`data.validate` 首次运行时固化目标 Dataset
+的 `validated_through_seq`；重试仍在同一边界上重建结果，发布前再对 Dataset 当前状态
+做最终冲突校验。
 
 ### 6.5 人工审核
 
@@ -1306,7 +1321,8 @@ retrieval_snapshot_id
 
 ### 阶段 C：产品规格清洗纵向切片
 
-状态：Asset/结构化 Parser/`source.parse`、ExtractionProfile 和 `llm.extract` 已完成；确定性转换及后续步骤待实现。
+状态：Asset/结构化 Parser/`source.parse`、ExtractionProfile、`llm.extract`、
+`data.transform` 和 `data.validate` 已完成；人工审核和发布待实现。
 
 范围：
 
@@ -1316,7 +1332,8 @@ retrieval_snapshot_id
 - [x] `source.parse` 注册到 V2 Worker。
 - [x] ExtractionProfile。
 - [x] LLM 候选抽取、严格结构化响应、Block 原文证据和逐单元恢复。
-- 确定性归一化、校验、冲突处理和审核 UI。
+- [x] 确定性归一化、Schema/业务规则校验和冲突处理。
+- 审核 UI 与不可变 ApprovedRecordSet。
 - Dataset Batch 发布。
 
 验收：

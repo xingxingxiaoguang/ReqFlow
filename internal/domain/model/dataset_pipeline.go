@@ -194,3 +194,106 @@ type RecordDraft struct {
 	Provenance       ItemProvenance
 	CreatedAt        time.Time
 }
+
+// RecordIssue 是转换、Schema 校验和业务规则校验共享的稳定问题形状。
+// Code 面向程序和测试，Message 面向审核界面；Severity 只允许 warning/error。
+type RecordIssue struct {
+	Code     string `json:"code"`
+	Field    string `json:"field,omitempty"`
+	Severity string `json:"severity"`
+	Message  string `json:"message"`
+}
+
+const (
+	RecordIssueWarning = "warning"
+	RecordIssueError   = "error"
+)
+
+// RecordChange 保存确定性转换前后的字段值，用于人工审核展示修改 Diff。
+type RecordChange struct {
+	Field     string          `json:"field"`
+	Operation string          `json:"operation"`
+	Before    json.RawMessage `json:"before"`
+	After     json.RawMessage `json:"after"`
+}
+
+// TransformedRecordSet 是 data.transform 的不可变输出 Manifest。存在于表中的
+// TransformedRecord 都已经确定性处理完成；恢复时仅补齐尚未生成的记录。
+type TransformedRecordSet struct {
+	ID                  string
+	RecordDraftSetID    string
+	ExtractionProfileID string
+	TargetSchemaID      string
+	SourceStepRunID     string
+	Status              string
+	ProducerAttempt     int
+	EngineVersion       string
+	DraftCount          int
+	TransformedCount    int
+	ChangedRecordCount  int
+	IssueCount          int
+	CreatedAt           time.Time
+	FinishedAt          time.Time
+}
+
+const (
+	TransformedRecordSetRunning   = "running"
+	TransformedRecordSetSucceeded = "succeeded"
+)
+
+type TransformedRecord struct {
+	ID                     string
+	TransformedRecordSetID string
+	RecordDraftID          string
+	Ordinal                int
+	Fields                 json.RawMessage
+	Changes                []RecordChange
+	Issues                 []RecordIssue
+	CreatedAt              time.Time
+}
+
+// ValidationResultSet 是 data.validate 针对目标 Dataset 某一 commit_seq 上界的
+// 不可变校验快照。单条 invalid/duplicate/conflict 是业务结果，不会让 Manifest 失败。
+type ValidationResultSet struct {
+	ID                     string
+	TransformedRecordSetID string
+	TargetDatasetID        string
+	TargetSchemaID         string
+	SourceStepRunID        string
+	Status                 string
+	ProducerAttempt        int
+	EngineVersion          string
+	ValidatedThroughSeq    int64
+	RecordCount            int
+	ValidCount             int
+	WarningCount           int
+	InvalidCount           int
+	DuplicateCount         int
+	ConflictCount          int
+	CreatedAt              time.Time
+	FinishedAt             time.Time
+}
+
+const (
+	ValidationResultSetRunning   = "running"
+	ValidationResultSetSucceeded = "succeeded"
+
+	ValidationRecordValid     = "valid"
+	ValidationRecordWarning   = "warning"
+	ValidationRecordInvalid   = "invalid"
+	ValidationRecordDuplicate = "duplicate_in_batch"
+	ValidationRecordConflict  = "conflict_existing_key"
+)
+
+type ValidationResult struct {
+	ID                    string
+	ValidationResultSetID string
+	TransformedRecordID   string
+	Ordinal               int
+	Fields                json.RawMessage
+	ItemKey               string
+	Fingerprint           string
+	Status                string
+	Issues                []RecordIssue
+	CreatedAt             time.Time
+}

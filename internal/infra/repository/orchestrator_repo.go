@@ -72,8 +72,8 @@ func (r *PipelineRepo) ResolveTaskResource(ctx context.Context, workspaceID stri
 			Where("p.id = ? AND a.workspace_id = ?", binding.ResourceID, workspaceID).Take(&row).Error; err != nil {
 			return binding, fmt.Errorf("ParsedDocumentSet 资源不存在: %w", err)
 		}
-		if row.Status == model.ParsedDocumentSetRunning {
-			return binding, fmt.Errorf("ParsedDocumentSet %s 尚未完成", row.ID)
+		if row.Status != model.ParsedDocumentSetSucceeded {
+			return binding, fmt.Errorf("ParsedDocumentSet %s 状态 %s 不可作为任务输入", row.ID, row.Status)
 		}
 		boundary, _ := json.Marshal(model.ParsedDocumentsBoundary{AssetSetID: row.AssetSetID,
 			ParserName: row.ParserName, ParserVersion: row.ParserVersion})
@@ -99,14 +99,71 @@ func (r *PipelineRepo) ResolveTaskResource(ctx context.Context, workspaceID stri
 			Take(&row).Error; err != nil {
 			return binding, fmt.Errorf("RecordDraftSet 资源不存在: %w", err)
 		}
-		if row.Status == model.RecordDraftSetRunning {
-			return binding, fmt.Errorf("RecordDraftSet %s 尚未完成", row.ID)
+		if row.Status != model.RecordDraftSetSucceeded {
+			return binding, fmt.Errorf("RecordDraftSet %s 状态 %s 不可作为任务输入", row.ID, row.Status)
 		}
 		boundary, _ := json.Marshal(model.RecordDraftsBoundary{
 			ParsedDocumentSetID: row.ParsedDocumentSetID,
 			ExtractionProfileID: row.ExtractionProfileID, TargetSchemaID: row.TargetSchemaID,
 			ProfileHash: row.ProfileHash, Model: row.Model,
 		})
+		binding.Boundary = boundary
+	case model.ResourceTransformedRecords:
+		if alias != "" {
+			return binding, fmt.Errorf("transformed_records 不支持 alias")
+		}
+		var row struct {
+			ID                  string
+			RecordDraftSetID    string
+			ExtractionProfileID string
+			TargetSchemaID      string
+			ProfileHash         string
+			EngineVersion       string
+			Status              string
+		}
+		if err := r.db.WithContext(ctx).Table("transformed_record_sets AS t").
+			Select(`t.id, t.record_draft_set_id, t.extraction_profile_id, t.target_schema_id,
+				p.profile_hash, t.engine_version, t.status`).
+			Joins("JOIN extraction_profiles AS p ON p.id = t.extraction_profile_id").
+			Where("t.id = ? AND p.workspace_id = ?", binding.ResourceID, workspaceID).
+			Take(&row).Error; err != nil {
+			return binding, fmt.Errorf("TransformedRecordSet 资源不存在: %w", err)
+		}
+		if row.Status != model.TransformedRecordSetSucceeded {
+			return binding, fmt.Errorf("TransformedRecordSet %s 状态 %s 不可作为任务输入", row.ID, row.Status)
+		}
+		boundary, _ := json.Marshal(model.TransformedRecordsBoundary{RecordDraftSetID: row.RecordDraftSetID,
+			ExtractionProfileID: row.ExtractionProfileID, TargetSchemaID: row.TargetSchemaID,
+			ProfileHash: row.ProfileHash, TransformEngineVersion: row.EngineVersion})
+		binding.Boundary = boundary
+	case model.ResourceValidationResults:
+		if alias != "" {
+			return binding, fmt.Errorf("validation_results 不支持 alias")
+		}
+		var row struct {
+			ID                     string
+			TransformedRecordSetID string
+			TargetDatasetID        string
+			TargetSchemaID         string
+			ValidatedThroughSeq    int64
+			EngineVersion          string
+			Status                 string
+		}
+		if err := r.db.WithContext(ctx).Table("validation_result_sets AS v").
+			Select(`v.id, v.transformed_record_set_id, v.target_dataset_id, v.target_schema_id,
+				v.validated_through_seq, v.engine_version, v.status`).
+			Joins("JOIN datasets AS d ON d.id = v.target_dataset_id").
+			Where("v.id = ? AND d.workspace_id = ?", binding.ResourceID, workspaceID).
+			Take(&row).Error; err != nil {
+			return binding, fmt.Errorf("ValidationResultSet 资源不存在: %w", err)
+		}
+		if row.Status != model.ValidationResultSetSucceeded {
+			return binding, fmt.Errorf("ValidationResultSet %s 状态 %s 不可作为任务输入", row.ID, row.Status)
+		}
+		boundary, _ := json.Marshal(model.ValidationResultsBoundary{
+			TransformedRecordSetID: row.TransformedRecordSetID, TargetDatasetID: row.TargetDatasetID,
+			TargetSchemaID: row.TargetSchemaID, ValidatedThroughSeq: row.ValidatedThroughSeq,
+			ValidationEngineVersion: row.EngineVersion})
 		binding.Boundary = boundary
 	case model.ResourceDataset, model.ResourceDatasetBoundary:
 		var row struct {

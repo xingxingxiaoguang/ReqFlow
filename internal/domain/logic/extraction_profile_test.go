@@ -31,7 +31,7 @@ func TestNormalizeExtractionProfileProducesStableImmutableContract(t *testing.T)
 	}
 }
 
-func TestNormalizeExtractionProfileRejectsUnknownOrInactiveConfiguration(t *testing.T) {
+func TestNormalizeExtractionProfileRejectsUnknownConfiguration(t *testing.T) {
 	schema := model.DatasetSchemaDefinition{ID: "schema-1", SchemaHash: "schema-hash",
 		JSONSchema: json.RawMessage(`{"type":"object","properties":{"sku":{"type":"string"}}}`)}
 	base := model.ExtractionProfile{Name: "规格", TargetSchemaID: schema.ID,
@@ -48,9 +48,9 @@ func TestNormalizeExtractionProfileRejectsUnknownOrInactiveConfiguration(t *test
 		{name: "unknown example key", mutate: func(p *model.ExtractionProfile) {
 			p.Examples = json.RawMessage(`[{"input":"x","records":[{"fields":{"sku":"x"}}],"typo":true}]`)
 		}, want: "unknown field"},
-		{name: "inactive normalization DSL", mutate: func(p *model.ExtractionProfile) {
+		{name: "unknown normalization DSL field", mutate: func(p *model.ExtractionProfile) {
 			p.NormalizationRules = json.RawMessage(`[{"op":"trim"}]`)
-		}, want: "尚未启用"},
+		}, want: "unknown field"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

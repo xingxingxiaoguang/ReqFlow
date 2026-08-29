@@ -8,15 +8,17 @@ import (
 type ResourceType string
 
 const (
-	ResourceAssetSet          ResourceType = "asset_set"
-	ResourceParsedDocuments   ResourceType = "parsed_documents"
-	ResourceRecordDrafts      ResourceType = "record_drafts"
-	ResourceApprovedRecords   ResourceType = "approved_records"
-	ResourceDataset           ResourceType = "dataset"
-	ResourceDatasetBoundary   ResourceType = "dataset_boundary"
-	ResourceDatasetBatch      ResourceType = "dataset_batch"
-	ResourceRetrievalSnapshot ResourceType = "retrieval_snapshot"
-	ResourceArtifact          ResourceType = "artifact"
+	ResourceAssetSet           ResourceType = "asset_set"
+	ResourceParsedDocuments    ResourceType = "parsed_documents"
+	ResourceRecordDrafts       ResourceType = "record_drafts"
+	ResourceTransformedRecords ResourceType = "transformed_records"
+	ResourceValidationResults  ResourceType = "validation_results"
+	ResourceApprovedRecords    ResourceType = "approved_records"
+	ResourceDataset            ResourceType = "dataset"
+	ResourceDatasetBoundary    ResourceType = "dataset_boundary"
+	ResourceDatasetBatch       ResourceType = "dataset_batch"
+	ResourceRetrievalSnapshot  ResourceType = "retrieval_snapshot"
+	ResourceArtifact           ResourceType = "artifact"
 )
 
 type ResourceDirection string
@@ -93,4 +95,24 @@ type RecordDraftsBoundary struct {
 	TargetSchemaID      string `json:"target_schema_id"`
 	ProfileHash         string `json:"profile_hash"`
 	Model               string `json:"model"`
+}
+
+// TransformedRecordsBoundary 固化确定性转换所使用的草稿、Profile、Schema 与引擎版本。
+// 同一 StepRun 恢复时若引擎版本变化，必须拒绝混合新旧转换结果。
+type TransformedRecordsBoundary struct {
+	RecordDraftSetID       string `json:"record_draft_set_id"`
+	ExtractionProfileID    string `json:"extraction_profile_id"`
+	TargetSchemaID         string `json:"target_schema_id"`
+	ProfileHash            string `json:"profile_hash"`
+	TransformEngineVersion string `json:"transform_engine_version"`
+}
+
+// ValidationResultsBoundary 固化校验所针对的目标 Dataset 及其读取上界。后续发布会
+// 再次对当前 Dataset 做冲突校验，但审核看到的结果始终对应这里的 through_seq 快照。
+type ValidationResultsBoundary struct {
+	TransformedRecordSetID  string `json:"transformed_record_set_id"`
+	TargetDatasetID         string `json:"target_dataset_id"`
+	TargetSchemaID          string `json:"target_schema_id"`
+	ValidatedThroughSeq     int64  `json:"validated_through_seq"`
+	ValidationEngineVersion string `json:"validation_engine_version"`
 }

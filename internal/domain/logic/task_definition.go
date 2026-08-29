@@ -27,7 +27,8 @@ var validV2StepKinds = map[model.StepKind]bool{
 
 var validResourceTypes = map[model.ResourceType]bool{
 	model.ResourceAssetSet: true, model.ResourceParsedDocuments: true,
-	model.ResourceRecordDrafts: true, model.ResourceApprovedRecords: true,
+	model.ResourceRecordDrafts: true, model.ResourceTransformedRecords: true,
+	model.ResourceValidationResults: true, model.ResourceApprovedRecords: true,
 	model.ResourceDataset: true, model.ResourceDatasetBoundary: true,
 	model.ResourceDatasetBatch: true, model.ResourceRetrievalSnapshot: true,
 	model.ResourceArtifact: true,
