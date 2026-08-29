@@ -1,13 +1,13 @@
 # ReqFlow 异构数据管线 V2 落地方案
 
-> 状态：实施中（阶段 A + 阶段 B 后端完成；阶段 C 已完成解析、候选抽取、确定性转换与校验）
+> 状态：实施中（阶段 A + 阶段 B 后端完成；阶段 C 后端清洗闭环完成，V2 前端待接入）
 > 日期：2026-08-29
 > 适用范围：ReqFlow 当前未上线版本
 > 关联文档：[产品总纲](./PRODUCT.md) · [交接文档](./HANDOVER.md) · [技术债台账](./DEBT.md)
 
 ## 0. 实施状态
 
-截至 2026-08-29，阶段 A 核心底座、阶段 B 后端和阶段 C 的解析/抽取/转换/校验链路已经落地：
+截至 2026-08-29，阶段 A 核心底座、阶段 B 后端和阶段 C 的完整后端清洗链路已经落地：
 
 - [x] Asset、ParsedDocument、不可变 DatasetSchemaDefinition、DatasetBatch、ResourceBinding、TaskDefinition、StepRun、RetrievalSnapshot 和 Artifact 领域模型。
 - [x] JSON Schema 受控子集校验、规范化和稳定哈希。
@@ -31,8 +31,10 @@
 - [x] 受控归一化/校验 DSL：类型、单位、枚举、日期/布尔、数组拆分、派生字段及业务规则，不接受脚本或任意表达式。
 - [x] `data.transform` Executor、不可变 TransformedRecordSet、逐记录恢复、字段修改 Diff、问题明细和 producer attempt fencing。
 - [x] `data.validate` Executor、固定 Dataset `through_seq` 的 ValidationResultSet、Schema/业务规则、Batch 重复与已有 ItemKey 冲突分类。
+- [x] `human.review` 审核用例：全量决定覆盖、服务端生成不可变 ApprovedRecordSet、编辑重校验、审核重试幂等和 provenance 固化。
+- [x] `data.publish` Executor：只消费 ApprovedRecordSet，按 StepRun 幂等创建 Batch，提交前 attempt fencing，并复用 Dataset/Item/Outbox 原子事务。
 - [ ] V2 通用 Task Detail 前端入口。
-- [ ] 审核/发布纵向切片、查询数据集和混合检索。
+- [ ] 审核工作台、查询数据集和混合检索。
 
 V2 开发期间暂以 `0012_pipeline_v2_foundation` 叠加现有迁移，目的是让每批代码可以独立构建和验证；旧运行路径切除后按本文第 14 节压平为新的初始迁移。这不是产品兼容层，V2 服务不通过旧 API 或旧模型读写。
 
@@ -404,10 +406,29 @@ Artifact
       "config": {"extraction_profile_id": "..."}
     },
     {
-      "id": "review_records",
-      "kind": "human.review",
+      "id": "transform_records",
+      "kind": "data.transform",
       "depends_on": ["extract_records"],
       "inputs": {"drafts": "$step.extract_records.drafts"},
+      "outputs": {"records": "transformed_records"},
+      "config": {}
+    },
+    {
+      "id": "validate_records",
+      "kind": "data.validate",
+      "depends_on": ["transform_records"],
+      "inputs": {
+        "records": "$step.transform_records.records",
+        "dataset": "$task.target"
+      },
+      "outputs": {"validation": "validation_results"},
+      "config": {}
+    },
+    {
+      "id": "review_records",
+      "kind": "human.review",
+      "depends_on": ["validate_records"],
+      "inputs": {"validation": "$step.validate_records.validation"},
       "outputs": {"approved": "approved_records"},
       "config": {"allow_edit": true}
     },
@@ -415,12 +436,9 @@ Artifact
       "id": "publish_batch",
       "kind": "data.publish",
       "depends_on": ["review_records"],
-      "inputs": {
-        "records": "$step.review_records.approved",
-        "dataset": "$task.target"
-      },
+      "inputs": {"approved": "$step.review_records.approved"},
       "outputs": {"batch": "dataset_batch"},
-      "config": {"mode": "append"}
+      "config": {}
     }
   ]
 }
@@ -1321,8 +1339,7 @@ retrieval_snapshot_id
 
 ### 阶段 C：产品规格清洗纵向切片
 
-状态：Asset/结构化 Parser/`source.parse`、ExtractionProfile、`llm.extract`、
-`data.transform` 和 `data.validate` 已完成；人工审核和发布待实现。
+状态：后端纵向切片已完成；通用 Task Detail 和审核 UI 待实现。
 
 范围：
 
@@ -1333,8 +1350,9 @@ retrieval_snapshot_id
 - [x] ExtractionProfile。
 - [x] LLM 候选抽取、严格结构化响应、Block 原文证据和逐单元恢复。
 - [x] 确定性归一化、Schema/业务规则校验和冲突处理。
-- 审核 UI 与不可变 ApprovedRecordSet。
-- Dataset Batch 发布。
+- [x] 不可变 ApprovedRecordSet、全量人工决定和编辑重校验。
+- [x] Dataset Batch 幂等原子发布与发布 attempt fencing。
+- [ ] Schema 驱动的审核 UI。
 
 验收：
 

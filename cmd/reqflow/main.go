@@ -193,15 +193,25 @@ func main() {
 		logger.Error("data.validate Executor 初始化失败", "err", err)
 		os.Exit(1)
 	}
+	v2Datasets := apppipeline.NewDatasetService(pipelineRepo)
+	v2Publish, err := apppipeline.NewPublishService(pipelineRepo, v2Datasets)
+	if err != nil {
+		logger.Error("V2 Publish Pipeline 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	dataPublishExecutor, err := apppipeline.NewDataPublishExecutor(v2Publish)
+	if err != nil {
+		logger.Error("data.publish Executor 初始化失败", "err", err)
+		os.Exit(1)
+	}
 	// V2 Registry 只注册已经具备真实资源持久化与恢复语义的 Executor。
 	v2Registry, err := apporchestrator.NewRegistry(sourceParseExecutor, llmExtractExecutor,
-		dataTransformExecutor, dataValidateExecutor)
+		dataTransformExecutor, dataValidateExecutor, dataPublishExecutor)
 	if err != nil {
 		logger.Error("V2 Executor Registry 初始化失败", "err", err)
 		os.Exit(1)
 	}
 	v2Definitions := apporchestrator.NewDefinitionService(pipelineRepo, v2Registry, pipelineRepo)
-	v2Datasets := apppipeline.NewDatasetService(pipelineRepo)
 	v2Scheduler := apporchestrator.NewScheduler(pipelineRepo)
 	v2Worker, err := apporchestrator.NewWorker(pipelineRepo, v2Registry, v2Scheduler, apporchestrator.WorkerOptions{})
 	if err != nil {
@@ -211,6 +221,11 @@ func main() {
 	v2Runtime, err := apporchestrator.NewRuntimeService(pipelineRepo, v2Scheduler, v2Worker)
 	if err != nil {
 		logger.Error("V2 Runtime 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	v2Review, err := apppipeline.NewReviewService(pipelineRepo, v2Runtime)
+	if err != nil {
+		logger.Error("V2 Review Pipeline 初始化失败", "err", err)
 		os.Exit(1)
 	}
 	workerCtx, stopWorker := context.WithCancel(context.Background())
@@ -235,7 +250,7 @@ func main() {
 		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
 		DatasetQuery: datasetQuery, DatasetAdmin: datasetAdmin, Archive: archiveSvc, Metadata: metadataSvc,
 		V2Definitions: v2Definitions, V2Runtime: v2Runtime, V2Datasets: v2Datasets,
-		V2Assets: v2Assets, V2Extractions: v2Extractions, V2Cleaning: v2Cleaning,
+		V2Assets: v2Assets, V2Extractions: v2Extractions, V2Cleaning: v2Cleaning, V2Review: v2Review,
 		UploadDir: cfg.Workspace.UploadDir, MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})
 	mountStatic(engine)

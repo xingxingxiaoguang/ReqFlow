@@ -84,6 +84,10 @@ type ItemProvenance struct {
 	Model               string            `json:"model,omitempty"`
 	PromptHash          string            `json:"prompt_hash,omitempty"`
 	QualityStatus       string            `json:"quality_status,omitempty"`
+	ValidationResultID  string            `json:"validation_result_id,omitempty"`
+	ApprovedRecordSetID string            `json:"approved_record_set_id,omitempty"`
+	ReviewDecisionID    string            `json:"review_decision_id,omitempty"`
+	ReviewAction        string            `json:"review_action,omitempty"`
 }
 
 // PipelineCursor 只在目标 Batch 成功提交后推进，用于增量数据处理。
@@ -296,4 +300,47 @@ type ValidationResult struct {
 	Status                string
 	Issues                []RecordIssue
 	CreatedAt             time.Time
+}
+
+// ApprovedRecordSet 是一次人工 Gate 的不可变审核结论。审核必须覆盖来源
+// ValidationResultSet 的全部记录，避免前端漏传导致数据被静默丢弃。
+type ApprovedRecordSet struct {
+	ID                    string
+	ValidationResultSetID string
+	TargetDatasetID       string
+	TargetSchemaID        string
+	SourceStepRunID       string
+	Reviewer              string
+	Rationale             string
+	ReviewHash            string
+	ReviewedThroughSeq    int64
+	RecordCount           int
+	ApprovedCount         int
+	EditedCount           int
+	ExcludedCount         int
+	CreatedAt             time.Time
+}
+
+const (
+	ReviewActionApprove = "approve"
+	ReviewActionEdit    = "edit"
+	ReviewActionExclude = "exclude"
+)
+
+// RecordReviewDecision 保存每条校验结果的人工决定。Fields 对 approve/edit 是可发布
+// 的最终字段快照；exclude 仍保存审核时字段，便于独立审计而无需猜测前端状态。
+type RecordReviewDecision struct {
+	ID                  string
+	ApprovedRecordSetID string
+	ValidationResultID  string
+	TransformedRecordID string
+	Ordinal             int
+	Action              string
+	Fields              json.RawMessage
+	ItemKey             string
+	Fingerprint         string
+	Issues              []RecordIssue
+	Provenance          ItemProvenance
+	Note                string
+	CreatedAt           time.Time
 }

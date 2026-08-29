@@ -166,6 +166,21 @@ func (r *memoryPipelineRepo) CreateDatasetBatch(_ context.Context, batch *model.
 	return nil
 }
 
+func (r *memoryPipelineRepo) GetOrCreateDatasetBatchForStep(ctx context.Context, batch *model.DatasetBatch,
+	_ int) (*model.DatasetBatch, error) {
+	for _, stored := range r.batches {
+		if stored.SourceStepRunID == batch.SourceStepRunID {
+			clone := *stored
+			return &clone, nil
+		}
+	}
+	if err := r.CreateDatasetBatch(ctx, batch); err != nil {
+		return nil, err
+	}
+	clone := *batch
+	return &clone, nil
+}
+
 func (r *memoryPipelineRepo) GetDatasetBatch(_ context.Context, id string) (*model.DatasetBatch, error) {
 	value, ok := r.batches[id]
 	if !ok {
@@ -210,6 +225,11 @@ func (r *memoryPipelineRepo) CommitDatasetBatch(_ context.Context, batchID, payl
 	batch.ItemCount, batch.PayloadHash = len(items), payloadHash
 	clone := *batch
 	return &clone, nil
+}
+
+func (r *memoryPipelineRepo) CommitDatasetBatchForStep(ctx context.Context, batchID, _ string, _ int,
+	payloadHash string, items []model.DatasetItem) (*model.DatasetBatch, error) {
+	return r.CommitDatasetBatch(ctx, batchID, payloadHash, items)
 }
 
 func (r *memoryPipelineRepo) ListDatasetItemsAfter(_ context.Context, datasetID string, afterSeq, throughSeq int64, limit int) ([]model.DatasetItem, error) {

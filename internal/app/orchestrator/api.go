@@ -143,19 +143,6 @@ type TaskSnapshot struct {
 	StepOutputs map[string][]ResourceView `json:"step_outputs"`
 }
 
-type HumanApprovalInput struct {
-	Outputs map[string]ResourceBindingInput `json:"outputs"`
-}
-
-func (s *RuntimeService) Approve(ctx context.Context, taskID, stepID string, input HumanApprovalInput) error {
-	result := StepResult{Outputs: make(map[string]model.ResourceRef, len(input.Outputs))}
-	for name, output := range input.Outputs {
-		result.Outputs[name] = model.ResourceRef{ResourceType: model.ResourceType(output.ResourceType),
-			ResourceID: output.ResourceID, Boundary: output.Boundary}
-	}
-	return s.ApproveHumanStep(ctx, taskID, stepID, result)
-}
-
 func (s *RuntimeService) Snapshot(ctx context.Context, taskID string) (*TaskSnapshot, error) {
 	execution, err := s.repo.GetTaskExecution(ctx, taskID)
 	if err != nil {

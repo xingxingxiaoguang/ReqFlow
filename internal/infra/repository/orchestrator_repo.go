@@ -165,6 +165,31 @@ func (r *PipelineRepo) ResolveTaskResource(ctx context.Context, workspaceID stri
 			TargetSchemaID: row.TargetSchemaID, ValidatedThroughSeq: row.ValidatedThroughSeq,
 			ValidationEngineVersion: row.EngineVersion})
 		binding.Boundary = boundary
+	case model.ResourceApprovedRecords:
+		if alias != "" {
+			return binding, fmt.Errorf("approved_records 不支持 alias")
+		}
+		var row struct {
+			ID                    string
+			ValidationResultSetID string
+			TargetDatasetID       string
+			TargetSchemaID        string
+			ReviewedThroughSeq    int64
+			ReviewHash            string
+		}
+		if err := r.db.WithContext(ctx).Table("approved_record_sets AS a").
+			Select(`a.id, a.validation_result_set_id, a.target_dataset_id, a.target_schema_id,
+				a.reviewed_through_seq, a.review_hash`).
+			Joins("JOIN datasets AS d ON d.id = a.target_dataset_id").
+			Where("a.id = ? AND d.workspace_id = ?", binding.ResourceID, workspaceID).
+			Take(&row).Error; err != nil {
+			return binding, fmt.Errorf("ApprovedRecordSet 资源不存在: %w", err)
+		}
+		boundary, _ := json.Marshal(model.ApprovedRecordsBoundary{
+			ValidationResultSetID: row.ValidationResultSetID, TargetDatasetID: row.TargetDatasetID,
+			TargetSchemaID: row.TargetSchemaID, ReviewedThroughSeq: row.ReviewedThroughSeq,
+			ReviewHash: row.ReviewHash})
+		binding.Boundary = boundary
 	case model.ResourceDataset, model.ResourceDatasetBoundary:
 		var row struct {
 			ID         string
@@ -194,13 +219,25 @@ func (r *PipelineRepo) ResolveTaskResource(ctx context.Context, workspaceID stri
 		if alias != "" {
 			return binding, fmt.Errorf("dataset_batch 不支持 alias")
 		}
-		var status string
-		if err := r.db.WithContext(ctx).Raw(`SELECT status FROM dataset_batches WHERE id = ?`, binding.ResourceID).Scan(&status).Error; err != nil {
-			return binding, err
+		var batch struct {
+			DatasetID string
+			Status    string
+			FromSeq   int64
+			ToSeq     int64
 		}
-		if status != model.DatasetBatchCommitted {
+		if err := r.db.WithContext(ctx).Table("dataset_batches AS b").
+			Select("b.dataset_id, b.status, b.from_seq, b.to_seq").
+			Joins("JOIN datasets AS d ON d.id = b.dataset_id").
+			Where("b.id = ? AND d.workspace_id = ?", binding.ResourceID, workspaceID).
+			Take(&batch).Error; err != nil {
+			return binding, fmt.Errorf("DatasetBatch 资源不存在: %w", err)
+		}
+		if batch.Status != model.DatasetBatchCommitted {
 			return binding, fmt.Errorf("DatasetBatch %s 未提交或不存在", binding.ResourceID)
 		}
+		boundary, _ := json.Marshal(model.DatasetBatchBoundary{DatasetID: batch.DatasetID,
+			FromSeq: batch.FromSeq, ToSeq: batch.ToSeq})
+		binding.Boundary = boundary
 	case model.ResourceRetrievalSnapshot:
 		if alias != "" {
 			return binding, fmt.Errorf("retrieval_snapshot 不支持 alias")

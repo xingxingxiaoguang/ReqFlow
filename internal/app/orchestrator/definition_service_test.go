@@ -113,7 +113,7 @@ func activeDefinition() model.TaskDefinition {
 				Outputs: map[string]model.ResourceType{"approved": model.ResourceApprovedRecords},
 				Config:  json.RawMessage(`{ "profile": "p1" }`)},
 			{ID: "publish", Name: "提交", Kind: model.StepKindDataPublish, DependsOn: []string{"refine"},
-				Inputs:  map[string]string{"records": "$step.refine.approved", "dataset": "$task.target"},
+				Inputs:  map[string]string{"approved": "$step.refine.approved"},
 				Outputs: map[string]model.ResourceType{"batch": model.ResourceDatasetBatch}},
 		},
 	}

@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	apporchestrator "reqflow/internal/app/orchestrator"
+	apppipeline "reqflow/internal/app/pipeline"
 )
 
 func (h *handlers) v2CreateTaskDefinition(c *gin.Context) {
@@ -74,12 +75,12 @@ func (h *handlers) v2RetryStep(c *gin.Context) {
 }
 
 func (h *handlers) v2ApproveStep(c *gin.Context) {
-	var input apporchestrator.HumanApprovalInput
+	var input apppipeline.ReviewRecordsInput
 	if err := c.ShouldBindJSON(&input); err != nil {
-		fail(c, http.StatusBadRequest, "人工审核输出 JSON 非法")
+		fail(c, http.StatusBadRequest, "人工审核决定 JSON 非法")
 		return
 	}
-	if err := h.svc.V2Runtime.Approve(c.Request.Context(), c.Param("id"), c.Param("step_id"), input); err != nil {
+	if _, err := h.svc.V2Review.ReviewRecords(c.Request.Context(), c.Param("id"), c.Param("step_id"), input); err != nil {
 		fail(c, http.StatusConflict, err.Error())
 		return
 	}

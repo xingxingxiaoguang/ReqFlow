@@ -116,3 +116,21 @@ type ValidationResultsBoundary struct {
 	ValidatedThroughSeq     int64  `json:"validated_through_seq"`
 	ValidationEngineVersion string `json:"validation_engine_version"`
 }
+
+// ApprovedRecordsBoundary 固化人工审核所依据的校验快照和审核时看到的目标
+// Dataset 上界。ApprovedRecordSet 自身不可变；发布时仍需在当前 Dataset 上做
+// 最终唯一性校验，防止审核完成后的并发追加绕过冲突保护。
+type ApprovedRecordsBoundary struct {
+	ValidationResultSetID string `json:"validation_result_set_id"`
+	TargetDatasetID       string `json:"target_dataset_id"`
+	TargetSchemaID        string `json:"target_schema_id"`
+	ReviewedThroughSeq    int64  `json:"reviewed_through_seq"`
+	ReviewHash            string `json:"review_hash"`
+}
+
+// DatasetBatchBoundary 描述一次已经原子提交的追加范围。
+type DatasetBatchBoundary struct {
+	DatasetID string `json:"dataset_id"`
+	FromSeq   int64  `json:"from_seq"`
+	ToSeq     int64  `json:"to_seq"`
+}

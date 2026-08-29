@@ -79,12 +79,16 @@ func TestSchedulerUsesStepIdentityForRepeatedKindsAndFinalOutputs(t *testing.T) 
 	}
 }
 
-func TestSchedulerMovesArbitraryHumanGateToAwaiting(t *testing.T) {
+func TestSchedulerMovesRecordReviewGateToAwaiting(t *testing.T) {
 	definition := model.TaskDefinition{
 		Key: "review_first", Name: "先审核",
+		InputPorts: map[string]model.PortDefinition{
+			"validation": {ResourceType: model.ResourceValidationResults, Required: true},
+		},
 		OutputPorts:    map[string]model.PortDefinition{"approved": {ResourceType: model.ResourceApprovedRecords}},
 		OutputBindings: map[string]string{"approved": "$step.review.approved"},
 		Steps: []model.StepDefinition{{ID: "review", Name: "审核", Kind: model.StepKindHumanReview,
+			Inputs:  map[string]string{"validation": "$task.validation"},
 			Outputs: map[string]model.ResourceType{"approved": model.ResourceApprovedRecords}}},
 	}
 	snapshot, _, err := logic.NormalizeTaskDefinition(definition)
@@ -93,6 +97,8 @@ func TestSchedulerMovesArbitraryHumanGateToAwaiting(t *testing.T) {
 	}
 	repo := &schedulerMemoryRepo{execution: model.TaskExecution{
 		Task: model.Task{ID: "task-review", Status: model.TaskStatusRunning, DefinitionSnapshot: string(snapshot)},
+		Inputs: []model.TaskResourceBinding{{PortName: "validation", Direction: model.ResourceInput,
+			ResourceType: model.ResourceValidationResults, ResourceID: "validation-1"}},
 		Steps: []model.StepRun{{ID: "run-review", TaskID: "task-review", StepID: "review",
 			Kind: model.StepKindHumanReview, Status: model.StepRunPending}},
 	}}

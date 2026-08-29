@@ -53,7 +53,14 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 	}
 	transformExecutor, _ := apppipeline.NewDataTransformExecutor(cleaning)
 	validateExecutor, _ := apppipeline.NewDataValidateExecutor(cleaning)
-	registry, err := apporchestrator.NewRegistry(parseExecutor, extractExecutor, transformExecutor, validateExecutor)
+	datasets := apppipeline.NewDatasetService(repo)
+	publish, err := apppipeline.NewPublishService(repo, datasets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishExecutor, _ := apppipeline.NewDataPublishExecutor(publish)
+	registry, err := apporchestrator.NewRegistry(parseExecutor, extractExecutor, transformExecutor,
+		validateExecutor, publishExecutor)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,9 +76,13 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := httpgin.New(httpgin.Services{V2Datasets: apppipeline.NewDatasetService(repo),
+	review, err := apppipeline.NewReviewService(repo, runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := httpgin.New(httpgin.Services{V2Datasets: datasets,
 		V2Assets: assets, V2Extractions: extractions, V2Cleaning: cleaning, V2Definitions: definitions,
-		V2Runtime: runtime, MaxFileMB: 2})
+		V2Runtime: runtime, V2Review: review, MaxFileMB: 2})
 	workspaceID := fmt.Sprintf("extract-http-%d", time.Now().UnixNano())
 
 	schemaID := postID(t, engine, "/api/v2/schemas", "schema", map[string]any{
@@ -102,13 +113,13 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 	})
 	definitionID := postID(t, engine, "/api/v2/task-definitions", "definition", map[string]any{
 		"workspace_id": workspaceID, "key": fmt.Sprintf("extract_%d", time.Now().UnixNano()),
-		"name": "解析、抽取、转换并校验", "status": "active",
+		"name": "产品规格清洗闭环", "status": "active",
 		"input_ports": map[string]any{
 			"source": map[string]any{"resource_type": "asset_set", "required": true},
 			"target": map[string]any{"resource_type": "dataset", "required": true},
 		},
-		"output_ports":    map[string]any{"validation": map[string]any{"resource_type": "validation_results"}},
-		"output_bindings": map[string]any{"validation": "$step.validate.validation"},
+		"output_ports":    map[string]any{"batch": map[string]any{"resource_type": "dataset_batch"}},
+		"output_bindings": map[string]any{"batch": "$step.publish.batch"},
 		"steps": []any{
 			map[string]any{"id": "parse", "name": "解析", "kind": "source.parse",
 				"inputs":  map[string]any{"assets": "$task.source"},
@@ -124,6 +135,13 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 				"depends_on": []string{"transform"}, "inputs": map[string]any{
 					"records": "$step.transform.records", "dataset": "$task.target"},
 				"outputs": map[string]any{"validation": "validation_results"}},
+			map[string]any{"id": "review", "name": "人工审核", "kind": "human.review",
+				"depends_on": []string{"validate"}, "inputs": map[string]any{"validation": "$step.validate.validation"},
+				"outputs": map[string]any{"approved": "approved_records"},
+				"config":  map[string]any{"allow_edit": true}},
+			map[string]any{"id": "publish", "name": "原子发布", "kind": "data.publish",
+				"depends_on": []string{"review"}, "inputs": map[string]any{"approved": "$step.review.approved"},
+				"outputs": map[string]any{"batch": "dataset_batch"}},
 		},
 	})
 	taskID := postID(t, engine, "/api/v2/tasks", "task", map[string]any{
@@ -172,11 +190,11 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 	}
 	snapshot := requestJSON(t, engine, http.MethodGet, "/api/v2/tasks/"+taskID, nil, http.StatusOK)
 	data := snapshot["data"].(map[string]any)
-	if data["task"].(map[string]any)["status"] != string(model.TaskStatusSucceeded) {
-		t.Fatalf("parse+extract+transform+validate task failed: %+v", data)
+	if data["task"].(map[string]any)["status"] != string(model.TaskStatusAwaiting) {
+		t.Fatalf("task must await review after validation: %+v", data)
 	}
-	outputs := data["outputs"].([]any)
-	validationSetID := outputs[0].(map[string]any)["resource_id"].(string)
+	stepOutputs := data["step_outputs"].(map[string]any)
+	validationSetID := stepOutputs["validate"].([]any)[0].(map[string]any)["resource_id"].(string)
 	validationResponse := requestJSON(t, engine, http.MethodGet,
 		"/api/v2/validation-result-sets/"+validationSetID, nil, http.StatusOK)
 	validationSet := validationResponse["data"].(map[string]any)["validation_result_set"].(map[string]any)
@@ -195,6 +213,70 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 	}
 	if !foundExistingConflict {
 		t.Fatalf("validation did not detect key conflict at pinned seq: %+v", validationSet)
+	}
+	reviewDecisions := make([]any, 0, len(validationSet["results"].([]any)))
+	for i, rawResult := range validationSet["results"].([]any) {
+		result := rawResult.(map[string]any)
+		decision := map[string]any{"validation_result_id": result["id"], "action": "exclude",
+			"note": "批内重复候选不发布"}
+		if i == 0 {
+			decision["action"] = "edit"
+			decision["fields"] = map[string]any{"sku": "A-101", "name": "产品 A（审核版）"}
+			decision["note"] = "修正与基础库冲突的 SKU"
+		}
+		reviewDecisions = append(reviewDecisions, decision)
+	}
+	reviewRequest := map[string]any{"reviewer": "integration-reviewer",
+		"rationale": "已核对原文并修正冲突主键", "decisions": reviewDecisions}
+	reviewed := postJSON(t, engine, http.MethodPost,
+		"/api/v2/tasks/"+taskID+"/steps/review/approve", reviewRequest, http.StatusOK)
+	if statusOf(reviewed) != string(model.TaskStatusRunning) {
+		t.Fatalf("review completion must queue publish: %+v", reviewed)
+	}
+	reviewData := reviewed["data"].(map[string]any)
+	approvedSetID := reviewData["step_outputs"].(map[string]any)["review"].([]any)[0].(map[string]any)["resource_id"].(string)
+	approvedResponse := requestJSON(t, engine, http.MethodGet,
+		"/api/v2/approved-record-sets/"+approvedSetID, nil, http.StatusOK)
+	approvedSet := approvedResponse["data"].(map[string]any)["approved_record_set"].(map[string]any)
+	if approvedSet["edited_count"].(float64) != 1 ||
+		int(approvedSet["excluded_count"].(float64)) != len(reviewDecisions)-1 {
+		t.Fatalf("approved manifest=%+v", approvedSet)
+	}
+	// 同一审核请求可安全重试；客户端不能替换服务端生成的 ApprovedRecordSet。
+	postJSON(t, engine, http.MethodPost, "/api/v2/tasks/"+taskID+"/steps/review/approve",
+		reviewRequest, http.StatusOK)
+	if err := worker.RunOnce(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	completed := requestJSON(t, engine, http.MethodGet, "/api/v2/tasks/"+taskID, nil, http.StatusOK)
+	completedData := completed["data"].(map[string]any)
+	if completedData["task"].(map[string]any)["status"] != string(model.TaskStatusSucceeded) {
+		t.Fatalf("full cleaning task failed: %+v", completedData)
+	}
+	batchID := completedData["outputs"].([]any)[0].(map[string]any)["resource_id"].(string)
+	publishedItems := requestJSON(t, engine, http.MethodGet,
+		"/api/v2/datasets/"+datasetID+"/items?after_seq=1", nil, http.StatusOK)
+	newItems := publishedItems["data"].(map[string]any)["items"].([]any)
+	if len(newItems) != 1 || newItems[0].(map[string]any)["fields"].(map[string]any)["sku"] != "A-101" {
+		t.Fatalf("published items=%+v", newItems)
+	}
+	publishedProvenance := newItems[0].(map[string]any)["provenance"].(map[string]any)
+	if publishedProvenance["approved_record_set_id"] != approvedSetID ||
+		publishedProvenance["validation_result_id"] == "" {
+		t.Fatalf("published provenance=%+v", publishedProvenance)
+	}
+	publishExecution, err := repo.GetTaskExecution(context.Background(), taskID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publishRun := publishExecution.Steps[len(publishExecution.Steps)-1]
+	if _, err := publish.PublishApprovedRecords(context.Background(), apppipeline.PublishApprovedRecordsInput{
+		ApprovedRecordSetID: approvedSetID, SourceTaskID: taskID, SourceStepRunID: publishRun.ID,
+		ProducerAttempt: publishRun.Attempt}); !errors.Is(err, port.ErrStaleResourceExecution) {
+		t.Fatalf("终态发布步骤必须拒绝旧执行写入: %v", err)
+	}
+	if batchID == "" {
+		t.Fatal("publish did not bind DatasetBatch")
 	}
 	transformedSetID := validationSet["transformed_record_set_id"].(string)
 	transformedResponse := requestJSON(t, engine, http.MethodGet,
@@ -250,6 +332,7 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 	}
 
 	t.Cleanup(func() {
+		_ = db.Exec(`DELETE FROM dataset_batches WHERE source_task_id = ?`, taskID).Error
 		_ = db.Exec(`DELETE FROM tasks WHERE id = ?`, taskID).Error
 		_ = db.Exec(`DELETE FROM task_definitions WHERE id = ?`, definitionID).Error
 		_ = db.Exec(`DELETE FROM asset_sets WHERE id = ?`, assetSetID).Error

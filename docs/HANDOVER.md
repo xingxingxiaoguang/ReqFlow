@@ -11,12 +11,12 @@
 
 - **目标形态**：把非标准产品文档清洗为基础 Dataset，再增量派生查询 Dataset 和 BM25 + Vector Retrieval Snapshot，最后由 Bug 分析、规格书生成、知识图谱等业务 Task 消费。
 - **V2 已落地**：不可变 JSON Schema、Dataset Batch 追加、`commit_seq`、provenance/identity、TaskDefinition DAG、定义快照和资源端口；Stage B 后端已补齐 Executor Registry、Step 输出绑定、Scheduler、PostgreSQL Worker/lease/checkpoint/retry、任意位置 Human Gate、两阶段暂停和任务输出固化。
-- **V2 已有最小 API**：`/api/v2` 已开放 Asset/AssetSet/ParsedDocument、ExtractionProfile/RecordDraftSet、Schema/Dataset/Batch、TaskDefinition/Task 生命周期、任务快照和 SSE；V2 Worker 已在 `cmd` 启动并注册 `source.parse` 与 `llm.extract`。其他缺失 Kind 仍会在 active 定义注册时被拒绝。
-- **Stage C 已完成解析与候选抽取**：内容寻址 BlobStore、结构化 Parser、逐文件 Manifest、不可变 ExtractionProfile、Schema 驱动严格工具输出、Block 原文证据、逐分块 RecordDraft Manifest、跨重试 token 聚合和 attempt fencing 已打通真实 HTTP → PostgreSQL → Worker 集成测试。
+- **V2 已有最小 API**：`/api/v2` 已开放 Asset/AssetSet/ParsedDocument、ExtractionProfile、RecordDraft/Transformed/Validation/Approved Manifest、Schema/Dataset/Batch、TaskDefinition/Task 生命周期、任务快照和 SSE；V2 Worker 已注册 `source.parse`、`llm.extract`、`data.transform`、`data.validate` 和 `data.publish`。
+- **Stage C 后端已闭环**：内容寻址解析、Schema 驱动抽取、确定性转换/校验、不可变人工审核资源、幂等原子发布、完整 provenance 和 attempt fencing 已打通真实 HTTP → PostgreSQL → Worker 集成测试。
 - **输入绑定已收口**：Task API 可用 `resource_id` 或 Dataset `resource_alias` 定位输入；应用层验证资源存在性，Alias 只在创建时解析一次，`dataset_boundary` 自动固化 `through_seq`，Retrieval Snapshot 自动固化 `source_seq`。
 - **尚未切前端**：当前页面仍走 Legacy `TaskManager + datasets.schema + 固定四步流程`；Legacy 列表/恢复已按 `definition_id IS NULL` 与 V2 隔离。不要继续在旧路径上增加业务类型。
 - **可复用底座**：LLM Provider、Agent Loop、工具调用、会话序列化、`ask_human`、SSE persist-then-publish 和前端重连机制继续复用，但要通过 V2 Executor/Orchestrator 接入。
-- **下一步**：从 `data.transform → data.validate → human.review → data.publish` 继续“批量产品文档 → 基础 Dataset Batch”纵向切片；同时补通用 Task Detail 前端。执行顺序见 §5。
+- **下一步**：接入 V2 通用 Task Detail 与 Schema 驱动审核工作台，再进入 Query Dataset 增量处理。执行顺序见 §5。
 - **仓库**：`/Users/xxxg/demo/ReqFlow`。操作前始终先看 `git status --short`，不要回退不属于当前任务的修改。
 
 ## 2. 怎么接手：跑起来
@@ -97,6 +97,8 @@ internal/domain  实体模型 + 纯领域逻辑（零三方依赖，仅标准库
 | `internal/app/pipeline/{extraction_service,llm_extract_executor}.go` | Profile 用例、稳定分块、严格 LLM 抽取、原文证据校验、逐单元恢复和 `llm.extract` Executor |
 | `internal/domain/logic/record_cleaning.go` | 受控归一化/校验 DSL、确定性类型编码、字段 Diff 与业务规则纯函数 |
 | `internal/app/pipeline/{cleaning_service,cleaning_executors}.go` | TransformedRecordSet/ValidationResultSet 用例、逐记录恢复和 `data.transform`/`data.validate` Executor |
+| `internal/app/pipeline/{review_service,review_api}.go` | 从 ValidationResultSet 生成不可变 ApprovedRecordSet；审核决定全量覆盖、编辑重校验、重试幂等 |
+| `internal/app/pipeline/{publish_service,publish_executor}.go` | `data.publish` 只消费 ApprovedRecordSet，幂等创建 Batch 并复用原子提交事务 |
 | `internal/app/orchestrator/definition_service.go` | 创建 TaskDefinition；创建 Task 时固化定义快照、输入资源和 StepRun |
 | `internal/app/orchestrator/{executor,scheduler,worker,runtime_service}.go` | Stage B 执行内核：Registry、资源解析、ready-set、lease Worker、暂停/恢复/重试和人工 Gate |
 | `internal/app/orchestrator/api.go` | V2 TaskDefinition/Task 入站 DTO 与通用任务快照；HTTP 不直接依赖 domain |
@@ -104,18 +106,21 @@ internal/domain  实体模型 + 纯领域逻辑（零三方依赖，仅标准库
 | `internal/port/pipeline_repo.go` | 不可变 Schema 与追加型 Dataset 的仓储契约 |
 | `internal/port/{asset,parser}.go` | BlobStore/Asset/ParsedDocument 仓储边界与 Reader-based 结构化 Parser 契约 |
 | `internal/port/extraction.go` | ExtractionProfile、RecordDraftSet、ExtractionUnit 与 producer fencing 仓储契约 |
+| `internal/port/{cleaning,review}.go` | 转换、校验、人工审核 Manifest 与记录级仓储边界 |
 | `internal/port/orchestrator_repo.go` | TaskDefinition、TaskResourceBinding、StepRun 仓储契约 |
 | `internal/infra/repository/pipeline_repo.go` | Batch 原子提交：锁 Dataset、查 key 冲突、分配连续 seq、写 Item/Batch/Dataset/Outbox |
 | `internal/infra/{blobstore,parser}` | 内容寻址本地 Blob 实现；Markdown/DOCX/PDF 结构化区块解析 |
 | `internal/infra/repository/asset_repo.go` | Asset/AssetSet/ParsedDocument/Manifest 持久化和 producer attempt fencing |
 | `internal/infra/repository/extraction_repo.go` | Profile/RecordDraft 持久化、逐单元恢复和 Step lease + producer attempt 双重 fencing |
 | `internal/infra/repository/cleaning_repo.go` | 转换/校验 Manifest、固定 Dataset through_seq、逐记录幂等和 producer fencing |
+| `internal/infra/repository/review_repo.go` | ApprovedRecordSet/逐条审核决定持久化、StepRun 幂等键和 Gate 状态防线 |
 | `internal/infra/repository/orchestrator_repo.go` | TaskDefinition JSONB 快照、Task 输入绑定和 StepRun 的事务写入 |
 | `internal/infra/httpgin/handler_v2_*.go` | `/api/v2` 最小独立入口；Task SSE 从数据库快照 diff，不以进程 Broker 为事实源 |
 | `internal/infra/database/migrations/0012_pipeline_v2_foundation.*.sql` | V2 分阶段开发迁移；Legacy 删除后压平为新 `0001` |
 | `internal/infra/database/migrations/0013_asset_parse_manifests.*.sql` | `source.parse` 多文件输出 Manifest 与逐文件状态 |
 | `internal/infra/database/migrations/0014_extraction_drafts.*.sql` | `llm.extract` 输出 Manifest、稳定 ExtractionUnit 与可追溯 RecordDraft |
 | `internal/infra/database/migrations/0015_transform_validation_manifests.*.sql` | `data.transform`/`data.validate` 不可变 Manifest、记录 Diff、问题和分类结果 |
+| `internal/infra/database/migrations/0016_approved_record_sets.*.sql` | 不可变 ApprovedRecordSet、全量审核决定、最终字段与 provenance |
 | `internal/infra/repository/pipeline_integration_test.go` | PostgreSQL 真机验证 Batch、Outbox、Task 快照和资源绑定 |
 
 #### Legacy 代码地图（理解和拆除用）
@@ -639,9 +644,7 @@ AssetSet → source.parse → llm.extract → data.transform → data.validate
 
 完成标准：第二次任务能向同一 Dataset 追加 Batch，且所有新 Item 都能追溯到 Asset/Block。
 
-当前完成到 `data.validate`：解析输出是独立 `ParsedDocumentSet`，抽取输出是独立 `RecordDraftSet`；后者把稳定分块、逐单元状态、字段置信度、Asset/Block/quote provenance 和跨 attempt 请求/token 用量一并持久化。`data.transform` 通过受控 DSL 和 Schema 确定性生成 `TransformedRecordSet`，保留字段 before/after Diff 与转换问题；`data.validate` 在首次运行时固定目标 Dataset `through_seq`，生成 Schema/业务规则、Batch 重复和已有 ItemKey 冲突分类。四类 Manifest 都有 Step attempt fencing，重试只补齐缺失记录，旧 Worker 不能覆盖新结果。
-
-下一提交实现审核与发布：审核必须从 ValidationResultSet 创建不可变 ApprovedRecordSet，记录修改、排除和确认依据；`data.publish` 只消费 ApprovedRecordSet，并复用现有 DatasetService/Batch 提交事务。不要让 Human Gate 直接接收前端任意 UUID，也不要把编辑结果放进 Step progress。
+后端纵向切片已经闭环：`ParsedDocumentSet → RecordDraftSet → TransformedRecordSet → ValidationResultSet → ApprovedRecordSet → DatasetBatch` 均为一等资源。审核 API 只接收逐条 approve/edit/exclude 决定，服务端生成资源并记录修改、排除、审核人和确认依据；`data.publish` 只消费 ApprovedRecordSet，按 StepRun 幂等创建 Batch，并在同一提交事务前验证当前 attempt。下一提交优先实现通用 Task Detail 与审核工作台，不再扩展 Legacy 页面。
 
 ### 5.4 后续：查询 Dataset、混合检索和业务任务
 
@@ -658,7 +661,7 @@ AssetSet → source.parse → llm.extract → data.transform → data.validate
 ### 5.5 当前现场状态和常见误区
 
 - 不假设工作区干净；每次接手先看 `git status --short`，不要用 reset/checkout 回退他人修改。
-- 本机开发库已经执行到 `0015`。如果已合入迁移继续变化导致本地列不一致，直接重建开发数据库，不为本地草稿状态追加兼容迁移。
+- 本机开发库已经执行到 `0016`。如果已合入迁移继续变化导致本地列不一致，直接重建开发数据库，不为本地草稿状态追加兼容迁移。
 - `0012` 最终会被压平，不要围绕旧 `datasets.schema/schema_version`、`task_steps` 或 `metadata_registry` 设计新外键和新功能。
 - `DatasetService.CommitBatch` 当前逐条 INSERT，正确性优先。真实批量压测出现瓶颈后再改成参数化批量 SQL，必须保持同一事务与 seq 顺序。
 - `resource_id` 当前是通用 UUID，没有数据库级多态外键；资源类型和存在性应由 app service 校验。

@@ -123,29 +123,64 @@ func (s *DatasetService) CreateBatch(ctx context.Context, in CreateBatchInput) (
 	return batch, nil
 }
 
+// GetOrCreateBatch 以 source_step_run_id 为幂等键供 data.publish 使用。人工 HTTP
+// 创建 Batch 仍走 CreateBatch，不会意外复用另一个业务动作。
+func (s *DatasetService) GetOrCreateBatch(ctx context.Context, in CreateBatchInput,
+	producerAttempt int) (*model.DatasetBatch, error) {
+	if strings.TrimSpace(in.DatasetID) == "" || strings.TrimSpace(in.SourceStepRunID) == "" {
+		return nil, fmt.Errorf("dataset_id 和 source_step_run_id 不能为空")
+	}
+	if _, err := s.repo.GetAppendDataset(ctx, in.DatasetID); err != nil {
+		return nil, fmt.Errorf("读取 Dataset: %w", err)
+	}
+	return s.repo.GetOrCreateDatasetBatchForStep(ctx, &model.DatasetBatch{DatasetID: in.DatasetID,
+		SourceTaskID: strings.TrimSpace(in.SourceTaskID), SourceStepRunID: strings.TrimSpace(in.SourceStepRunID),
+		Status: model.DatasetBatchStaging}, producerAttempt)
+}
+
 type BatchItemInput struct {
 	Fields     map[string]any
 	Provenance model.ItemProvenance
 }
 
 func (s *DatasetService) CommitBatch(ctx context.Context, batchID string, inputs []BatchItemInput) (*model.DatasetBatch, error) {
+	batch, items, err := s.prepareBatchItems(ctx, batchID, inputs)
+	if err != nil {
+		return nil, err
+	}
+	payloadHash := datasetBatchPayloadHash(items)
+	return s.repo.CommitDatasetBatch(ctx, batch.ID, payloadHash, items)
+}
+
+func (s *DatasetService) CommitBatchForStep(ctx context.Context, batchID, sourceStepRunID string,
+	producerAttempt int, inputs []BatchItemInput) (*model.DatasetBatch, error) {
+	batch, items, err := s.prepareBatchItems(ctx, batchID, inputs)
+	if err != nil {
+		return nil, err
+	}
+	payloadHash := datasetBatchPayloadHash(items)
+	return s.repo.CommitDatasetBatchForStep(ctx, batch.ID, sourceStepRunID, producerAttempt, payloadHash, items)
+}
+
+func (s *DatasetService) prepareBatchItems(ctx context.Context, batchID string,
+	inputs []BatchItemInput) (*model.DatasetBatch, []model.DatasetItem, error) {
 	batch, err := s.repo.GetDatasetBatch(ctx, batchID)
 	if err != nil {
-		return nil, fmt.Errorf("读取 Batch: %w", err)
+		return nil, nil, fmt.Errorf("读取 Batch: %w", err)
 	}
 	dataset, err := s.repo.GetAppendDataset(ctx, batch.DatasetID)
 	if err != nil {
-		return nil, fmt.Errorf("读取 Dataset: %w", err)
+		return nil, nil, fmt.Errorf("读取 Dataset: %w", err)
 	}
 	if dataset.Status != model.DatasetStatusActive {
-		return nil, fmt.Errorf("Dataset %s 当前状态 %s 不允许追加", dataset.ID, dataset.Status)
+		return nil, nil, fmt.Errorf("Dataset %s 当前状态 %s 不允许追加", dataset.ID, dataset.Status)
 	}
 	schema, err := s.repo.GetDatasetSchema(ctx, dataset.SchemaID)
 	if err != nil {
-		return nil, fmt.Errorf("读取 Dataset Schema: %w", err)
+		return nil, nil, fmt.Errorf("读取 Dataset Schema: %w", err)
 	}
 	if len(inputs) == 0 {
-		return nil, fmt.Errorf("不能提交空 Batch")
+		return nil, nil, fmt.Errorf("不能提交空 Batch")
 	}
 
 	items := make([]model.DatasetItem, 0, len(inputs))
@@ -153,23 +188,23 @@ func (s *DatasetService) CommitBatch(ctx context.Context, batchID string, inputs
 	for i, input := range inputs {
 		raw, err := json.Marshal(input.Fields)
 		if err != nil {
-			return nil, fmt.Errorf("第 %d 条字段值序列化失败: %w", i+1, err)
+			return nil, nil, fmt.Errorf("第 %d 条字段值序列化失败: %w", i+1, err)
 		}
 		fields, err := logic.NormalizeDatasetItem(schema.JSONSchema, raw)
 		if err != nil {
-			return nil, fmt.Errorf("第 %d 条数据不符合 Schema: %w", i+1, err)
+			return nil, nil, fmt.Errorf("第 %d 条数据不符合 Schema: %w", i+1, err)
 		}
 		itemKey, fingerprint, err := logic.DatasetItemIdentity(schema.SchemaHash, dataset.KeyFields, fields)
 		if err != nil {
-			return nil, fmt.Errorf("第 %d 条数据主键非法: %w", i+1, err)
+			return nil, nil, fmt.Errorf("第 %d 条数据主键非法: %w", i+1, err)
 		}
 		if seen[itemKey] {
-			return nil, fmt.Errorf("Batch 内存在重复业务主键: %s", itemKey)
+			return nil, nil, fmt.Errorf("Batch 内存在重复业务主键: %s", itemKey)
 		}
 		seen[itemKey] = true
 		provenance, err := json.Marshal(input.Provenance)
 		if err != nil {
-			return nil, fmt.Errorf("第 %d 条 provenance 序列化失败: %w", i+1, err)
+			return nil, nil, fmt.Errorf("第 %d 条 provenance 序列化失败: %w", i+1, err)
 		}
 		items = append(items, model.DatasetItem{
 			DatasetID: dataset.ID, BatchID: batch.ID,
@@ -180,8 +215,7 @@ func (s *DatasetService) CommitBatch(ctx context.Context, batchID string, inputs
 
 	// 固定排序让重试时的 seq 分配和 payload_hash 不受输入顺序影响。
 	sort.Slice(items, func(i, j int) bool { return items[i].ItemKey < items[j].ItemKey })
-	payloadHash := datasetBatchPayloadHash(items)
-	return s.repo.CommitDatasetBatch(ctx, batch.ID, payloadHash, items)
+	return batch, items, nil
 }
 
 func datasetBatchPayloadHash(items []model.DatasetItem) string {
@@ -190,6 +224,8 @@ func datasetBatchPayloadHash(items []model.DatasetItem) string {
 		_, _ = h.Write([]byte(item.ItemKey))
 		_, _ = h.Write([]byte{0})
 		_, _ = h.Write([]byte(item.Fingerprint))
+		_, _ = h.Write([]byte{0})
+		_, _ = h.Write([]byte(item.Provenance))
 		_, _ = h.Write([]byte{0})
 	}
 	return hex.EncodeToString(h.Sum(nil))

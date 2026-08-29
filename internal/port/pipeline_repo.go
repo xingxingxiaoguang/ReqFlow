@@ -21,7 +21,10 @@ type DatasetPipelineRepo interface {
 	GetAppendDataset(ctx context.Context, id string) (*model.Dataset, error)
 
 	CreateDatasetBatch(ctx context.Context, batch *model.DatasetBatch) error
+	GetOrCreateDatasetBatchForStep(ctx context.Context, batch *model.DatasetBatch, producerAttempt int) (*model.DatasetBatch, error)
 	GetDatasetBatch(ctx context.Context, id string) (*model.DatasetBatch, error)
 	CommitDatasetBatch(ctx context.Context, batchID, payloadHash string, items []model.DatasetItem) (*model.DatasetBatch, error)
+	CommitDatasetBatchForStep(ctx context.Context, batchID, sourceStepRunID string, producerAttempt int,
+		payloadHash string, items []model.DatasetItem) (*model.DatasetBatch, error)
 	ListDatasetItemsAfter(ctx context.Context, datasetID string, afterSeq, throughSeq int64, limit int) ([]model.DatasetItem, error)
 }

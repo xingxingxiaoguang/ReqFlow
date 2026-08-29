@@ -82,6 +82,47 @@ func (r *PipelineRepo) CreateDatasetBatch(ctx context.Context, batch *model.Data
 		nullableUUID(batch.SourceTaskID), nullableUUID(batch.SourceStepRunID), batch.Status, batch.CreatedAt).Error
 }
 
+func (r *PipelineRepo) GetOrCreateDatasetBatchForStep(ctx context.Context, batch *model.DatasetBatch,
+	producerAttempt int) (*model.DatasetBatch, error) {
+	if batch == nil || strings.TrimSpace(batch.DatasetID) == "" || strings.TrimSpace(batch.SourceStepRunID) == "" {
+		return nil, fmt.Errorf("幂等 Batch 必须提供 dataset_id 和 source_step_run_id")
+	}
+	if batch.ID == "" {
+		batch.ID = uuid.NewString()
+	}
+	if batch.CreatedAt.IsZero() {
+		batch.CreatedAt = time.Now()
+	}
+	if batch.Status == "" {
+		batch.Status = model.DatasetBatchStaging
+	}
+	var stored model.DatasetBatch
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := assertActiveStepProducer(tx, batch.SourceStepRunID, producerAttempt); err != nil {
+			return err
+		}
+		if err := tx.Exec(`INSERT INTO dataset_batches
+			(id, dataset_id, source_task_id, source_step_run_id, status, created_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT (source_step_run_id) WHERE source_step_run_id IS NOT NULL DO NOTHING`,
+			batch.ID, batch.DatasetID, nullableUUID(batch.SourceTaskID), batch.SourceStepRunID,
+			batch.Status, batch.CreatedAt).Error; err != nil {
+			return err
+		}
+		var row pipelineBatchRow
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("source_step_run_id = ?", batch.SourceStepRunID).First(&row).Error; err != nil {
+			return err
+		}
+		if row.DatasetID != batch.DatasetID || strVal(row.SourceTaskID) != batch.SourceTaskID {
+			return fmt.Errorf("StepRun %s 已绑定到不同的 Dataset Batch", batch.SourceStepRunID)
+		}
+		stored = *row.toModel()
+		return nil
+	})
+	return &stored, err
+}
+
 func (r *PipelineRepo) GetDatasetBatch(ctx context.Context, id string) (*model.DatasetBatch, error) {
 	var row pipelineBatchRow
 	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&row).Error; err != nil {
@@ -91,11 +132,31 @@ func (r *PipelineRepo) GetDatasetBatch(ctx context.Context, id string) (*model.D
 }
 
 func (r *PipelineRepo) CommitDatasetBatch(ctx context.Context, batchID, payloadHash string, items []model.DatasetItem) (*model.DatasetBatch, error) {
+	return r.commitDatasetBatch(ctx, batchID, payloadHash, items, nil)
+}
+
+func (r *PipelineRepo) CommitDatasetBatchForStep(ctx context.Context, batchID, sourceStepRunID string,
+	producerAttempt int, payloadHash string, items []model.DatasetItem) (*model.DatasetBatch, error) {
+	return r.commitDatasetBatch(ctx, batchID, payloadHash, items, func(tx *gorm.DB, batch *pipelineBatchRow) error {
+		if batch.SourceStepRunID == nil || *batch.SourceStepRunID != sourceStepRunID {
+			return port.ErrStaleResourceExecution
+		}
+		return assertActiveStepProducer(tx, sourceStepRunID, producerAttempt)
+	})
+}
+
+func (r *PipelineRepo) commitDatasetBatch(ctx context.Context, batchID, payloadHash string,
+	items []model.DatasetItem, fence func(*gorm.DB, *pipelineBatchRow) error) (*model.DatasetBatch, error) {
 	var committed *model.DatasetBatch
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var batch pipelineBatchRow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", batchID).First(&batch).Error; err != nil {
 			return err
+		}
+		if fence != nil {
+			if err := fence(tx, &batch); err != nil {
+				return err
+			}
 		}
 		if batch.Status == model.DatasetBatchCommitted {
 			if batch.PayloadHash != payloadHash {

@@ -38,22 +38,19 @@ func validTaskDefinition() model.TaskDefinition {
 				ID: "refine_records", Name: "二次抽取", Kind: model.StepKindLLMExtract,
 				DependsOn: []string{"extract_records"},
 				Inputs:    map[string]string{"drafts": "$step.extract_records.drafts"},
-				Outputs:   map[string]model.ResourceType{"drafts": model.ResourceRecordDrafts},
+				Outputs:   map[string]model.ResourceType{"validation": model.ResourceValidationResults},
 			},
 			{
 				ID: "review_records", Name: "人工审核", Kind: model.StepKindHumanReview,
 				DependsOn: []string{"refine_records"},
-				Inputs:    map[string]string{"drafts": "$step.refine_records.drafts"},
+				Inputs:    map[string]string{"validation": "$step.refine_records.validation"},
 				Outputs:   map[string]model.ResourceType{"approved": model.ResourceApprovedRecords},
 			},
 			{
 				ID: "publish_batch", Name: "提交批次", Kind: model.StepKindDataPublish,
 				DependsOn: []string{"review_records"},
-				Inputs: map[string]string{
-					"records": "$step.review_records.approved",
-					"dataset": "$task.target",
-				},
-				Outputs: map[string]model.ResourceType{"batch": model.ResourceDatasetBatch},
+				Inputs:    map[string]string{"approved": "$step.review_records.approved"},
+				Outputs:   map[string]model.ResourceType{"batch": model.ResourceDatasetBatch},
 			},
 		},
 	}

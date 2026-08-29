@@ -34,8 +34,8 @@ func TestIntegrationFreshMigration(t *testing.T) {
 	if err := target.Raw(`SELECT max(version) FROM schema_migrations`).Scan(&version).Error; err != nil {
 		t.Fatal(err)
 	}
-	if version != 15 {
-		t.Fatalf("latest migration=%d want=15", version)
+	if version != 16 {
+		t.Fatalf("latest migration=%d want=16", version)
 	}
 	var tables int64
 	if err := target.Raw(`SELECT count(*) FROM information_schema.tables
@@ -55,6 +55,15 @@ func TestIntegrationFreshMigration(t *testing.T) {
 	}
 	if cleaningTables != 4 {
 		t.Fatalf("cleaning tables=%d want=4", cleaningTables)
+	}
+	var reviewTables int64
+	if err := target.Raw(`SELECT count(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name IN
+		('approved_record_sets','record_review_decisions')`).Scan(&reviewTables).Error; err != nil {
+		t.Fatal(err)
+	}
+	if reviewTables != 2 {
+		t.Fatalf("review tables=%d want=2", reviewTables)
 	}
 	if sqlDB, err := target.DB(); err == nil {
 		_ = sqlDB.Close()

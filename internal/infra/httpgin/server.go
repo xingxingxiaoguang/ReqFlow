@@ -24,6 +24,7 @@ type Services struct {
 	V2Assets      *apppipeline.AssetService
 	V2Extractions *apppipeline.ExtractionService
 	V2Cleaning    *apppipeline.CleaningService
+	V2Review      *apppipeline.ReviewService
 
 	UploadDir string // 上传暂存目录（cmd 从配置注入）
 	MaxFileMB int64  // 上传大小上限
@@ -111,7 +112,9 @@ func New(svc Services) *gin.Engine {
 		v2.POST("/tasks/:id/pause", h.v2PauseTask)
 		v2.POST("/tasks/:id/resume", h.v2ResumeTask)
 		v2.POST("/tasks/:id/steps/:step_id/retry", h.v2RetryStep)
-		v2.POST("/tasks/:id/steps/:step_id/approve", h.v2ApproveStep)
+		if svc.V2Review != nil {
+			v2.POST("/tasks/:id/steps/:step_id/approve", h.v2ApproveStep)
+		}
 		v2.GET("/tasks/:id/events", h.v2TaskEvents)
 	}
 	if svc.V2Assets != nil {
@@ -129,6 +132,9 @@ func New(svc Services) *gin.Engine {
 	if svc.V2Cleaning != nil {
 		v2.GET("/transformed-record-sets/:id", h.v2GetTransformedRecordSet)
 		v2.GET("/validation-result-sets/:id", h.v2GetValidationResultSet)
+	}
+	if svc.V2Review != nil {
+		v2.GET("/approved-record-sets/:id", h.v2GetApprovedRecordSet)
 	}
 	return r
 }

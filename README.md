@@ -81,12 +81,13 @@ make build        # → bin/reqflow
 - `POST /api/v2/extraction-profiles`、`GET /api/v2/extraction-profiles/:id`
 - `GET /api/v2/record-draft-sets/:id`
 - `GET /api/v2/transformed-record-sets/:id`、`GET /api/v2/validation-result-sets/:id`
+- `GET /api/v2/approved-record-sets/:id`
 - `POST /api/v2/task-definitions`、`POST /api/v2/tasks`
 - `POST /api/v2/tasks/:id/start|pause|resume`
 - `POST /api/v2/tasks/:id/steps/:step_id/retry|approve`
 - `GET /api/v2/tasks/:id`、`GET /api/v2/tasks/:id/events`
 
-V2 Schema/Profile 不提供 PUT/PATCH；结构或抽取合同变化必须创建新资源。`source.parse` 将内容寻址 Asset 解析为带逐文件状态的 `ParsedDocumentSet`；`llm.extract` 按稳定 Block 分块生成 `RecordDraftSet`，严格校验 Schema 字段、置信度和 Asset/Block/原文 quote 来源，重试只重跑失败分块；`data.transform` 使用受控规则完成类型、单位、枚举、日期/布尔与派生字段转换，`data.validate` 在固定 Dataset `through_seq` 上生成 Schema/业务规则/Batch 重复/已有 key 冲突结果。四个 Executor 的输出均为可恢复、可审计的不可变 Manifest。当前前端仍是 Legacy 页面，审核与发布 Executor 随产品规格清洗纵向切片继续接入。
+V2 Schema/Profile 不提供 PUT/PATCH；结构或抽取合同变化必须创建新资源。`source.parse` 将内容寻址 Asset 解析为带逐文件状态的 `ParsedDocumentSet`；`llm.extract` 按稳定 Block 分块生成 `RecordDraftSet`；`data.transform` 和 `data.validate` 完成确定性转换、业务规则与冲突校验。人工审核端点只接受对 ValidationResult 的逐条 approve/edit/exclude 决定，服务端生成不可变 `ApprovedRecordSet`，不接受客户端提供资源 UUID；`data.publish` 只消费该审核资源，并通过带 attempt fencing 的 Dataset Batch 事务原子发布。当前后端清洗链路已闭环，前端仍是 Legacy 页面，V2 Task Detail 和审核工作台待切入。
 Task 输入绑定接受具体 `resource_id`；Dataset 也可传 `resource_alias`，创建时会解析为具体 Dataset，并为 `dataset_boundary` 固化当时的 `through_seq`。
 
 ### Legacy（待 V2 前端切流后删除）

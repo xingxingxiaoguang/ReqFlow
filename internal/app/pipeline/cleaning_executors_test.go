@@ -33,4 +33,16 @@ func TestCleaningExecutorsValidateStablePortContracts(t *testing.T) {
 	if err := validate.ValidateDefinition(context.Background(), validateDef); err == nil {
 		t.Fatal("data.validate accepted undeclared config")
 	}
+
+	publish := &DataPublishExecutor{}
+	publishDef := model.StepDefinition{ID: "publish", Kind: model.StepKindDataPublish,
+		Inputs:  map[string]string{"approved": "$step.review.approved"},
+		Outputs: map[string]model.ResourceType{"batch": model.ResourceDatasetBatch}, Config: json.RawMessage(`{}`)}
+	if err := publish.ValidateDefinition(context.Background(), publishDef); err != nil {
+		t.Fatal(err)
+	}
+	publishDef.Inputs["dataset"] = "$task.target"
+	if err := publish.ValidateDefinition(context.Background(), publishDef); err == nil {
+		t.Fatal("data.publish must consume only the pinned ApprovedRecordSet")
+	}
 }
