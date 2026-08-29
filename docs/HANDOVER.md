@@ -3,7 +3,7 @@
 > 面向下一个接手开发的同学。本文只回答四件事：**项目现在是什么、怎么跑起来、改代码必须知道的上下文、接手后干什么**。
 > 产品定位、方向性决策与「重复人工任务 → AI 驱动 Task」的抽离范式见 [PRODUCT.md](./PRODUCT.md)；技术实现细节以本文件为准。
 
-> **2026-08-29 交接状态**：项目正在从固定的需求导入工作台重建为异构数据管线 V2。V2 不保留旧数据库、旧 API 或旧前端兼容；完整设计和阶段验收见 [DATA_PIPELINE_V2_PLAN.md](./DATA_PIPELINE_V2_PLAN.md)。本文中标为“Legacy”的内容只用于理解和拆除当前仍可运行的旧路径，不是后续扩展入口。
+> **2026-08-30 交接状态**：项目正在从固定的需求导入工作台重建为异构数据管线 V2。阶段 A、B、C 已完成，下一里程碑是 Query Dataset 增量处理。V2 不保留旧数据库、旧 API 或旧前端兼容；完整设计和阶段验收见 [DATA_PIPELINE_V2_PLAN.md](./DATA_PIPELINE_V2_PLAN.md)。本文中标为“Legacy”的内容只用于理解和拆除当前仍可运行的旧路径，不是后续扩展入口。
 
 ---
 
@@ -14,9 +14,9 @@
 - **V2 已有最小 API**：`/api/v2` 已开放 Asset/AssetSet/ParsedDocument、ExtractionProfile、RecordDraft/Transformed/Validation/Approved Manifest、Schema/Dataset/Batch、TaskDefinition/Task 生命周期、任务快照和 SSE；V2 Worker 已注册 `source.parse`、`llm.extract`、`data.transform`、`data.validate` 和 `data.publish`。
 - **Stage C 后端已闭环**：内容寻址解析、Schema 驱动抽取、确定性转换/校验、不可变人工审核资源、幂等原子发布、完整 provenance 和 attempt fencing 已打通真实 HTTP → PostgreSQL → Worker 集成测试。
 - **输入绑定已收口**：Task API 可用 `resource_id` 或 Dataset `resource_alias` 定位输入；应用层验证资源存在性，Alias 只在创建时解析一次，`dataset_boundary` 自动固化 `through_seq`，Retrieval Snapshot 自动固化 `source_seq`。
-- **尚未切前端**：当前页面仍走 Legacy `TaskManager + datasets.schema + 固定四步流程`；Legacy 列表/恢复已按 `definition_id IS NULL` 与 V2 隔离。不要继续在旧路径上增加业务类型。
+- **V2 前端入口已接通**：`/v2/tasks` 提供独立 Task 目录、TaskDefinition 快照驱动的通用详情、GET SSE 自动重连、Schema 驱动审核与不可变审核/发布回放。Legacy 页面仍可运行，但不要继续在旧路径上增加业务类型。
 - **可复用底座**：LLM Provider、Agent Loop、工具调用、会话序列化、`ask_human`、SSE persist-then-publish 和前端重连机制继续复用，但要通过 V2 Executor/Orchestrator 接入。
-- **下一步**：接入 V2 通用 Task Detail 与 Schema 驱动审核工作台，再进入 Query Dataset 增量处理。执行顺序见 §5。
+- **下一步**：进入 Query Dataset 增量处理：PipelineCursor、语义单元/关键词/别名派生、Query Dataset Batch 和失败位点保护。执行顺序见 §5。
 - **仓库**：`/Users/xxxg/demo/ReqFlow`。操作前始终先看 `git status --short`，不要回退不属于当前任务的修改。
 
 ## 2. 怎么接手：跑起来
@@ -275,7 +275,13 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
                      阻塞事件——pending 随 snapshot 恢复（刷新/重连弹窗不丢）、按 call_id 幂等；
                      **断线 3s 自动重连（重连重收快照）；snapshot 帧带 data 包装，与实时事件形状
                      统一**；卸载即退订
-  src/api/sse.ts             POST SSE 解析器（fetch + ReadableStream）；**单帧异常只丢该帧不断流**
+  src/api/sse.ts             GET/POST SSE 解析器（fetch + ReadableStream）；**单帧异常只丢该帧不断流**
+  src/api/v2/                V2 snake_case DTO 与 Task/Schema/Dataset/Validation/Approved API；
+                             与 Legacy PascalCase 类型隔离，不建立过渡兼容映射
+  src/hooks/useV2TaskEvents.ts V2 GET SSE：完整 Snapshot 写入 `['v2-task', id]` 缓存，
+                             断线 3 秒重连；事件只加速收敛，数据库快照仍是事实源
+  src/pages/v2/              V2Tasks 独立任务目录；V2TaskDetail 按定义快照渲染步骤与资源；
+                             ReviewWorkspace 按 JSON Schema 渲染逐条决定、类型化编辑和证据面板
   src/api/tasks.ts           任务 API 封装（创建/列表/详情/编辑/暂停/继续/完成/步骤触发/草稿保存/数据集浏览）
   src/pages/Tasks.tsx        任务列表（状态筛选 + 生命周期操作）
   src/pages/Datasets.tsx     数据集浏览（结果集 + 条目明细 + 来源任务追溯）
@@ -588,7 +594,7 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 与过程工�
 6. Step 成功后在一个事务内写输出绑定并更新 StepRun；随后调度下游。所有 Step 成功后，按 `output_bindings` 固化 Task 输出端口并结束 Task。
 7. pause 通过 `pausing` 过渡态取消执行并保留有效 lease 写最后 checkpoint；resume 重新计算输入哈希后排队。Worker 崩溃由 lease 到期恢复，不使用 Legacy `TaskManager.running` 作为事实源。
 
-尚未完成的是通用 Task Detail 前端骨架；后端快照形状已经稳定，可直接消费。
+通用 Task Detail 已使用稳定快照形状接入；V2 Task 目录查询与 Legacy 物理表按 `definition_id` 隔离，生命周期写入仍只经过 RuntimeService。
 
 验收：
 
@@ -598,17 +604,20 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 与过程工�
 - Human Review 可以位于任意 DAG 位置。
 - Broker 丢事件或服务重启不影响数据库里的最终状态。
 
-### 5.2 ✅ 最小 V2 API 已完成（暂不追求完整前端）
+### 5.2 ✅ V2 基础 API 与任务读模型已完成
 
 已挂 `/api/v2` 并由 PostgreSQL + `httptest` 集成测试打通：
 
 ```text
 POST /schemas
+GET  /schemas/:id
 POST /datasets
+GET  /datasets/:id
 POST /datasets/:id/batches
 POST /batches/:id/commit
 POST /task-definitions
 POST /tasks
+GET  /tasks?workspace_id=&status=&limit=
 POST /tasks/:id/start|pause|resume
 GET  /tasks/:id
 GET  /tasks/:id/events
@@ -623,7 +632,7 @@ GET  /datasets/:id/items?after_seq=&through_seq=
 - SSE 使用统一 `{task_id,data}` 帧形状，但 V2 直接每秒对数据库快照做 diff；这样跨进程 Worker、Broker 丢帧和重连都不影响恢复。后续若为降延迟加 Broker，只能作为唤醒信号，不能替代数据库快照。
 - 在 V2 API 可独立跑通前，不删除 Legacy 页面；但不做新旧双写。
 
-### 5.3 第三个里程碑：产品规格清洗纵向切片
+### 5.3 ✅ 第三个里程碑：产品规格清洗纵向切片
 
 目标流程：
 
@@ -644,7 +653,9 @@ AssetSet → source.parse → llm.extract → data.transform → data.validate
 
 完成标准：第二次任务能向同一 Dataset 追加 Batch，且所有新 Item 都能追溯到 Asset/Block。
 
-后端纵向切片已经闭环：`ParsedDocumentSet → RecordDraftSet → TransformedRecordSet → ValidationResultSet → ApprovedRecordSet → DatasetBatch` 均为一等资源。审核 API 只接收逐条 approve/edit/exclude 决定，服务端生成资源并记录修改、排除、审核人和确认依据；`data.publish` 只消费 ApprovedRecordSet，按 StepRun 幂等创建 Batch，并在同一提交事务前验证当前 attempt。下一提交优先实现通用 Task Detail 与审核工作台，不再扩展 Legacy 页面。
+纵向切片已经完整闭环：`ParsedDocumentSet → RecordDraftSet → TransformedRecordSet → ValidationResultSet → ApprovedRecordSet → DatasetBatch` 均为一等资源。审核 API 只接收逐条 approve/edit/exclude 决定，服务端生成资源并记录修改、排除、审核人和确认依据；`data.publish` 只消费 ApprovedRecordSet，按 StepRun 幂等创建 Batch，并在同一提交事务前验证当前 attempt。
+
+前端已完成 `/v2/tasks` Task 目录、通用详情和审核工作台。ValidationResultSet API 聚合候选原值、字段置信度、转换 Diff、问题与来源锚点；前端按不可变 Schema 渲染类型化编辑控件并提交全量决定。2026-08-30 的 Playwright 真实浏览器验收完成了“编辑冲突记录 + 排除重复记录 → ApprovedRecordSet → Worker 原子发布 → SSE 收敛终态”，且发布 Item 保留完整审核 provenance。
 
 ### 5.4 后续：查询 Dataset、混合检索和业务任务
 
@@ -710,7 +721,6 @@ AssetSet → source.parse → llm.extract → data.transform → data.validate
 | 向量固定 1024 维 | 换模型要重建库 | 文档已写死流程；如需多维度考虑按维度分表 |
 | refine 微调未做 | 分析结果只能重来 | Legacy 曾计划在 Bug 链路中顺手完成；V2 应改为 Executor checkpoint 上的明确会话续跑能力 |
 | 后端无热重载 | 开发改代码要重启 | 可引入 air，非必须 |
-| 前端单 chunk 1.5MB | 首载稍慢 | 按路由 code-split，非紧急 |
 | token 增量不落库 | 分析中途重连后思考/正文双区从空开始（工具轨迹从步骤 data 回放，结果以明细为准） | 刻意取舍：防会话膨胀；如确需重放全文再按轮次落库 |
 | 上传文件无清理 | 失败/暂停任务的 upload_dir 文件残留 | 终态清理 + 启动扫描兜底 |
 | classic 模式续跑重放 | 单发模式暂停后恢复会重放流式调用（同 prompt 重新生成，幂等但耗 token） | 暂停多在 agent 模式（检查点续跑不重放已确认轮次） |

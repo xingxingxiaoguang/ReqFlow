@@ -92,8 +92,8 @@ func (s *DefinitionService) CreateExecution(ctx context.Context, input CreateExe
 	if err != nil {
 		return nil, err
 	}
-	return &TaskView{ID: task.ID, WorkspaceID: task.WorkspaceID, DefinitionID: task.DefinitionID,
-		Type: task.Type, Title: task.Title, Status: task.Status, CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt}, nil
+	view := taskView(*task)
+	return &view, nil
 }
 
 type ResourceView struct {
@@ -106,8 +106,10 @@ type ResourceView struct {
 type StepRunView struct {
 	ID           string          `json:"id"`
 	StepID       string          `json:"step_id"`
+	Name         string          `json:"name"`
 	Ordinal      int             `json:"ordinal"`
 	Kind         string          `json:"kind"`
+	Config       json.RawMessage `json:"config,omitempty"`
 	Status       string          `json:"status"`
 	Attempt      int             `json:"attempt"`
 	InputHash    string          `json:"input_hash,omitempty"`
@@ -141,6 +143,18 @@ type TaskSnapshot struct {
 	Outputs     []ResourceView            `json:"outputs"`
 	Steps       []StepRunView             `json:"steps"`
 	StepOutputs map[string][]ResourceView `json:"step_outputs"`
+}
+
+func (s *TaskQueryService) ListViews(ctx context.Context, query TaskQuery) ([]TaskView, error) {
+	tasks, err := s.List(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	views := make([]TaskView, len(tasks))
+	for i := range tasks {
+		views[i] = taskView(tasks[i])
+	}
+	return views, nil
 }
 
 func (s *RuntimeService) Snapshot(ctx context.Context, taskID string) (*TaskSnapshot, error) {
@@ -200,10 +214,14 @@ func definitionView(definition model.TaskDefinition) DefinitionView {
 
 func snapshotView(execution *model.TaskExecution) *TaskSnapshot {
 	task := execution.Task
-	view := &TaskSnapshot{Task: TaskView{ID: task.ID, WorkspaceID: task.WorkspaceID, DefinitionID: task.DefinitionID,
-		Type: task.Type, Title: task.Title, Status: task.Status, CurrentStep: task.CurrentStep,
-		ErrorMessage: task.ErrorMessage, CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt,
-		StartedAt: task.StartedAt, FinishedAt: task.FinishedAt}, StepOutputs: map[string][]ResourceView{}}
+	view := &TaskSnapshot{Task: taskView(task), StepOutputs: map[string][]ResourceView{}}
+	stepDefinitionByID := make(map[string]model.StepDefinition)
+	var definition model.TaskDefinition
+	if json.Unmarshal([]byte(task.DefinitionSnapshot), &definition) == nil {
+		for _, step := range definition.Steps {
+			stepDefinitionByID[step.ID] = step
+		}
+	}
 	for _, binding := range execution.Inputs {
 		resource := ResourceView{PortName: binding.PortName, ResourceType: string(binding.ResourceType), ResourceID: binding.ResourceID, Boundary: binding.Boundary}
 		if binding.Direction == model.ResourceOutput {
@@ -214,9 +232,11 @@ func snapshotView(execution *model.TaskExecution) *TaskSnapshot {
 	}
 	stepIDByRun := make(map[string]string, len(execution.Steps))
 	for _, run := range execution.Steps {
+		definition := stepDefinitionByID[run.StepID]
 		stepIDByRun[run.ID] = run.StepID
-		view.Steps = append(view.Steps, StepRunView{ID: run.ID, StepID: run.StepID, Ordinal: run.Ordinal,
-			Kind: string(run.Kind), Status: run.Status, Attempt: run.Attempt, InputHash: run.InputHash,
+		view.Steps = append(view.Steps, StepRunView{ID: run.ID, StepID: run.StepID, Name: definition.Name,
+			Ordinal: run.Ordinal, Kind: string(run.Kind), Config: definition.Config,
+			Status: run.Status, Attempt: run.Attempt, InputHash: run.InputHash,
 			ConfigHash: run.ConfigHash, Progress: run.Progress,
 			ErrorCode: run.ErrorCode, ErrorMessage: run.ErrorMessage,
 			LeaseUntil: run.LeaseUntil, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt})
@@ -227,4 +247,11 @@ func snapshotView(execution *model.TaskExecution) *TaskSnapshot {
 			ResourceType: string(binding.ResourceType), ResourceID: binding.ResourceID, Boundary: binding.Boundary})
 	}
 	return view
+}
+
+func taskView(task model.Task) TaskView {
+	return TaskView{ID: task.ID, WorkspaceID: task.WorkspaceID, DefinitionID: task.DefinitionID,
+		Type: task.Type, Title: task.Title, Status: task.Status, CurrentStep: task.CurrentStep,
+		ErrorMessage: task.ErrorMessage, CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt,
+		StartedAt: task.StartedAt, FinishedAt: task.FinishedAt}
 }

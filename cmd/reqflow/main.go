@@ -223,6 +223,11 @@ func main() {
 		logger.Error("V2 Runtime 初始化失败", "err", err)
 		os.Exit(1)
 	}
+	v2TaskQueries, err := apporchestrator.NewTaskQueryService(pipelineRepo)
+	if err != nil {
+		logger.Error("V2 Task Query 初始化失败", "err", err)
+		os.Exit(1)
+	}
 	v2Review, err := apppipeline.NewReviewService(pipelineRepo, v2Runtime)
 	if err != nil {
 		logger.Error("V2 Review Pipeline 初始化失败", "err", err)
@@ -249,7 +254,7 @@ func main() {
 	engine := httpgin.New(httpgin.Services{
 		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
 		DatasetQuery: datasetQuery, DatasetAdmin: datasetAdmin, Archive: archiveSvc, Metadata: metadataSvc,
-		V2Definitions: v2Definitions, V2Runtime: v2Runtime, V2Datasets: v2Datasets,
+		V2Definitions: v2Definitions, V2Runtime: v2Runtime, V2TaskQueries: v2TaskQueries, V2Datasets: v2Datasets,
 		V2Assets: v2Assets, V2Extractions: v2Extractions, V2Cleaning: v2Cleaning, V2Review: v2Review,
 		UploadDir: cfg.Workspace.UploadDir, MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})

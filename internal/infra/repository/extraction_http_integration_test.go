@@ -203,6 +203,15 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 		int64(validationSet["validated_through_seq"].(float64)) != 1 {
 		t.Fatalf("validation manifest=%+v", validationSet)
 	}
+	firstValidation := validationSet["results"].([]any)[0].(map[string]any)
+	if firstValidation["draft_fields"].(map[string]any)["sku"] != "A-100" ||
+		firstValidation["field_confidence"].(map[string]any)["sku"].(float64) != 0.99 {
+		t.Fatalf("validation review evidence missing draft/confidence: %+v", firstValidation)
+	}
+	validationProvenance := firstValidation["provenance"].(map[string]any)
+	if len(validationProvenance["source_refs"].([]any)) == 0 {
+		t.Fatalf("validation review evidence missing provenance: %+v", firstValidation)
+	}
 	foundExistingConflict := false
 	for _, rawResult := range validationSet["results"].([]any) {
 		for _, rawIssue := range rawResult.(map[string]any)["issues"].([]any) {

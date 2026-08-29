@@ -3,6 +3,7 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"reqflow/internal/domain/model"
@@ -76,21 +77,45 @@ type ValidationResultSetView struct {
 }
 
 type ValidationResultView struct {
-	ID                  string              `json:"id"`
-	TransformedRecordID string              `json:"transformed_record_id"`
-	Ordinal             int                 `json:"ordinal"`
-	Fields              json.RawMessage     `json:"fields"`
-	ItemKey             string              `json:"item_key,omitempty"`
-	Fingerprint         string              `json:"fingerprint,omitempty"`
-	Status              string              `json:"status"`
-	Issues              []model.RecordIssue `json:"issues"`
-	CreatedAt           time.Time           `json:"created_at"`
+	ID                  string               `json:"id"`
+	TransformedRecordID string               `json:"transformed_record_id"`
+	Ordinal             int                  `json:"ordinal"`
+	DraftFields         json.RawMessage      `json:"draft_fields"`
+	Fields              json.RawMessage      `json:"fields"`
+	FieldConfidence     json.RawMessage      `json:"field_confidence"`
+	Changes             []model.RecordChange `json:"changes"`
+	ItemKey             string               `json:"item_key,omitempty"`
+	Fingerprint         string               `json:"fingerprint,omitempty"`
+	Status              string               `json:"status"`
+	Issues              []model.RecordIssue  `json:"issues"`
+	Provenance          model.ItemProvenance `json:"provenance"`
+	CreatedAt           time.Time            `json:"created_at"`
 }
 
 func (s *CleaningService) ValidationResultSetView(ctx context.Context, id string) (*ValidationResultSetView, error) {
 	set, results, err := s.GetValidationResultSet(ctx, id)
 	if err != nil {
 		return nil, err
+	}
+	transformedSet, err := s.repo.GetTransformedRecordSet(ctx, set.TransformedRecordSetID)
+	if err != nil {
+		return nil, fmt.Errorf("读取 ValidationResultSet 的转换来源: %w", err)
+	}
+	transformedRecords, err := s.repo.ListTransformedRecords(ctx, transformedSet.ID)
+	if err != nil {
+		return nil, fmt.Errorf("读取 ValidationResultSet 的转换记录: %w", err)
+	}
+	drafts, err := s.repo.ListRecordDrafts(ctx, transformedSet.RecordDraftSetID)
+	if err != nil {
+		return nil, fmt.Errorf("读取 ValidationResultSet 的候选来源: %w", err)
+	}
+	recordByID := make(map[string]model.TransformedRecord, len(transformedRecords))
+	for _, record := range transformedRecords {
+		recordByID[record.ID] = record
+	}
+	draftByID := make(map[string]model.RecordDraft, len(drafts))
+	for _, draft := range drafts {
+		draftByID[draft.ID] = draft
 	}
 	view := &ValidationResultSetView{ID: set.ID, TransformedRecordSetID: set.TransformedRecordSetID,
 		TargetDatasetID: set.TargetDatasetID, TargetSchemaID: set.TargetSchemaID,
@@ -101,10 +126,19 @@ func (s *CleaningService) ValidationResultSetView(ctx context.Context, id string
 		CreatedAt: set.CreatedAt, FinishedAt: set.FinishedAt,
 		Results: make([]ValidationResultView, len(results))}
 	for i, result := range results {
+		record, ok := recordByID[result.TransformedRecordID]
+		if !ok {
+			return nil, fmt.Errorf("ValidationResult %s 缺少 TransformedRecord 来源", result.ID)
+		}
+		draft, ok := draftByID[record.RecordDraftID]
+		if !ok {
+			return nil, fmt.Errorf("TransformedRecord %s 缺少 RecordDraft 来源", record.ID)
+		}
 		view.Results[i] = ValidationResultView{ID: result.ID, TransformedRecordID: result.TransformedRecordID,
-			Ordinal: result.Ordinal, Fields: result.Fields, ItemKey: result.ItemKey,
+			Ordinal: result.Ordinal, DraftFields: draft.Fields, Fields: result.Fields,
+			FieldConfidence: draft.FieldConfidence, Changes: record.Changes, ItemKey: result.ItemKey,
 			Fingerprint: result.Fingerprint, Status: result.Status,
-			Issues: result.Issues, CreatedAt: result.CreatedAt}
+			Issues: result.Issues, Provenance: draft.Provenance, CreatedAt: result.CreatedAt}
 	}
 	return view, nil
 }

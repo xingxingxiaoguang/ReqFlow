@@ -32,9 +32,17 @@ func (s *DatasetService) RegisterSchema(ctx context.Context, request CreateSchem
 	if err != nil {
 		return nil, err
 	}
-	return &SchemaView{ID: schema.ID, WorkspaceID: schema.WorkspaceID, Name: schema.Name,
-		Description: schema.Description, JSONSchema: schema.JSONSchema, UISchema: schema.UISchema,
-		SchemaHash: schema.SchemaHash, CreatedAt: schema.CreatedAt}, nil
+	view := schemaView(schema)
+	return &view, nil
+}
+
+func (s *DatasetService) GetSchemaView(ctx context.Context, id string) (*SchemaView, error) {
+	schema, err := s.repo.GetDatasetSchema(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	view := schemaView(schema)
+	return &view, nil
 }
 
 type CreateDatasetRequest struct {
@@ -65,6 +73,15 @@ func (s *DatasetService) RegisterDataset(ctx context.Context, request CreateData
 	dataset, err := s.CreateDataset(ctx, CreateDatasetInput{WorkspaceID: request.WorkspaceID,
 		Name: request.Name, Description: request.Description, Purpose: model.DatasetPurpose(request.Purpose),
 		SchemaID: request.SchemaID, KeyFields: request.KeyFields})
+	if err != nil {
+		return nil, err
+	}
+	view := datasetView(dataset)
+	return &view, nil
+}
+
+func (s *DatasetService) GetDatasetView(ctx context.Context, id string) (*DatasetView, error) {
+	dataset, err := s.repo.GetAppendDataset(ctx, id)
 	if err != nil {
 		return nil, err
 	}
@@ -187,6 +204,12 @@ func datasetView(dataset *model.Dataset) DatasetView {
 		Description: dataset.Description, Purpose: string(dataset.Purpose), SchemaID: dataset.SchemaID,
 		KeyFields: dataset.KeyFields, Status: dataset.Status, CurrentSeq: dataset.CurrentSeq,
 		ItemCount: dataset.ItemCount, CreatedAt: dataset.CreatedAt, UpdatedAt: dataset.UpdatedAt}
+}
+
+func schemaView(schema *model.DatasetSchemaDefinition) SchemaView {
+	return SchemaView{ID: schema.ID, WorkspaceID: schema.WorkspaceID, Name: schema.Name,
+		Description: schema.Description, JSONSchema: schema.JSONSchema, UISchema: schema.UISchema,
+		SchemaHash: schema.SchemaHash, CreatedAt: schema.CreatedAt}
 }
 
 func batchView(batch *model.DatasetBatch) BatchView {

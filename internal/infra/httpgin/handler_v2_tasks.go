@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -11,6 +12,22 @@ import (
 	apporchestrator "reqflow/internal/app/orchestrator"
 	apppipeline "reqflow/internal/app/pipeline"
 )
+
+func (h *handlers) v2ListTasks(c *gin.Context) {
+	limit, err := strconv.Atoi(c.DefaultQuery("limit", "50"))
+	if err != nil {
+		fail(c, http.StatusBadRequest, "limit 必须是整数")
+		return
+	}
+	tasks, err := h.svc.V2TaskQueries.ListViews(c.Request.Context(), apporchestrator.TaskQuery{
+		WorkspaceID: c.Query("workspace_id"), Status: c.Query("status"), Limit: limit,
+	})
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	ok(c, gin.H{"tasks": tasks})
+}
 
 func (h *handlers) v2CreateTaskDefinition(c *gin.Context) {
 	var input apporchestrator.CreateDefinitionInput

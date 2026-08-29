@@ -42,6 +42,19 @@ type OrchestratorExecutionReader interface {
 	GetStepResourceBindings(ctx context.Context, taskID string) ([]model.StepResourceBinding, error)
 }
 
+// OrchestratorTaskFilter 是 V2 Task 目录的只读查询条件。V2 与 Legacy 共用 tasks
+// 物理表，但查询边界始终以 definition_id 是否存在隔离，避免两个运行时相互污染。
+type OrchestratorTaskFilter struct {
+	WorkspaceID string
+	Status      string
+	Limit       int
+}
+
+// OrchestratorTaskQueryRepo 只承担 V2 Task 目录查询，不把读模型能力塞进生命周期写口。
+type OrchestratorTaskQueryRepo interface {
+	ListOrchestratorTasks(ctx context.Context, filter OrchestratorTaskFilter) ([]model.Task, error)
+}
+
 type OrchestratorSchedulerRepo interface {
 	OrchestratorExecutionReader
 	ListSchedulableTaskIDs(ctx context.Context, limit int) ([]string, error)

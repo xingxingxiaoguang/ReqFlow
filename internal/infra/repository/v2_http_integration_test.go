@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	apporchestrator "reqflow/internal/app/orchestrator"
 	apppipeline "reqflow/internal/app/pipeline"
 	"reqflow/internal/domain/model"
 	"reqflow/internal/infra/database"
@@ -28,7 +29,11 @@ func TestIntegrationV2HTTPDatasetAndAliasBoundary(t *testing.T) {
 	}
 	repo := NewPipelineRepo(db)
 	datasets := apppipeline.NewDatasetService(repo)
-	engine := httpgin.New(httpgin.Services{V2Datasets: datasets})
+	queries, err := apporchestrator.NewTaskQueryService(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	engine := httpgin.New(httpgin.Services{V2Datasets: datasets, V2TaskQueries: queries})
 
 	schemaID := postID(t, engine, "/api/v2/schemas", "schema", map[string]any{
 		"name": "HTTP Schema",
@@ -39,6 +44,18 @@ func TestIntegrationV2HTTPDatasetAndAliasBoundary(t *testing.T) {
 	datasetID := postID(t, engine, "/api/v2/datasets", "dataset", map[string]any{
 		"name": "HTTP Dataset", "purpose": "base", "schema_id": schemaID, "key_fields": []string{"sku"},
 	})
+	schemaResponse := requestJSON(t, engine, http.MethodGet, "/api/v2/schemas/"+schemaID, nil, http.StatusOK)
+	if schemaResponse["data"].(map[string]any)["schema"].(map[string]any)["name"] != "HTTP Schema" {
+		t.Fatal("V2 Schema 读端点未返回创建结果")
+	}
+	datasetResponse := requestJSON(t, engine, http.MethodGet, "/api/v2/datasets/"+datasetID, nil, http.StatusOK)
+	if datasetResponse["data"].(map[string]any)["dataset"].(map[string]any)["schema_id"] != schemaID {
+		t.Fatal("V2 Dataset 读端点未返回不可变 Schema 绑定")
+	}
+	tasksResponse := requestJSON(t, engine, http.MethodGet, "/api/v2/tasks?status=awaiting", nil, http.StatusOK)
+	if len(tasksResponse["data"].(map[string]any)["tasks"].([]any)) != 0 {
+		t.Fatal("空库不应返回 V2 Task")
+	}
 	batchID := postID(t, engine, "/api/v2/datasets/"+datasetID+"/batches", "batch", map[string]any{})
 	postJSON(t, engine, http.MethodPost, "/api/v2/batches/"+batchID+"/commit", map[string]any{
 		"items": []any{map[string]any{"fields": map[string]any{"sku": "A-1", "name": "第一条"}}},

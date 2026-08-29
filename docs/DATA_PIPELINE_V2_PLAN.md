@@ -1,13 +1,13 @@
 # ReqFlow 异构数据管线 V2 落地方案
 
-> 状态：实施中（阶段 A + 阶段 B 后端完成；阶段 C 后端清洗闭环完成，V2 前端待接入）
-> 日期：2026-08-29
+> 状态：实施中（阶段 A、B、C 已完成；下一阶段为 Query Dataset 增量处理）
+> 日期：2026-08-30
 > 适用范围：ReqFlow 当前未上线版本
 > 关联文档：[产品总纲](./PRODUCT.md) · [交接文档](./HANDOVER.md) · [技术债台账](./DEBT.md)
 
 ## 0. 实施状态
 
-截至 2026-08-29，阶段 A 核心底座、阶段 B 后端和阶段 C 的完整后端清洗链路已经落地：
+截至 2026-08-30，阶段 A 核心底座、阶段 B Orchestrator 和阶段 C 产品规格清洗纵向切片已经落地：
 
 - [x] Asset、ParsedDocument、不可变 DatasetSchemaDefinition、DatasetBatch、ResourceBinding、TaskDefinition、StepRun、RetrievalSnapshot 和 Artifact 领域模型。
 - [x] JSON Schema 受控子集校验、规范化和稳定哈希。
@@ -33,8 +33,10 @@
 - [x] `data.validate` Executor、固定 Dataset `through_seq` 的 ValidationResultSet、Schema/业务规则、Batch 重复与已有 ItemKey 冲突分类。
 - [x] `human.review` 审核用例：全量决定覆盖、服务端生成不可变 ApprovedRecordSet、编辑重校验、审核重试幂等和 provenance 固化。
 - [x] `data.publish` Executor：只消费 ApprovedRecordSet，按 StepRun 幂等创建 Batch，提交前 attempt fencing，并复用 Dataset/Item/Outbox 原子事务。
-- [ ] V2 通用 Task Detail 前端入口。
-- [ ] 审核工作台、查询数据集和混合检索。
+- [x] V2 Task 目录与通用 Task Detail：独立于 Legacy 查询，按定义快照展示步骤名称/Executor、资源端口、生命周期操作和 GET SSE 快照收敛。
+- [x] Schema 驱动审核工作台：逐条 approve/edit/exclude、类型化编辑、置信度、确定性转换 Diff、校验问题、provenance、不可变审核回放和发布结果展示。
+- [x] 前端路由级 code splitting，消除单一 1.5 MB 首载 Chunk。
+- [ ] Query Dataset 增量处理和混合检索。
 
 V2 开发期间暂以 `0012_pipeline_v2_foundation` 叠加现有迁移，目的是让每批代码可以独立构建和验证；旧运行路径切除后按本文第 14 节压平为新的初始迁移。这不是产品兼容层，V2 服务不通过旧 API 或旧模型读写。
 
@@ -1030,6 +1032,8 @@ POST   /api/v2/retrieval-profiles/:id/evaluate
 
 ## 12. 前端改造
 
+实施状态：通用 Task Detail 与 Human Review 面板已完成；数据/Schema/Profile 目录和 Retrieval 页面仍按后续阶段推进。V2 前端使用独立 `/v2/tasks` 路由和 snake_case API 类型，不在 Legacy 固定四步页面上叠加兼容逻辑。
+
 ### 12.1 信息架构
 
 建议主导航调整为：
@@ -1319,7 +1323,7 @@ retrieval_snapshot_id
 
 ### 阶段 B：Orchestrator V2
 
-状态：后端与最小 API 已完成；通用 Task Detail 前端随阶段 C 一并接入。
+状态：已完成。后端持久化调度与通用 Task Detail/SSE 读模型均已接入。
 
 范围：
 
@@ -1339,7 +1343,7 @@ retrieval_snapshot_id
 
 ### 阶段 C：产品规格清洗纵向切片
 
-状态：后端纵向切片已完成；通用 Task Detail 和审核 UI 待实现。
+状态：已完成。后端纵向切片、通用 Task Detail 和 Schema 驱动审核工作台已通过真实浏览器端到端验收。
 
 范围：
 
@@ -1352,7 +1356,7 @@ retrieval_snapshot_id
 - [x] 确定性归一化、Schema/业务规则校验和冲突处理。
 - [x] 不可变 ApprovedRecordSet、全量人工决定和编辑重校验。
 - [x] Dataset Batch 幂等原子发布与发布 attempt fencing。
-- [ ] Schema 驱动的审核 UI。
+- [x] Schema 驱动的审核 UI。
 
 验收：
 

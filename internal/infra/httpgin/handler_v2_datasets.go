@@ -23,6 +23,15 @@ func (h *handlers) v2CreateSchema(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"success": true, "data": gin.H{"schema": schema}})
 }
 
+func (h *handlers) v2GetSchema(c *gin.Context) {
+	schema, err := h.svc.V2Datasets.GetSchemaView(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		fail(c, http.StatusNotFound, "V2 Dataset Schema 不存在")
+		return
+	}
+	ok(c, gin.H{"schema": schema})
+}
+
 func (h *handlers) v2CreateDataset(c *gin.Context) {
 	var request apppipeline.CreateDatasetRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
@@ -35,6 +44,15 @@ func (h *handlers) v2CreateDataset(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "data": gin.H{"dataset": dataset}})
+}
+
+func (h *handlers) v2GetDataset(c *gin.Context) {
+	dataset, err := h.svc.V2Datasets.GetDatasetView(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		fail(c, http.StatusNotFound, "V2 Dataset 不存在")
+		return
+	}
+	ok(c, gin.H{"dataset": dataset})
 }
 
 func (h *handlers) v2CreateBatch(c *gin.Context) {

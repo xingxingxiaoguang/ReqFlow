@@ -385,6 +385,29 @@ func (r *PipelineRepo) GetTaskExecution(ctx context.Context, taskID string) (*mo
 	}, nil
 }
 
+func (r *PipelineRepo) ListOrchestratorTasks(ctx context.Context, filter port.OrchestratorTaskFilter) ([]model.Task, error) {
+	limit := filter.Limit
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	query := r.db.WithContext(ctx).Where("definition_id IS NOT NULL")
+	if filter.WorkspaceID != "" {
+		query = query.Where("workspace_id = ?", filter.WorkspaceID)
+	}
+	if filter.Status != "" {
+		query = query.Where("status = ?", filter.Status)
+	}
+	var rows []taskRow
+	if err := query.Order("created_at DESC, id DESC").Limit(limit).Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	tasks := make([]model.Task, len(rows))
+	for i := range rows {
+		tasks[i] = taskToModel(&rows[i])
+	}
+	return tasks, nil
+}
+
 func (r *PipelineRepo) GetStepResourceBindings(ctx context.Context, taskID string) ([]model.StepResourceBinding, error) {
 	var rows []stepResourceBindingRow
 	err := r.db.WithContext(ctx).Table("step_resource_bindings AS b").

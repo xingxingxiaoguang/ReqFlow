@@ -16,6 +16,10 @@ coverage.*
 web/node_modules/
 web/dist/
 
+# 本地真实浏览器验收产物
+.playwright-cli/
+output/playwright/
+
 # IDE / OS
 .idea/
 .vscode/

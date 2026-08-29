@@ -3,6 +3,7 @@ import { ProLayout } from '@ant-design/pro-components'
 import {
   DashboardOutlined, PlusCircleOutlined, FileAddOutlined, BugOutlined,
   DatabaseOutlined, AppstoreOutlined, UnorderedListOutlined, SettingOutlined, ThunderboltFilled, InboxOutlined,
+  BranchesOutlined,
 } from '@ant-design/icons'
 import type React from 'react'
 import { Badge, Tooltip, Typography } from 'antd'
@@ -24,6 +25,7 @@ const menu = {
       ],
     },
     { path: '/tasks', name: '任务管理', icon: <UnorderedListOutlined /> },
+    { path: '/v2/tasks', name: 'V2 数据管线', icon: <BranchesOutlined /> },
     { path: '/datasets', name: '数据集', icon: <DatabaseOutlined /> },
     { path: '/metadata', name: '元数据', icon: <AppstoreOutlined /> },
     { path: '/archives', name: '归档', icon: <InboxOutlined /> },

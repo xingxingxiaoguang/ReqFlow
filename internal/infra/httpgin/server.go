@@ -20,6 +20,7 @@ type Services struct {
 	Metadata      *app.MetadataService
 	V2Definitions *apporchestrator.DefinitionService
 	V2Runtime     *apporchestrator.RuntimeService
+	V2TaskQueries *apporchestrator.TaskQueryService
 	V2Datasets    *apppipeline.DatasetService
 	V2Assets      *apppipeline.AssetService
 	V2Extractions *apppipeline.ExtractionService
@@ -99,7 +100,9 @@ func New(svc Services) *gin.Engine {
 	v2 := api.Group("/v2")
 	if svc.V2Datasets != nil {
 		v2.POST("/schemas", h.v2CreateSchema)
+		v2.GET("/schemas/:id", h.v2GetSchema)
 		v2.POST("/datasets", h.v2CreateDataset)
+		v2.GET("/datasets/:id", h.v2GetDataset)
 		v2.POST("/datasets/:id/batches", h.v2CreateBatch)
 		v2.POST("/batches/:id/commit", h.v2CommitBatch)
 		v2.GET("/datasets/:id/items", h.v2ListDatasetItems)
@@ -116,6 +119,9 @@ func New(svc Services) *gin.Engine {
 			v2.POST("/tasks/:id/steps/:step_id/approve", h.v2ApproveStep)
 		}
 		v2.GET("/tasks/:id/events", h.v2TaskEvents)
+	}
+	if svc.V2TaskQueries != nil {
+		v2.GET("/tasks", h.v2ListTasks)
 	}
 	if svc.V2Assets != nil {
 		v2.POST("/assets", h.v2UploadAsset)

@@ -1,10 +1,10 @@
 /**
- * POST SSE 消费器：fetch + ReadableStream 手写解析（后端分析/同步/导入进度均走 POST SSE）。
+ * 通用 SSE 消费器：fetch + ReadableStream 手写解析，同时支持 Legacy POST 与 V2 GET。
  * 按空行拆帧，每帧内解析 event:/data: 行，回调 onEvent(event, dataJSON)。
  */
 export type SSEEventHandler = (event: string, data: any) => void
 
-export async function postSSE(
+export async function requestSSE(
   path: string,
   init: RequestInit,
   onEvent: SSEEventHandler,
@@ -58,4 +58,16 @@ export async function postSSE(
     }
   }
   if (buffer.trim()) dispatchFrame(buffer)
+}
+
+export function postSSE(path: string, init: RequestInit, onEvent: SSEEventHandler): Promise<void> {
+  return requestSSE(path, init, onEvent)
+}
+
+export function getSSE(
+  path: string,
+  onEvent: SSEEventHandler,
+  signal?: AbortSignal,
+): Promise<void> {
+  return requestSSE(path, { method: 'GET', signal }, onEvent)
 }
