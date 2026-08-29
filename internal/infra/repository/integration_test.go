@@ -11,6 +11,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"testing"
 
 	"reqflow/internal/domain/model"
@@ -19,6 +20,9 @@ import (
 )
 
 func testDSN() string {
+	if dsn := os.Getenv("REQFLOW_TEST_DSN"); dsn != "" {
+		return dsn
+	}
 	return "postgres://reqflow:reqflow@127.0.0.1:5432/reqflow?sslmode=disable"
 }
 

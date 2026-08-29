@@ -11,12 +11,12 @@
 
 - **目标形态**：把非标准产品文档清洗为基础 Dataset，再增量派生查询 Dataset 和 BM25 + Vector Retrieval Snapshot，最后由 Bug 分析、规格书生成、知识图谱等业务 Task 消费。
 - **V2 已落地**：不可变 JSON Schema、Dataset Batch 追加、`commit_seq`、provenance/identity、TaskDefinition DAG、定义快照和资源端口；Stage B 后端已补齐 Executor Registry、Step 输出绑定、Scheduler、PostgreSQL Worker/lease/checkpoint/retry、任意位置 Human Gate、两阶段暂停和任务输出固化。
-- **V2 已有最小 API**：`/api/v2` 已开放 Asset/AssetSet/ParsedDocument、Schema/Dataset/Batch、TaskDefinition/Task 生命周期、任务快照和 SSE；V2 Worker 已在 `cmd` 启动，`source.parse` 是首个已注册机器 Executor。其他缺失 Kind 仍会在 active 定义注册时被拒绝。
-- **Stage C 首单元已完成**：本地内容寻址 BlobStore（URI 与物理路径解耦）、SHA-256 Asset 去重、结构化 Markdown/DOCX/PDF Parser、可分页 Block、逐文件部分成功 Manifest、解析缓存和 attempt fencing 已打通真实 HTTP → PostgreSQL → Worker 集成测试。
+- **V2 已有最小 API**：`/api/v2` 已开放 Asset/AssetSet/ParsedDocument、ExtractionProfile/RecordDraftSet、Schema/Dataset/Batch、TaskDefinition/Task 生命周期、任务快照和 SSE；V2 Worker 已在 `cmd` 启动并注册 `source.parse` 与 `llm.extract`。其他缺失 Kind 仍会在 active 定义注册时被拒绝。
+- **Stage C 已完成解析与候选抽取**：内容寻址 BlobStore、结构化 Parser、逐文件 Manifest、不可变 ExtractionProfile、Schema 驱动严格工具输出、Block 原文证据、逐分块 RecordDraft Manifest、跨重试 token 聚合和 attempt fencing 已打通真实 HTTP → PostgreSQL → Worker 集成测试。
 - **输入绑定已收口**：Task API 可用 `resource_id` 或 Dataset `resource_alias` 定位输入；应用层验证资源存在性，Alias 只在创建时解析一次，`dataset_boundary` 自动固化 `through_seq`，Retrieval Snapshot 自动固化 `source_seq`。
 - **尚未切前端**：当前页面仍走 Legacy `TaskManager + datasets.schema + 固定四步流程`；Legacy 列表/恢复已按 `definition_id IS NULL` 与 V2 隔离。不要继续在旧路径上增加业务类型。
 - **可复用底座**：LLM Provider、Agent Loop、工具调用、会话序列化、`ask_human`、SSE persist-then-publish 和前端重连机制继续复用，但要通过 V2 Executor/Orchestrator 接入。
-- **下一步**：从 `ExtractionProfile + llm.extract` 继续“批量产品文档 → 基础 Dataset Batch”纵向切片，再接 `data.transform → data.validate → human.review → data.publish`；同时补通用 Task Detail 前端。执行顺序见 §5。
+- **下一步**：从 `data.transform → data.validate → human.review → data.publish` 继续“批量产品文档 → 基础 Dataset Batch”纵向切片；同时补通用 Task Detail 前端。执行顺序见 §5。
 - **仓库**：`/Users/xxxg/demo/ReqFlow`。操作前始终先看 `git status --short`，不要回退不属于当前任务的修改。
 
 ## 2. 怎么接手：跑起来
@@ -49,7 +49,8 @@ make build      # → bin/reqflow（约 29MB 单二进制，前端已 embed）
 go vet ./internal/app/orchestrator ./internal/app/pipeline ./internal/domain/... ./internal/infra/repository ./internal/port
 go test ./internal/app/orchestrator ./internal/app/pipeline ./internal/domain/... ./internal/infra/repository ./internal/port
 go test -tags integration ./internal/infra/repository \
-  -run 'TestIntegration(PipelineAppendBatches|TaskDefinitionAndResourceBindings)' -count=1 -v
+  -run 'TestIntegration(PipelineAppendBatches|TaskDefinitionAndResourceBindings|V2SourceParseAndLLMExtract)' -count=1 -v
+go test -tags integration ./internal/infra/database -run TestIntegrationFreshMigration -count=1 -v
 ```
 
 ## 3. 怎么接手：架构地图
@@ -85,28 +86,32 @@ internal/domain  实体模型 + 纯领域逻辑（零三方依赖，仅标准库
 |---|---|
 | `docs/DATA_PIPELINE_V2_PLAN.md` | V2 架构、数据模型、API 草案、阶段验收和完成定义；实现取舍以此为准 |
 | `internal/domain/model/asset.go` | Asset、AssetSet、ParsedDocument、DocumentBlock，以及一次 Step 输出的 ParsedDocumentSet Manifest |
-| `internal/domain/model/dataset_pipeline.go` | DatasetSchemaDefinition、DatasetBatch、Alias、provenance、PipelineCursor、ExtractionProfile |
-| `internal/domain/model/resource.go` | ResourceType、Task Port、TaskResourceBinding、Dataset/Retrieval Boundary |
+| `internal/domain/model/dataset_pipeline.go` | DatasetSchemaDefinition、DatasetBatch、Alias、provenance、PipelineCursor，以及 ExtractionProfile/Unit/RecordDraft Manifest |
+| `internal/domain/model/resource.go` | ResourceType、Task Port、TaskResourceBinding、Dataset/Retrieval/ParsedDocuments/RecordDrafts Boundary |
 | `internal/domain/model/task_definition.go` | V2 StepKind、TaskDefinition、StepDefinition、StepRun；StepRun 用 `step_id + ordinal` 定位，不按 kind 定位 |
 | `internal/domain/model/retrieval.go` | RetrievalProfile、Snapshot、Chunk 领域形状，尚未接应用服务 |
 | `internal/domain/logic/dataset_contract.go` | JSON Schema 受控子集、UI Schema、Item 校验、key_fields、item_key、fingerprint、commit_seq 纯函数 |
 | `internal/domain/logic/task_definition.go` | DAG、端口引用、资源类型、Executor Kind、拓扑顺序和定义快照哈希校验 |
 | `internal/app/pipeline/dataset_service.go` | 创建不可变 Schema/Dataset，创建和提交追加型 Batch；提交前完成字段校验和稳定排序 |
 | `internal/app/pipeline/{asset_service,source_parse_executor}.go` | Asset/AssetSet 用例、逐文件结构化解析、缓存恢复、checkpoint/progress 与首个机器 Executor |
+| `internal/app/pipeline/{extraction_service,llm_extract_executor}.go` | Profile 用例、稳定分块、严格 LLM 抽取、原文证据校验、逐单元恢复和 `llm.extract` Executor |
 | `internal/app/orchestrator/definition_service.go` | 创建 TaskDefinition；创建 Task 时固化定义快照、输入资源和 StepRun |
 | `internal/app/orchestrator/{executor,scheduler,worker,runtime_service}.go` | Stage B 执行内核：Registry、资源解析、ready-set、lease Worker、暂停/恢复/重试和人工 Gate |
 | `internal/app/orchestrator/api.go` | V2 TaskDefinition/Task 入站 DTO 与通用任务快照；HTTP 不直接依赖 domain |
 | `internal/app/pipeline/api.go` | V2 Schema/Dataset/Batch 入站 DTO 与增量 Item 读模型 |
 | `internal/port/pipeline_repo.go` | 不可变 Schema 与追加型 Dataset 的仓储契约 |
 | `internal/port/{asset,parser}.go` | BlobStore/Asset/ParsedDocument 仓储边界与 Reader-based 结构化 Parser 契约 |
+| `internal/port/extraction.go` | ExtractionProfile、RecordDraftSet、ExtractionUnit 与 producer fencing 仓储契约 |
 | `internal/port/orchestrator_repo.go` | TaskDefinition、TaskResourceBinding、StepRun 仓储契约 |
 | `internal/infra/repository/pipeline_repo.go` | Batch 原子提交：锁 Dataset、查 key 冲突、分配连续 seq、写 Item/Batch/Dataset/Outbox |
 | `internal/infra/{blobstore,parser}` | 内容寻址本地 Blob 实现；Markdown/DOCX/PDF 结构化区块解析 |
 | `internal/infra/repository/asset_repo.go` | Asset/AssetSet/ParsedDocument/Manifest 持久化和 producer attempt fencing |
+| `internal/infra/repository/extraction_repo.go` | Profile/RecordDraft 持久化、逐单元恢复和 Step lease + producer attempt 双重 fencing |
 | `internal/infra/repository/orchestrator_repo.go` | TaskDefinition JSONB 快照、Task 输入绑定和 StepRun 的事务写入 |
 | `internal/infra/httpgin/handler_v2_*.go` | `/api/v2` 最小独立入口；Task SSE 从数据库快照 diff，不以进程 Broker 为事实源 |
 | `internal/infra/database/migrations/0012_pipeline_v2_foundation.*.sql` | V2 分阶段开发迁移；Legacy 删除后压平为新 `0001` |
 | `internal/infra/database/migrations/0013_asset_parse_manifests.*.sql` | `source.parse` 多文件输出 Manifest 与逐文件状态 |
+| `internal/infra/database/migrations/0014_extraction_drafts.*.sql` | `llm.extract` 输出 Manifest、稳定 ExtractionUnit 与可追溯 RecordDraft |
 | `internal/infra/repository/pipeline_integration_test.go` | PostgreSQL 真机验证 Batch、Outbox、Task 快照和资源绑定 |
 
 #### Legacy 代码地图（理解和拆除用）
@@ -376,6 +381,7 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
 | `assets/asset_sets/asset_set_members` | 原始文件及一次业务输入文件集合 |
 | `parsed_documents/document_blocks` | 按解析器版本缓存结构化文档，Block 是 provenance 的稳定引用点 |
 | `extraction_profiles` | 与 Schema 分离的抽取、归一化和业务校验配置 |
+| `record_draft_sets/extraction_units/record_drafts` | `llm.extract` 的 Manifest、稳定模型调用单元和带 Asset/Block/quote 来源的候选记录 |
 | `retrieval_profiles/snapshots/chunks` | 检索合同、覆盖位点和多 Chunk embedding；尚未接应用服务 |
 | `pipeline_cursors` | 基础 Dataset → 查询 Dataset 增量消费位点 |
 | `artifacts` | Markdown/DOCX/PDF/Graph Manifest 等非 Dataset 产物 |
@@ -629,7 +635,7 @@ AssetSet → source.parse → llm.extract → data.transform → data.validate
 
 完成标准：第二次任务能向同一 Dataset 追加 Batch，且所有新 Item 都能追溯到 Asset/Block。
 
-当前完成到 `source.parse`：上述前三项已落地。解析输出不是 checkpoint 内的 ID 数组，而是独立 `ParsedDocumentSet` 资源；它按 `source_step_run_id` 幂等、按 `producer_attempt` 拒绝旧 Worker 写入，并保留失败文件供新任务重试。下一提交从 `ExtractionProfile`、候选记录资源和 `llm.extract` 开始。
+当前完成到 `llm.extract`：解析输出是独立 `ParsedDocumentSet`，抽取输出是独立 `RecordDraftSet`；后者把稳定分块、逐单元状态、字段置信度、Asset/Block/quote provenance 和跨 attempt 请求/token 用量一并持久化。任何单元失败都会先形成 partial/failed Manifest，再让 Step 失败；重试同一 StepRun 时只重跑未成功单元，旧 attempt 无法覆盖新结果。下一提交从确定性的 `data.transform` 与 `data.validate` 开始，单位、日期、枚举、布尔和最终类型编码不得交给 LLM。
 
 ### 5.4 后续：查询 Dataset、混合检索和业务任务
 

@@ -84,3 +84,13 @@ type ParsedDocumentsBoundary struct {
 	ParserName    string `json:"parser_name"`
 	ParserVersion string `json:"parser_version"`
 }
+
+// RecordDraftsBoundary 固化 llm.extract 的输入与抽取合同身份。草稿 Manifest 自身
+// 终态不可变；这些字段让下游输入哈希和审计记录无需反查可变配置。
+type RecordDraftsBoundary struct {
+	ParsedDocumentSetID string `json:"parsed_document_set_id"`
+	ExtractionProfileID string `json:"extraction_profile_id"`
+	TargetSchemaID      string `json:"target_schema_id"`
+	ProfileHash         string `json:"profile_hash"`
+	Model               string `json:"model"`
+}

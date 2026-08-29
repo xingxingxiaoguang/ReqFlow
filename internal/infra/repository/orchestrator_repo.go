@@ -78,6 +78,36 @@ func (r *PipelineRepo) ResolveTaskResource(ctx context.Context, workspaceID stri
 		boundary, _ := json.Marshal(model.ParsedDocumentsBoundary{AssetSetID: row.AssetSetID,
 			ParserName: row.ParserName, ParserVersion: row.ParserVersion})
 		binding.Boundary = boundary
+	case model.ResourceRecordDrafts:
+		if alias != "" {
+			return binding, fmt.Errorf("record_drafts 不支持 alias")
+		}
+		var row struct {
+			ID                  string
+			ParsedDocumentSetID string
+			ExtractionProfileID string
+			TargetSchemaID      string
+			ProfileHash         string
+			Model               string
+			Status              string
+		}
+		if err := r.db.WithContext(ctx).Table("record_draft_sets AS d").
+			Select(`d.id, d.parsed_document_set_id, d.extraction_profile_id,
+				p.target_schema_id, p.profile_hash, d.model, d.status`).
+			Joins("JOIN extraction_profiles AS p ON p.id = d.extraction_profile_id").
+			Where("d.id = ? AND p.workspace_id = ?", binding.ResourceID, workspaceID).
+			Take(&row).Error; err != nil {
+			return binding, fmt.Errorf("RecordDraftSet 资源不存在: %w", err)
+		}
+		if row.Status == model.RecordDraftSetRunning {
+			return binding, fmt.Errorf("RecordDraftSet %s 尚未完成", row.ID)
+		}
+		boundary, _ := json.Marshal(model.RecordDraftsBoundary{
+			ParsedDocumentSetID: row.ParsedDocumentSetID,
+			ExtractionProfileID: row.ExtractionProfileID, TargetSchemaID: row.TargetSchemaID,
+			ProfileHash: row.ProfileHash, Model: row.Model,
+		})
+		binding.Boundary = boundary
 	case model.ResourceDataset, model.ResourceDatasetBoundary:
 		var row struct {
 			ID         string

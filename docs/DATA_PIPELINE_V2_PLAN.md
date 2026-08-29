@@ -1,13 +1,13 @@
 # ReqFlow 异构数据管线 V2 落地方案
 
-> 状态：实施中（阶段 A + 阶段 B 后端完成；阶段 C 的 Asset/结构化解析单元完成）
+> 状态：实施中（阶段 A + 阶段 B 后端完成；阶段 C 已完成结构化解析与 LLM 候选抽取）
 > 日期：2026-08-29
 > 适用范围：ReqFlow 当前未上线版本
 > 关联文档：[产品总纲](./PRODUCT.md) · [交接文档](./HANDOVER.md) · [技术债台账](./DEBT.md)
 
 ## 0. 实施状态
 
-截至 2026-08-29，阶段 A 核心底座、阶段 B 后端和阶段 C 的首个架构单元已经落地：
+截至 2026-08-29，阶段 A 核心底座、阶段 B 后端和阶段 C 的解析/抽取链路已经落地：
 
 - [x] Asset、ParsedDocument、不可变 DatasetSchemaDefinition、DatasetBatch、ResourceBinding、TaskDefinition、StepRun、RetrievalSnapshot 和 Artifact 领域模型。
 - [x] JSON Schema 受控子集校验、规范化和稳定哈希。
@@ -25,8 +25,11 @@
 - [x] 内容寻址本地 BlobStore、按 SHA-256 去重的 Asset、可复用 AssetSet 和独立 V2 上传 API。
 - [x] Reader-based 结构化 Parser、ParsedDocument/DocumentBlock 持久化和分页读取 API。
 - [x] `source.parse` Executor、逐文件失败 Manifest、成功缓存、checkpoint/progress 和 attempt fencing。
+- [x] 不可变 ExtractionProfile、目标 Schema/工作区校验和稳定 ProfileHash。
+- [x] `llm.extract` Executor、Schema 驱动工具参数、严格 JSON、原文 quote 校验和候选 RecordDraft 资源。
+- [x] 稳定 ExtractionUnit、逐单元状态、partial Manifest、成功单元复用、跨 attempt token 聚合和 producer attempt fencing。
 - [ ] V2 通用 Task Detail 前端入口。
-- [ ] ExtractionProfile、抽取/归一化/校验/审核/发布纵向切片、查询数据集和混合检索。
+- [ ] 确定性归一化/校验、审核/发布纵向切片、查询数据集和混合检索。
 
 V2 开发期间暂以 `0012_pipeline_v2_foundation` 叠加现有迁移，目的是让每批代码可以独立构建和验证；旧运行路径切除后按本文第 14 节压平为新的初始迁移。这不是产品兼容层，V2 服务不通过旧 API 或旧模型读写。
 
@@ -1120,6 +1123,9 @@ dataset_aliases
 dataset_batches
 dataset_items
 extraction_profiles
+record_draft_sets
+extraction_units
+record_drafts
 retrieval_profiles
 retrieval_snapshots
 retrieval_chunks
@@ -1140,6 +1146,9 @@ dataset_schemas(schema_hash)
 dataset_items(dataset_id, item_key) UNIQUE
 dataset_items(dataset_id, commit_seq)
 dataset_batches(dataset_id, committed_at DESC)
+record_draft_sets(source_step_run_id) UNIQUE
+extraction_units(record_draft_set_id, unit_key) UNIQUE
+record_drafts(extraction_unit_id, ordinal) UNIQUE
 task_resource_bindings(task_id, direction, port_name) UNIQUE
 step_runs(task_id, step_id) UNIQUE
 step_runs(status, lease_until)
@@ -1297,7 +1306,7 @@ retrieval_snapshot_id
 
 ### 阶段 C：产品规格清洗纵向切片
 
-状态：Asset/结构化 Parser/`source.parse` 已完成；ExtractionProfile 及后续步骤待实现。
+状态：Asset/结构化 Parser/`source.parse`、ExtractionProfile 和 `llm.extract` 已完成；确定性转换及后续步骤待实现。
 
 范围：
 
@@ -1305,8 +1314,9 @@ retrieval_snapshot_id
 - [x] 结构化 Parser。
 - [x] `ParsedDocumentSet` Manifest：逐文件状态、部分成功、缓存恢复和 attempt fencing。
 - [x] `source.parse` 注册到 V2 Worker。
-- ExtractionProfile。
-- LLM 抽取、归一化、校验、冲突处理和审核 UI。
+- [x] ExtractionProfile。
+- [x] LLM 候选抽取、严格结构化响应、Block 原文证据和逐单元恢复。
+- 确定性归一化、校验、冲突处理和审核 UI。
 - Dataset Batch 发布。
 
 验收：

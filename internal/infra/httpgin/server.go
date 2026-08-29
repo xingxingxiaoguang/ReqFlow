@@ -22,6 +22,7 @@ type Services struct {
 	V2Runtime     *apporchestrator.RuntimeService
 	V2Datasets    *apppipeline.DatasetService
 	V2Assets      *apppipeline.AssetService
+	V2Extractions *apppipeline.ExtractionService
 
 	UploadDir string // 上传暂存目录（cmd 从配置注入）
 	MaxFileMB int64  // 上传大小上限
@@ -118,6 +119,11 @@ func New(svc Services) *gin.Engine {
 		v2.GET("/asset-sets/:id", h.v2GetAssetSet)
 		v2.GET("/parsed-document-sets/:id", h.v2GetParsedDocumentSet)
 		v2.GET("/parsed-documents/:id/blocks", h.v2GetDocumentBlocks)
+	}
+	if svc.V2Extractions != nil {
+		v2.POST("/extraction-profiles", h.v2CreateExtractionProfile)
+		v2.GET("/extraction-profiles/:id", h.v2GetExtractionProfile)
+		v2.GET("/record-draft-sets/:id", h.v2GetRecordDraftSet)
 	}
 	return r
 }

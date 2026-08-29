@@ -112,3 +112,85 @@ type ExtractionProfile struct {
 	ProfileHash        string
 	CreatedAt          time.Time
 }
+
+// RecordDraftSet 是 llm.extract 的一等输出 Manifest。它与一个解析结果集和一个
+// 不可变 ExtractionProfile 绑定，后续 transform/validate 只读取这个快照资源。
+type RecordDraftSet struct {
+	ID                  string
+	ParsedDocumentSetID string
+	ExtractionProfileID string
+	SourceStepRunID     string
+	Status              string
+	ProducerAttempt     int
+	Model               string
+	UnitCount           int
+	SucceededUnitCount  int
+	FailedUnitCount     int
+	DraftCount          int
+	LLMRequestCount     int
+	InputTokens         int
+	OutputTokens        int
+	CacheReadTokens     int
+	CacheWriteTokens    int
+	CreatedAt           time.Time
+	FinishedAt          time.Time
+}
+
+const (
+	RecordDraftSetRunning   = "running"
+	RecordDraftSetSucceeded = "succeeded"
+	RecordDraftSetPartial   = "partial"
+	RecordDraftSetFailed    = "failed"
+)
+
+// ExtractionUnit 是按 DocumentBlock 稳定切分的最小 LLM 调用单元。UnitKey 和
+// InputHash 由输入区块与 Profile 决定，重试时成功单元不会重复调用模型。
+type ExtractionUnit struct {
+	ID                string
+	RecordDraftSetID  string
+	UnitKey           string
+	ParsedDocumentID  string
+	Ordinal           int
+	FirstBlockOrdinal int
+	LastBlockOrdinal  int
+	InputHash         string
+	Status            string
+	ErrorMessage      string
+	ResponseHash      string
+	RequestCount      int
+	InputTokens       int
+	OutputTokens      int
+	CacheReadTokens   int
+	CacheWriteTokens  int
+	CreatedAt         time.Time
+	FinishedAt        time.Time
+}
+
+// LLMUsage 是领域层可持久化的模型用量快照；Provider 的响应类型在应用层转换，
+// 仓储不依赖具体 LLM port 实现。
+type LLMUsage struct {
+	InputTokens      int
+	OutputTokens     int
+	CacheReadTokens  int
+	CacheWriteTokens int
+}
+
+const (
+	ExtractionUnitPending   = "pending"
+	ExtractionUnitRunning   = "running"
+	ExtractionUnitSucceeded = "succeeded"
+	ExtractionUnitFailed    = "failed"
+)
+
+// RecordDraft 保留模型原始字段袋、逐字段置信度与可验证来源。这里不做最终类型
+// 编码；确定性转换和业务校验由后续 Executor 完成。
+type RecordDraft struct {
+	ID               string
+	RecordDraftSetID string
+	ExtractionUnitID string
+	Ordinal          int
+	Fields           json.RawMessage
+	FieldConfidence  json.RawMessage
+	Provenance       ItemProvenance
+	CreatedAt        time.Time
+}

@@ -78,12 +78,14 @@ make build        # → bin/reqflow
 - `POST /api/v2/assets`（multipart `file`）、`POST /api/v2/asset-sets`
 - `GET /api/v2/asset-sets/:id`、`GET /api/v2/parsed-document-sets/:id`
 - `GET /api/v2/parsed-documents/:id/blocks?after_ordinal=&limit=`
+- `POST /api/v2/extraction-profiles`、`GET /api/v2/extraction-profiles/:id`
+- `GET /api/v2/record-draft-sets/:id`
 - `POST /api/v2/task-definitions`、`POST /api/v2/tasks`
 - `POST /api/v2/tasks/:id/start|pause|resume`
 - `POST /api/v2/tasks/:id/steps/:step_id/retry|approve`
 - `GET /api/v2/tasks/:id`、`GET /api/v2/tasks/:id/events`
 
-V2 Schema 不提供 PUT/PATCH；结构变化必须创建新 Schema 和 Dataset。`source.parse` 已作为首个机器 Executor 注册：原始文件进入内容寻址 BlobStore，解析结果落为带逐文件状态的 `ParsedDocumentSet` 和可分页 `DocumentBlock`。当前前端仍是 Legacy 页面，其余机器 Executor 随产品规格清洗纵向切片逐步注册。
+V2 Schema/Profile 不提供 PUT/PATCH；结构或抽取合同变化必须创建新资源。`source.parse` 将内容寻址 Asset 解析为带逐文件状态的 `ParsedDocumentSet`；`llm.extract` 按稳定 Block 分块生成 `RecordDraftSet`，严格校验 Schema 字段、置信度和 Asset/Block/原文 quote 来源，重试只重跑失败分块。当前前端仍是 Legacy 页面，其余机器 Executor 随产品规格清洗纵向切片逐步注册。
 Task 输入绑定接受具体 `resource_id`；Dataset 也可传 `resource_alias`，创建时会解析为具体 Dataset，并为 `dataset_boundary` 固化当时的 `through_seq`。
 
 ### Legacy（待 V2 前端切流后删除）

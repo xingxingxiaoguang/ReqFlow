@@ -167,8 +167,19 @@ func main() {
 		logger.Error("source.parse Executor 初始化失败", "err", err)
 		os.Exit(1)
 	}
+	v2Extractions, err := apppipeline.NewExtractionService(pipelineRepo, llmClient,
+		cfg.LLM.Model, apppipeline.ExtractionOptions{})
+	if err != nil {
+		logger.Error("V2 Extraction Pipeline 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	llmExtractExecutor, err := apppipeline.NewLLMExtractExecutor(v2Extractions)
+	if err != nil {
+		logger.Error("llm.extract Executor 初始化失败", "err", err)
+		os.Exit(1)
+	}
 	// V2 Registry 只注册已经具备真实资源持久化与恢复语义的 Executor。
-	v2Registry, err := apporchestrator.NewRegistry(sourceParseExecutor)
+	v2Registry, err := apporchestrator.NewRegistry(sourceParseExecutor, llmExtractExecutor)
 	if err != nil {
 		logger.Error("V2 Executor Registry 初始化失败", "err", err)
 		os.Exit(1)
@@ -208,9 +219,8 @@ func main() {
 		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
 		DatasetQuery: datasetQuery, DatasetAdmin: datasetAdmin, Archive: archiveSvc, Metadata: metadataSvc,
 		V2Definitions: v2Definitions, V2Runtime: v2Runtime, V2Datasets: v2Datasets,
-		V2Assets:  v2Assets,
-		UploadDir: cfg.Workspace.UploadDir,
-		MaxFileMB: int64(cfg.Parser.MaxFileMB),
+		V2Assets: v2Assets, V2Extractions: v2Extractions,
+		UploadDir: cfg.Workspace.UploadDir, MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})
 	mountStatic(engine)
 
