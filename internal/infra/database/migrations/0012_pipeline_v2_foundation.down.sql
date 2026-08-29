@@ -30,6 +30,7 @@ DROP TABLE IF EXISTS asset_set_members;
 DROP TABLE IF EXISTS asset_sets;
 DROP TABLE IF EXISTS assets;
 DROP TABLE IF EXISTS task_resource_bindings;
+DROP TABLE IF EXISTS step_resource_bindings;
 DROP TABLE IF EXISTS step_runs;
 
 ALTER TABLE tasks

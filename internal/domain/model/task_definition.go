@@ -74,6 +74,15 @@ type StepRun struct {
 	FinishedAt   time.Time
 }
 
+// TaskExecution 是 Orchestrator 的持久化聚合快照。DefinitionSnapshot、输入绑定、
+// StepRun 和步骤输出共同决定下一次调度，不依赖进程内状态或 Broker 事件。
+type TaskExecution struct {
+	Task        Task
+	Inputs      []TaskResourceBinding
+	Steps       []StepRun
+	StepOutputs []StepResourceBinding
+}
+
 const (
 	StepRunPending   = "pending"
 	StepRunQueued    = "queued"

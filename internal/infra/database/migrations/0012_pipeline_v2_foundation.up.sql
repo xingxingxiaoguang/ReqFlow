@@ -59,6 +59,18 @@ CREATE TABLE step_runs (
 );
 CREATE INDEX idx_step_runs_queue ON step_runs (status, lease_until, created_at);
 
+CREATE TABLE step_resource_bindings (
+    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    step_run_id   UUID NOT NULL REFERENCES step_runs (id) ON DELETE CASCADE,
+    port_name     TEXT NOT NULL,
+    resource_type TEXT NOT NULL,
+    resource_id   UUID NOT NULL,
+    boundary      JSONB NOT NULL DEFAULT '{}'::jsonb,
+    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE (step_run_id, port_name)
+);
+CREATE INDEX idx_step_resource_target ON step_resource_bindings (resource_type, resource_id);
+
 CREATE TABLE task_resource_bindings (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     task_id       UUID NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,

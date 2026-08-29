@@ -1,13 +1,13 @@
 # ReqFlow 异构数据管线 V2 落地方案
 
-> 状态：已确认方向，待实施
-> 日期：2026-08-28
+> 状态：实施中（阶段 A 核心底座 + 阶段 B 后端已完成；尚未切前端/删除 Legacy）
+> 日期：2026-08-29
 > 适用范围：ReqFlow 当前未上线版本
 > 关联文档：[产品总纲](./PRODUCT.md) · [交接文档](./HANDOVER.md) · [技术债台账](./DEBT.md)
 
 ## 0. 实施状态
 
-截至 2026-08-28，阶段 A 的第一批基础已经落地：
+截至 2026-08-29，阶段 A 核心底座和阶段 B 后端已经落地：
 
 - [x] Asset、ParsedDocument、不可变 DatasetSchemaDefinition、DatasetBatch、ResourceBinding、TaskDefinition、StepRun、RetrievalSnapshot 和 Artifact 领域模型。
 - [x] JSON Schema 受控子集校验、规范化和稳定哈希。
@@ -16,8 +16,13 @@
 - [x] PostgreSQL V2 基础表、Batch 原子提交、Outbox 和增量读取位点。
 - [x] TaskDefinition 快照、Task 输入资源绑定和 StepRun 原子创建。
 - [x] 领域单测、应用服务单测和 PostgreSQL 集成测试。
-- [ ] V2 HTTP API 和前端入口。
-- [ ] Worker lease、Executor Registry 和 Orchestrator 调度循环。
+- [x] Executor Registry、按 `step_id` 调度、Step 输出资源绑定和任务输出固化。
+- [x] PostgreSQL `SKIP LOCKED` Worker、owner fencing、lease 续租/回收、checkpoint、retry 和 `pausing` 两阶段暂停。
+- [x] Scheduler ready-set、任意位置 Human Gate、周期性数据库对账和服务启动装配。
+- [x] 最小 V2 HTTP API：Schema/Dataset/Batch、TaskDefinition/Task 生命周期、通用 Task Snapshot 和数据库快照 diff SSE。
+- [x] Task 输入资源存在性校验、Dataset Alias 单次解析，以及 Dataset/Retrieval 读取边界自动固化。
+- [x] Legacy/V2 查询与启动恢复隔离；Legacy `RecoverStuck` 不再触碰 V2 Task。
+- [ ] V2 通用 Task Detail 前端入口。
 - [ ] Asset/Parser、清洗纵向切片、查询数据集和混合检索。
 
 V2 开发期间暂以 `0012_pipeline_v2_foundation` 叠加现有迁移，目的是让每批代码可以独立构建和验证；旧运行路径切除后按本文第 14 节压平为新的初始迁移。这不是产品兼容层，V2 服务不通过旧 API 或旧模型读写。
@@ -495,6 +500,10 @@ type StepRunContext struct {
     StepRunID   string
     Inputs      map[string]ResourceRef
     Config      json.RawMessage
+    InputHash   string
+    ConfigHash  string
+    IdempotencyKey string // 跨 attempt 稳定：task_id:step_id
+    ExecutionKey   string // 含 input/config hash + attempt
     Checkpoint  CheckpointWriter
     Progress    ProgressReporter
 }
@@ -534,6 +543,11 @@ Executor 注册表使用 `map[StepKind]StepExecutor`。Runner 按 `step_id` 调�
 6. Executor 根据 checkpoint 幂等恢复。
 
 任务暂停时不删除队列项，只取消运行上下文并保存 checkpoint。任务恢复后重新排队。
+
+实现使用任务级 `pausing` 过渡态：暂停请求先持久化，排队/人工步骤立即转为
+`paused`；持有 lease 的本地 Worker 直接取消，远端 Worker 在续租时收到暂停信号，
+保存最后 checkpoint 后释放 lease。崩溃 Worker 由过期 lease 回收逻辑收敛到
+`paused`，避免“立即清 lease 导致最后检查点无法写入”和“旧 Worker 晚到覆盖”两类竞态。
 
 幂等键至少包含：
 
@@ -905,9 +919,10 @@ Agent 无权通过参数传入任意 Dataset ID，也不能绕过 Snapshot 直�
 输出：Node DatasetBatch + Edge DatasetBatch + Graph Manifest
 ```
 
-## 11. API V2 草案
+## 11. API V2 合同
 
-旧 API 不保留兼容。建议统一放在 `/api/v2`。
+旧 API 不保留兼容，统一放在 `/api/v2`。下列目录中，阶段 B 已实现写路径、
+增量 Item 读取和 Task 运行时；列表/详情/clone、Asset/Profile/Retrieval 随后续阶段开放。
 
 ### 11.1 Schema 和 Dataset
 
@@ -918,6 +933,8 @@ GET    /api/v2/schemas/:id
 POST   /api/v2/schemas/:id/clone
 
 POST   /api/v2/datasets
+POST   /api/v2/datasets/:id/batches
+POST   /api/v2/batches/:id/commit
 GET    /api/v2/datasets
 GET    /api/v2/datasets/:id
 GET    /api/v2/datasets/:id/items
@@ -958,8 +975,8 @@ GET    /api/v2/tasks/:id
 POST   /api/v2/tasks/:id/start
 POST   /api/v2/tasks/:id/pause
 POST   /api/v2/tasks/:id/resume
-POST   /api/v2/step-runs/:id/retry
-POST   /api/v2/step-runs/:id/review
+POST   /api/v2/tasks/:id/steps/:step_id/retry
+POST   /api/v2/tasks/:id/steps/:step_id/approve
 GET    /api/v2/tasks/:id/events
 ```
 
@@ -1256,6 +1273,8 @@ retrieval_snapshot_id
 - 已提交 Item 无更新/删除 API。
 
 ### 阶段 B：Orchestrator V2
+
+状态：后端与最小 API 已完成；通用 Task Detail 前端随阶段 C 一并接入。
 
 范围：
 

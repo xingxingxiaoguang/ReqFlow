@@ -12,7 +12,7 @@ import (
 func TestDefinitionServiceCreatesTaskSnapshotAndStepRuns(t *testing.T) {
 	ctx := context.Background()
 	repo := &memoryOrchestratorRepo{}
-	service := NewDefinitionService(repo)
+	service := NewDefinitionService(repo, definitionTestRegistry(t), repo)
 	definition, err := service.Create(ctx, activeDefinition())
 	if err != nil {
 		t.Fatal(err)
@@ -53,7 +53,7 @@ func TestDefinitionServiceCreatesTaskSnapshotAndStepRuns(t *testing.T) {
 
 func TestDefinitionServiceValidatesRequiredBindings(t *testing.T) {
 	repo := &memoryOrchestratorRepo{}
-	service := NewDefinitionService(repo)
+	service := NewDefinitionService(repo, definitionTestRegistry(t), repo)
 	definition, err := service.Create(context.Background(), activeDefinition())
 	if err != nil {
 		t.Fatal(err)
@@ -67,6 +67,29 @@ func TestDefinitionServiceValidatesRequiredBindings(t *testing.T) {
 	if err == nil {
 		t.Fatal("缺少 target 必填端口应拒绝")
 	}
+}
+
+func definitionTestRegistry(t *testing.T) *Registry {
+	t.Helper()
+	registry, err := NewRegistry(
+		testExecutor{kind: model.StepKindLLMExtract},
+		testExecutor{kind: model.StepKindDataPublish},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return registry
+}
+
+type testExecutor struct{ kind model.StepKind }
+
+func (e testExecutor) Kind() model.StepKind                                         { return e.kind }
+func (testExecutor) ValidateDefinition(context.Context, model.StepDefinition) error { return nil }
+func (testExecutor) Execute(context.Context, StepRunContext) (StepResult, error) {
+	return StepResult{}, nil
+}
+func (testExecutor) Resume(context.Context, StepRunContext, json.RawMessage) (StepResult, error) {
+	return StepResult{}, nil
 }
 
 func activeDefinition() model.TaskDefinition {
@@ -141,4 +164,8 @@ func (r *memoryOrchestratorRepo) GetTaskResourceBindings(context.Context, string
 
 func (r *memoryOrchestratorRepo) GetStepRuns(context.Context, string) ([]model.StepRun, error) {
 	return append([]model.StepRun(nil), r.steps...), nil
+}
+
+func (*memoryOrchestratorRepo) ResolveTaskResource(_ context.Context, _ string, binding model.TaskResourceBinding, _ string) (model.TaskResourceBinding, error) {
+	return binding, nil
 }

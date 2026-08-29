@@ -68,6 +68,23 @@ make build        # → bin/reqflow
 
 ## HTTP API
 
+### V2（当前重构入口）
+
+`/api/v2` 已提供不可变 Schema、追加型 Dataset/Batch、TaskDefinition DAG 和持久化 Task 运行时：
+
+- `POST /api/v2/schemas`、`POST /api/v2/datasets`
+- `POST /api/v2/datasets/:id/batches`、`POST /api/v2/batches/:id/commit`
+- `GET /api/v2/datasets/:id/items?after_seq=&through_seq=`
+- `POST /api/v2/task-definitions`、`POST /api/v2/tasks`
+- `POST /api/v2/tasks/:id/start|pause|resume`
+- `POST /api/v2/tasks/:id/steps/:step_id/retry|approve`
+- `GET /api/v2/tasks/:id`、`GET /api/v2/tasks/:id/events`
+
+V2 Schema 不提供 PUT/PATCH；结构变化必须创建新 Schema 和 Dataset。当前前端仍是 Legacy 页面，新的机器 Executor 会随产品规格清洗纵向切片逐步注册。
+Task 输入绑定接受具体 `resource_id`；Dataset 也可传 `resource_alias`，创建时会解析为具体 Dataset，并为 `dataset_boundary` 固化当时的 `through_seq`。
+
+### Legacy（待 V2 前端切流后删除）
+
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | POST | `/api/tasks/:id/parse` | multipart 上传 → fire-and-forget 解析步骤（进度走 SSE） |

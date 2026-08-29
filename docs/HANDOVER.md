@@ -3,18 +3,20 @@
 > 面向下一个接手开发的同学。本文只回答四件事：**项目现在是什么、怎么跑起来、改代码必须知道的上下文、接手后干什么**。
 > 产品定位、方向性决策与「重复人工任务 → AI 驱动 Task」的抽离范式见 [PRODUCT.md](./PRODUCT.md)；技术实现细节以本文件为准。
 
-> **2026-08-28 交接状态**：项目正在从固定的需求导入工作台重建为异构数据管线 V2。V2 不保留旧数据库、旧 API 或旧前端兼容；完整设计和阶段验收见 [DATA_PIPELINE_V2_PLAN.md](./DATA_PIPELINE_V2_PLAN.md)。本文中标为“Legacy”的内容只用于理解和拆除当前仍可运行的旧路径，不是后续扩展入口。
+> **2026-08-29 交接状态**：项目正在从固定的需求导入工作台重建为异构数据管线 V2。V2 不保留旧数据库、旧 API 或旧前端兼容；完整设计和阶段验收见 [DATA_PIPELINE_V2_PLAN.md](./DATA_PIPELINE_V2_PLAN.md)。本文中标为“Legacy”的内容只用于理解和拆除当前仍可运行的旧路径，不是后续扩展入口。
 
 ---
 
 ## 1. 项目是什么（30 秒版）
 
 - **目标形态**：把非标准产品文档清洗为基础 Dataset，再增量派生查询 Dataset 和 BM25 + Vector Retrieval Snapshot，最后由 Bug 分析、规格书生成、知识图谱等业务 Task 消费。
-- **V2 已落地**：不可变 JSON Schema、Dataset Batch 追加、`commit_seq` 增量位点、Item provenance/identity、TaskDefinition DAG、输入资源端口、定义快照、StepRun，以及对应 PostgreSQL 表和原子仓储。领域、应用服务和 PostgreSQL 集成测试已覆盖关键不变量。
-- **尚未切流**：V2 还没有 HTTP API、前端、Worker/lease 调度、Asset/Parser 和 Retrieval 实现。当前可运行页面仍走 Legacy `TaskManager + datasets.schema + 固定四步流程`，不要继续在这条路径上增加业务类型。
+- **V2 已落地**：不可变 JSON Schema、Dataset Batch 追加、`commit_seq`、provenance/identity、TaskDefinition DAG、定义快照和资源端口；Stage B 后端已补齐 Executor Registry、Step 输出绑定、Scheduler、PostgreSQL Worker/lease/checkpoint/retry、任意位置 Human Gate、两阶段暂停和任务输出固化。
+- **V2 已有最小 API**：`/api/v2` 已开放 Schema/Dataset/Batch、TaskDefinition/Task 生命周期、任务快照和 SSE，可独立用 API 跑通人审任务与追加 Batch；V2 Worker 已在 `cmd` 启动。机器步骤暂未注册具体 Executor，active 定义会在注册时校验并拒绝缺失 Kind。
+- **输入绑定已收口**：Task API 可用 `resource_id` 或 Dataset `resource_alias` 定位输入；应用层验证资源存在性，Alias 只在创建时解析一次，`dataset_boundary` 自动固化 `through_seq`，Retrieval Snapshot 自动固化 `source_seq`。
+- **尚未切前端**：当前页面仍走 Legacy `TaskManager + datasets.schema + 固定四步流程`；Legacy 列表/恢复已按 `definition_id IS NULL` 与 V2 隔离。不要继续在旧路径上增加业务类型。
 - **可复用底座**：LLM Provider、Agent Loop、工具调用、会话序列化、`ask_human`、SSE persist-then-publish 和前端重连机制继续复用，但要通过 V2 Executor/Orchestrator 接入。
-- **下一步**：先完成 Executor Registry、持久化 Worker 和 Orchestrator 调度，再开放 V2 API；随后打通“批量产品文档 → 基础 Dataset Batch”的第一个纵向切片。执行顺序见 §5。
-- **仓库**：`/Users/weighingzhang/demo/ReqFlow`。当前工作区包含尚未提交的 Legacy M5 改动和 V2 新增代码，操作前先看 `git status --short`，禁止回退他人修改。
+- **下一步**：直接进入“批量产品文档 → 基础 Dataset Batch”的纵向切片，按 `source.parse → llm.extract → data.transform → data.validate → human.review → data.publish` 逐个接入通用 Executor；同时补通用 Task Detail 前端。执行顺序见 §5。
+- **仓库**：`/Users/xxxg/demo/ReqFlow`。操作前始终先看 `git status --short`，不要回退不属于当前任务的修改。
 
 ## 2. 怎么接手：跑起来
 
@@ -90,10 +92,14 @@ internal/domain  实体模型 + 纯领域逻辑（零三方依赖，仅标准库
 | `internal/domain/logic/task_definition.go` | DAG、端口引用、资源类型、Executor Kind、拓扑顺序和定义快照哈希校验 |
 | `internal/app/pipeline/dataset_service.go` | 创建不可变 Schema/Dataset，创建和提交追加型 Batch；提交前完成字段校验和稳定排序 |
 | `internal/app/orchestrator/definition_service.go` | 创建 TaskDefinition；创建 Task 时固化定义快照、输入资源和 StepRun |
+| `internal/app/orchestrator/{executor,scheduler,worker,runtime_service}.go` | Stage B 执行内核：Registry、资源解析、ready-set、lease Worker、暂停/恢复/重试和人工 Gate |
+| `internal/app/orchestrator/api.go` | V2 TaskDefinition/Task 入站 DTO 与通用任务快照；HTTP 不直接依赖 domain |
+| `internal/app/pipeline/api.go` | V2 Schema/Dataset/Batch 入站 DTO 与增量 Item 读模型 |
 | `internal/port/pipeline_repo.go` | 不可变 Schema 与追加型 Dataset 的仓储契约 |
 | `internal/port/orchestrator_repo.go` | TaskDefinition、TaskResourceBinding、StepRun 仓储契约 |
 | `internal/infra/repository/pipeline_repo.go` | Batch 原子提交：锁 Dataset、查 key 冲突、分配连续 seq、写 Item/Batch/Dataset/Outbox |
 | `internal/infra/repository/orchestrator_repo.go` | TaskDefinition JSONB 快照、Task 输入绑定和 StepRun 的事务写入 |
+| `internal/infra/httpgin/handler_v2_*.go` | `/api/v2` 最小独立入口；Task SSE 从数据库快照 diff，不以进程 Broker 为事实源 |
 | `internal/infra/database/migrations/0012_pipeline_v2_foundation.*.sql` | V2 分阶段开发迁移；Legacy 删除后压平为新 `0001` |
 | `internal/infra/repository/pipeline_integration_test.go` | PostgreSQL 真机验证 Batch、Outbox、Task 快照和资源绑定 |
 
@@ -464,9 +470,9 @@ Validate TaskDefinition DAG/Ports/Refs
 
 ### 4.3 API 速查
 
-V2 API 尚未挂载。规划统一使用 `/api/v2`，端点草案见 [V2 方案 §11](./DATA_PIPELINE_V2_PLAN.md#11-api-v2-草案)。实现时 handler 只能调用 `internal/app/orchestrator`、`internal/app/pipeline` 等 V2 用例，不能回调 Legacy TaskManager 形成双写。
+V2 最小 API 已挂在 `/api/v2`：Schema/Dataset/Batch 创建与增量读、TaskDefinition/Task 创建、start/pause/resume/retry/approve、任务快照和 SSE。完整目录型/clone/Asset/Profile/Retrieval 端点仍按 [V2 方案 §11](./DATA_PIPELINE_V2_PLAN.md#11-api-v2-合同) 逐阶段开放。Handler 只调用 `internal/app/orchestrator`、`internal/app/pipeline` V2 用例，不回调 Legacy TaskManager，也不双写。
 
-以下均为当前 Legacy `/api` 端点，只用于现有页面和切流对照：
+以下均为 Legacy `/api` 端点，只用于现有页面和切流对照：
 
 | 端点 | 类型 | 说明 |
 |------|------|------|
@@ -547,19 +553,21 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 与过程工�
 
 ## 5. 接手后干什么（按优先级）
 
-### 5.1 第一优先级：完成 Orchestrator V2 阶段 B
+### 5.1 ✅ Orchestrator V2 阶段 B 后端已完成
 
 目标：让 StepRun 从“已落库”变成“可被持久化 Worker 调度、恢复和完成”，但暂时不接具体清洗业务。
 
-按以下顺序实施：
+已完成：
 
-1. 在 `internal/app/orchestrator` 定义 `StepExecutor`、`StepRunContext`、`StepResult`、CheckpointWriter 和 ProgressReporter；实现按 Kind 唯一注册的 Executor Registry。
+1. `internal/app/orchestrator` 已定义 `StepExecutor`、`StepRunContext`、`StepResult`、CheckpointWriter 和 ProgressReporter；Registry 按 Kind 唯一注册，`human.review` 是内建 Gate，禁止注册成 Worker Executor。
 2. 新增 `step_resource_bindings`，保存每个 StepRun 的输出端口资源。下游 `$step.<step_id>.<port>` 必须从这里解析，不能塞回 `step_runs.progress`。
 3. 扩展 `port.OrchestratorRepo`：领取 queued Step、续 lease、保存 checkpoint、完成/失败 Step、写 Step 输出、回收过期 lease。
 4. PostgreSQL 领取使用 `FOR UPDATE SKIP LOCKED`。`lease_owner + lease_until` 是并发所有权，更新必须带 owner 条件，防止过期 Worker 覆盖新 Worker 状态。
 5. Scheduler 根据 definition snapshot 和 StepRun 状态计算 ready 集合：依赖全 succeeded 才能 queued；`human.review` 进入 awaiting，不交给普通 Worker。
 6. Step 成功后在一个事务内写输出绑定并更新 StepRun；随后调度下游。所有 Step 成功后，按 `output_bindings` 固化 Task 输出端口并结束 Task。
-7. pause 取消当前执行上下文并持久化 checkpoint；resume 重新 queued。Worker 崩溃则 lease 到期后恢复，不再使用 Legacy `TaskManager.running` 进程内 map 作为事实源。
+7. pause 通过 `pausing` 过渡态取消执行并保留有效 lease 写最后 checkpoint；resume 重新计算输入哈希后排队。Worker 崩溃由 lease 到期恢复，不使用 Legacy `TaskManager.running` 作为事实源。
+
+尚未完成的是通用 Task Detail 前端骨架；后端快照形状已经稳定，可直接消费。
 
 验收：
 
@@ -569,13 +577,15 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 与过程工�
 - Human Review 可以位于任意 DAG 位置。
 - Broker 丢事件或服务重启不影响数据库里的最终状态。
 
-### 5.2 第二优先级：最小 V2 API，先不追求完整前端
+### 5.2 ✅ 最小 V2 API 已完成（暂不追求完整前端）
 
-先挂 `/api/v2`，用 API/集成测试打通平台闭环：
+已挂 `/api/v2` 并由 PostgreSQL + `httptest` 集成测试打通：
 
 ```text
 POST /schemas
 POST /datasets
+POST /datasets/:id/batches
+POST /batches/:id/commit
 POST /task-definitions
 POST /tasks
 POST /tasks/:id/start|pause|resume
@@ -589,7 +599,7 @@ GET  /datasets/:id/items?after_seq=&through_seq=
 - Handler 只调用 V2 app service，不调用 Legacy TaskManager 或 DatasetAdminService。
 - Schema 没有 PUT/PATCH；修改入口未来实现 clone。
 - 创建 Task 时 Dataset Alias 必须解析为具体 DatasetID，并固化 through_seq。
-- SSE 沿用现有先订阅后快照、persist-then-publish 和统一 `{task_id,data}` 帧形状。
+- SSE 使用统一 `{task_id,data}` 帧形状，但 V2 直接每秒对数据库快照做 diff；这样跨进程 Worker、Broker 丢帧和重连都不影响恢复。后续若为降延迟加 Broker，只能作为唤醒信号，不能替代数据库快照。
 - 在 V2 API 可独立跑通前，不删除 Legacy 页面；但不做新旧双写。
 
 ### 5.3 第三个里程碑：产品规格清洗纵向切片
@@ -627,7 +637,7 @@ AssetSet → source.parse → llm.extract → data.transform → data.validate
 
 ### 5.5 当前现场状态和常见误区
 
-- 工作区不是干净分支，已有大量 Legacy M5 未提交修改；V2 新文件也尚未提交。先看 `git status --short`，不要用 reset/checkout 回退。
+- 不假设工作区干净；每次接手先看 `git status --short`，不要用 reset/checkout 回退他人修改。
 - 本机开发库已经执行过 `0012`。如果迁移文件继续变化导致本地列不一致，直接重建开发数据库，不为本地草稿状态追加兼容迁移。
 - `0012` 最终会被压平，不要围绕旧 `datasets.schema/schema_version`、`task_steps` 或 `metadata_registry` 设计新外键和新功能。
 - `DatasetService.CommitBatch` 当前逐条 INSERT，正确性优先。真实批量压测出现瓶颈后再改成参数化批量 SQL，必须保持同一事务与 seq 顺序。

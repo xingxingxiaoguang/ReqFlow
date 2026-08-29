@@ -179,6 +179,7 @@ type Workflow struct {
 const (
 	TaskStatusPending   = "pending"
 	TaskStatusRunning   = "running"
+	TaskStatusPausing   = "pausing"  // 已发出暂停请求，等待持有 lease 的 Worker 落检查点
 	TaskStatusAwaiting  = "awaiting" // 等待人工操作（确认门）
 	TaskStatusPaused    = "paused"   // 用户暂停 / 服务重启中断
 	TaskStatusSucceeded = "succeeded"

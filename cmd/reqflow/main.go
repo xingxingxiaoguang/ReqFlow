@@ -17,6 +17,8 @@ import (
 	"log/slog"
 
 	"reqflow/internal/app"
+	apporchestrator "reqflow/internal/app/orchestrator"
+	apppipeline "reqflow/internal/app/pipeline"
 	"reqflow/internal/infra/config"
 	"reqflow/internal/infra/database"
 	"reqflow/internal/infra/embedding"
@@ -117,6 +119,7 @@ func main() {
 	taskRepo := repository.NewTaskRepo(db)
 	archiveRepo := repository.NewArchiveRepo(db)
 	metadataRepo := repository.NewMetadataRepo(db)
+	pipelineRepo := repository.NewPipelineRepo(db)
 	// 数据集动态索引管理器：FTS/筛选索引随数据集 schema 建删（表达式索引）
 	datasetIndexer := repository.NewDatasetIndexer(db, cfg.FTS.TSConfig)
 
@@ -147,6 +150,35 @@ func main() {
 		logger.Warn("任务恢复失败", "err", err)
 	}
 
+	// V2 Orchestrator 独立装配：当前 Registry 只接收已实现的 V2 Executor；
+	// 清洗纵向切片接入前为空，因此带机器步骤的 active definition 会在注册时被拒绝。
+	v2Registry, err := apporchestrator.NewRegistry()
+	if err != nil {
+		logger.Error("V2 Executor Registry 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	v2Definitions := apporchestrator.NewDefinitionService(pipelineRepo, v2Registry, pipelineRepo)
+	v2Datasets := apppipeline.NewDatasetService(pipelineRepo)
+	v2Scheduler := apporchestrator.NewScheduler(pipelineRepo)
+	v2Worker, err := apporchestrator.NewWorker(pipelineRepo, v2Registry, v2Scheduler, apporchestrator.WorkerOptions{})
+	if err != nil {
+		logger.Error("V2 Worker 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	v2Runtime, err := apporchestrator.NewRuntimeService(pipelineRepo, v2Scheduler, v2Worker)
+	if err != nil {
+		logger.Error("V2 Runtime 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	workerCtx, stopWorker := context.WithCancel(context.Background())
+	workerDone := make(chan struct{})
+	go func() {
+		defer close(workerDone)
+		if err := v2Worker.Run(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("V2 Worker 异常退出", "err", err)
+		}
+	}()
+
 	var settingsView app.SettingsView
 	settingsView.WorkspaceName = cfg.Workspace.Name
 	settingsView.LLM.BaseURL, settingsView.LLM.Model, settingsView.LLM.Configured = cfg.LLM.BaseURL, cfg.LLM.Model, cfg.LLMReady()
@@ -159,6 +191,7 @@ func main() {
 	engine := httpgin.New(httpgin.Services{
 		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
 		DatasetQuery: datasetQuery, DatasetAdmin: datasetAdmin, Archive: archiveSvc, Metadata: metadataSvc,
+		V2Definitions: v2Definitions, V2Runtime: v2Runtime, V2Datasets: v2Datasets,
 		UploadDir: cfg.Workspace.UploadDir,
 		MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})
@@ -180,9 +213,15 @@ func main() {
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
 	logger.Info("正在优雅关闭…")
+	stopWorker()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	_ = srv.Shutdown(ctx)
+	select {
+	case <-workerDone:
+	case <-ctx.Done():
+		logger.Warn("V2 Worker 未在关闭窗口内退出")
+	}
 }
 
 // checkExampleTemplate 检查入库的示例模板是否被填入真实密钥（防止随代码分享泄漏）。

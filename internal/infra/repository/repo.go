@@ -11,17 +11,17 @@ import (
 /* ---- 表行结构（与 migrations 对齐；向量列用 pgvector 类型） ---- */
 
 type datasetRow struct {
-	ID            string `gorm:"column:id;primaryKey"`
-	Type          string `gorm:"column:type"`
-	Name          string `gorm:"column:name"`
-	Schema        string `gorm:"column:schema;type:jsonb"` // 字段定义真相源（DatasetSchema JSON）
-	Description   string `gorm:"column:description"`
-	Tags          string `gorm:"column:tags"` // JSON 数组文本
-	SourceTaskID  *string `gorm:"column:source_task_id"`
-	Status        string  `gorm:"column:status"`
-	ItemCount     int     `gorm:"column:item_count"`
-	SchemaVersion int     `gorm:"column:schema_version"`
-	Extra         string  `gorm:"column:extra"` // JSON 文本
+	ID            string    `gorm:"column:id;primaryKey"`
+	Type          string    `gorm:"column:type"`
+	Name          string    `gorm:"column:name"`
+	Schema        string    `gorm:"column:schema;type:jsonb"` // 字段定义真相源（DatasetSchema JSON）
+	Description   string    `gorm:"column:description"`
+	Tags          string    `gorm:"column:tags"` // JSON 数组文本
+	SourceTaskID  *string   `gorm:"column:source_task_id"`
+	Status        string    `gorm:"column:status"`
+	ItemCount     int       `gorm:"column:item_count"`
+	SchemaVersion int       `gorm:"column:schema_version"`
+	Extra         string    `gorm:"column:extra"` // JSON 文本
 	CreatedAt     time.Time `gorm:"column:created_at"`
 	UpdatedAt     time.Time `gorm:"column:updated_at"`
 }
@@ -44,27 +44,30 @@ type datasetItemRow struct {
 func (datasetItemRow) TableName() string { return "dataset_items" }
 
 type taskRow struct {
-	ID                string     `gorm:"column:id;primaryKey"`
-	Type              string     `gorm:"column:type"`
-	Title             string     `gorm:"column:title"`
-	Status            string     `gorm:"column:status"`
-	CurrentStep       int        `gorm:"column:current_step"`
-	Workflow          *string    `gorm:"column:workflow"`      // 工作流定义快照（JSON 文本）
-	Input             *string    `gorm:"column:input"`        // JSON 文本
-	Output            *string    `gorm:"column:output"`       // JSON 文本
-	AgentContext      *string    `gorm:"column:agent_context"` // 会话 JSON 文本（续跑载体）
-	ItemsCount        int        `gorm:"column:items_count"`
-	ImportedCount     int        `gorm:"column:imported_count"`
-	FailedCount       int        `gorm:"column:failed_count"`
-	TargetProjectID   *string    `gorm:"column:target_project_id"`
-	TargetProjectName *string    `gorm:"column:target_project_name"`
-	OutputDatasetID   *string    `gorm:"column:output_dataset_id"`
-	InputDatasetID    *string    `gorm:"column:input_dataset_id"`
-	ErrorMessage      *string    `gorm:"column:error_message"`
-	CreatedAt         time.Time  `gorm:"column:created_at"`
-	UpdatedAt         time.Time  `gorm:"column:updated_at"`
-	StartedAt         *time.Time `gorm:"column:started_at"`
-	FinishedAt        *time.Time `gorm:"column:finished_at"`
+	ID                 string     `gorm:"column:id;primaryKey"`
+	WorkspaceID        string     `gorm:"column:workspace_id"`
+	DefinitionID       *string    `gorm:"column:definition_id"`
+	DefinitionSnapshot *string    `gorm:"column:definition_snapshot;type:jsonb"`
+	Type               string     `gorm:"column:type"`
+	Title              string     `gorm:"column:title"`
+	Status             string     `gorm:"column:status"`
+	CurrentStep        int        `gorm:"column:current_step"`
+	Workflow           *string    `gorm:"column:workflow"`      // 工作流定义快照（JSON 文本）
+	Input              *string    `gorm:"column:input"`         // JSON 文本
+	Output             *string    `gorm:"column:output"`        // JSON 文本
+	AgentContext       *string    `gorm:"column:agent_context"` // 会话 JSON 文本（续跑载体）
+	ItemsCount         int        `gorm:"column:items_count"`
+	ImportedCount      int        `gorm:"column:imported_count"`
+	FailedCount        int        `gorm:"column:failed_count"`
+	TargetProjectID    *string    `gorm:"column:target_project_id"`
+	TargetProjectName  *string    `gorm:"column:target_project_name"`
+	OutputDatasetID    *string    `gorm:"column:output_dataset_id"`
+	InputDatasetID     *string    `gorm:"column:input_dataset_id"`
+	ErrorMessage       *string    `gorm:"column:error_message"`
+	CreatedAt          time.Time  `gorm:"column:created_at"`
+	UpdatedAt          time.Time  `gorm:"column:updated_at"`
+	StartedAt          *time.Time `gorm:"column:started_at"`
+	FinishedAt         *time.Time `gorm:"column:finished_at"`
 }
 
 func (taskRow) TableName() string { return "tasks" }

@@ -34,25 +34,25 @@ func (r *TaskRepo) UpdateTask(ctx context.Context, t *model.Task) error {
 	return r.db.WithContext(ctx).Model(&taskRow{}).
 		Where("id = ?", t.ID).
 		Updates(map[string]any{
-			"type":               t.Type,
-			"title":              t.Title,
-			"status":             t.Status,
-			"current_step":       t.CurrentStep,
-			"workflow":           strPtr(t.Workflow),
-			"input":              strPtr(t.Input),
-			"output":             strPtr(t.Output),
-			"agent_context":      strPtr(t.AgentContext),
-			"items_count":        t.ItemsCount,
-			"imported_count":     t.ImportedCount,
-			"failed_count":       t.FailedCount,
-			"target_project_id":  strPtr(t.TargetProjectID),
+			"type":                t.Type,
+			"title":               t.Title,
+			"status":              t.Status,
+			"current_step":        t.CurrentStep,
+			"workflow":            strPtr(t.Workflow),
+			"input":               strPtr(t.Input),
+			"output":              strPtr(t.Output),
+			"agent_context":       strPtr(t.AgentContext),
+			"items_count":         t.ItemsCount,
+			"imported_count":      t.ImportedCount,
+			"failed_count":        t.FailedCount,
+			"target_project_id":   strPtr(t.TargetProjectID),
 			"target_project_name": strPtr(t.TargetProjectName),
-			"output_dataset_id":  strPtr(t.OutputDatasetID),
-			"input_dataset_id":   strPtr(t.InputDatasetID),
-			"error_message":      strPtr(t.ErrorMessage),
-			"started_at":         timePtr(t.StartedAt),
-			"finished_at":        timePtr(t.FinishedAt),
-			"updated_at":         t.UpdatedAt,
+			"output_dataset_id":   strPtr(t.OutputDatasetID),
+			"input_dataset_id":    strPtr(t.InputDatasetID),
+			"error_message":       strPtr(t.ErrorMessage),
+			"started_at":          timePtr(t.StartedAt),
+			"finished_at":         timePtr(t.FinishedAt),
+			"updated_at":          t.UpdatedAt,
 		}).Error
 }
 
@@ -61,7 +61,7 @@ func (r *TaskRepo) ListTasks(ctx context.Context, f port.TaskFilter) ([]model.Ta
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	q := r.db.WithContext(ctx)
+	q := r.db.WithContext(ctx).Where("definition_id IS NULL")
 	if f.Status != "" {
 		q = q.Where("status = ?", f.Status)
 	}
@@ -81,7 +81,7 @@ func (r *TaskRepo) ListTasks(ctx context.Context, f port.TaskFilter) ([]model.Ta
 
 func (r *TaskRepo) CountTasks(ctx context.Context) (int64, error) {
 	var n int64
-	if err := r.db.WithContext(ctx).Model(&taskRow{}).Count(&n).Error; err != nil {
+	if err := r.db.WithContext(ctx).Model(&taskRow{}).Where("definition_id IS NULL").Count(&n).Error; err != nil {
 		return 0, err
 	}
 	return n, nil
@@ -89,7 +89,7 @@ func (r *TaskRepo) CountTasks(ctx context.Context) (int64, error) {
 
 func (r *TaskRepo) GetTask(ctx context.Context, id string) (*model.Task, error) {
 	var row taskRow
-	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&row).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("id = ? AND definition_id IS NULL", id).First(&row).Error; err != nil {
 		return nil, err
 	}
 	t := taskToModel(&row)
@@ -181,7 +181,7 @@ func (r *TaskRepo) UpdateItemResult(ctx context.Context, itemID, status, errMsg 
 func (r *TaskRepo) RecoverStuck(ctx context.Context) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now()
-		if err := tx.Model(&taskRow{}).Where("status = ?", model.TaskStatusRunning).
+		if err := tx.Model(&taskRow{}).Where("status = ? AND definition_id IS NULL", model.TaskStatusRunning).
 			Updates(map[string]any{
 				"status":        model.TaskStatusPaused,
 				"error_message": "服务重启，任务已暂停",
@@ -198,10 +198,12 @@ func (r *TaskRepo) RecoverStuck(ctx context.Context) error {
 
 func taskToRow(t *model.Task) *taskRow {
 	return &taskRow{
-		ID: t.ID, Type: t.Type, Title: t.Title, Status: t.Status, CurrentStep: t.CurrentStep,
+		ID: t.ID, WorkspaceID: t.WorkspaceID, DefinitionID: strPtr(t.DefinitionID),
+		DefinitionSnapshot: strPtr(t.DefinitionSnapshot),
+		Type:               t.Type, Title: t.Title, Status: t.Status, CurrentStep: t.CurrentStep,
 		Workflow: strPtr(t.Workflow), Input: strPtr(t.Input), Output: strPtr(t.Output),
 		AgentContext: strPtr(t.AgentContext),
-		ItemsCount: t.ItemsCount, ImportedCount: t.ImportedCount, FailedCount: t.FailedCount,
+		ItemsCount:   t.ItemsCount, ImportedCount: t.ImportedCount, FailedCount: t.FailedCount,
 		TargetProjectID: strPtr(t.TargetProjectID), TargetProjectName: strPtr(t.TargetProjectName),
 		OutputDatasetID: strPtr(t.OutputDatasetID), InputDatasetID: strPtr(t.InputDatasetID),
 		ErrorMessage: strPtr(t.ErrorMessage),
@@ -212,10 +214,12 @@ func taskToRow(t *model.Task) *taskRow {
 
 func taskToModel(row *taskRow) model.Task {
 	return model.Task{
-		ID: row.ID, Type: row.Type, Title: row.Title, Status: row.Status, CurrentStep: row.CurrentStep,
+		ID: row.ID, WorkspaceID: row.WorkspaceID, DefinitionID: strVal(row.DefinitionID),
+		DefinitionSnapshot: strVal(row.DefinitionSnapshot),
+		Type:               row.Type, Title: row.Title, Status: row.Status, CurrentStep: row.CurrentStep,
 		Workflow: strVal(row.Workflow), Input: strVal(row.Input), Output: strVal(row.Output),
 		AgentContext: strVal(row.AgentContext),
-		ItemsCount: row.ItemsCount, ImportedCount: row.ImportedCount, FailedCount: row.FailedCount,
+		ItemsCount:   row.ItemsCount, ImportedCount: row.ImportedCount, FailedCount: row.FailedCount,
 		TargetProjectID: strVal(row.TargetProjectID), TargetProjectName: strVal(row.TargetProjectName),
 		OutputDatasetID: strVal(row.OutputDatasetID), InputDatasetID: strVal(row.InputDatasetID),
 		ErrorMessage: strVal(row.ErrorMessage),

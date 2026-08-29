@@ -14,11 +14,13 @@ import (
 )
 
 type DefinitionService struct {
-	repo port.OrchestratorRepo
+	repo      port.OrchestratorDefinitionRepo
+	registry  *Registry
+	resources port.TaskResourceResolver
 }
 
-func NewDefinitionService(repo port.OrchestratorRepo) *DefinitionService {
-	return &DefinitionService{repo: repo}
+func NewDefinitionService(repo port.OrchestratorDefinitionRepo, registry *Registry, resources port.TaskResourceResolver) *DefinitionService {
+	return &DefinitionService{repo: repo, registry: registry, resources: resources}
 }
 
 func (s *DefinitionService) Create(ctx context.Context, definition model.TaskDefinition) (*model.TaskDefinition, error) {
@@ -35,6 +37,11 @@ func (s *DefinitionService) Create(ctx context.Context, definition model.TaskDef
 	if err != nil {
 		return nil, err
 	}
+	if definition.Status == model.TaskDefinitionActive {
+		if err := s.registry.ValidateDefinition(ctx, definition); err != nil {
+			return nil, err
+		}
+	}
 	definition.DefinitionHash = hash
 	if definition.WorkspaceID == "" {
 		definition.WorkspaceID = "default"
@@ -49,6 +56,7 @@ type CreateTaskInput struct {
 	DefinitionID string
 	Title        string
 	Bindings     []model.TaskResourceBinding
+	Aliases      map[string]string // port_name -> Dataset Alias；解析后不进入任务快照
 }
 
 func (s *DefinitionService) CreateTask(ctx context.Context, in CreateTaskInput) (*model.Task, error) {
@@ -59,7 +67,10 @@ func (s *DefinitionService) CreateTask(ctx context.Context, in CreateTaskInput) 
 	if definition.Status != model.TaskDefinitionActive {
 		return nil, fmt.Errorf("任务定义 %s 当前状态 %s 不可创建任务", definition.Key, definition.Status)
 	}
-	if err := validateInputBindings(*definition, in.Bindings); err != nil {
+	if err := s.registry.ValidateDefinition(ctx, *definition); err != nil {
+		return nil, err
+	}
+	if err := validateInputBindings(*definition, in.Bindings, in.Aliases); err != nil {
 		return nil, err
 	}
 	snapshot, _, err := logic.NormalizeTaskDefinition(*definition)
@@ -84,6 +95,17 @@ func (s *DefinitionService) CreateTask(ctx context.Context, in CreateTaskInput) 
 	bindings := make([]model.TaskResourceBinding, len(in.Bindings))
 	copy(bindings, in.Bindings)
 	for i := range bindings {
+		bindings[i].ResourceID = strings.TrimSpace(bindings[i].ResourceID)
+		bindings[i].Direction = model.ResourceInput
+		if s.resources == nil {
+			return nil, fmt.Errorf("任务资源解析器未配置")
+		}
+		alias := strings.TrimSpace(in.Aliases[bindings[i].PortName])
+		resolved, err := s.resources.ResolveTaskResource(ctx, definition.WorkspaceID, bindings[i], alias)
+		if err != nil {
+			return nil, fmt.Errorf("解析输入端口 %s: %w", bindings[i].PortName, err)
+		}
+		bindings[i] = resolved
 		bindings[i].Direction = model.ResourceInput
 	}
 	if err := s.repo.CreateTaskExecution(ctx, task, bindings, steps); err != nil {
@@ -92,7 +114,7 @@ func (s *DefinitionService) CreateTask(ctx context.Context, in CreateTaskInput) 
 	return task, nil
 }
 
-func validateInputBindings(def model.TaskDefinition, bindings []model.TaskResourceBinding) error {
+func validateInputBindings(def model.TaskDefinition, bindings []model.TaskResourceBinding, aliases map[string]string) error {
 	byPort := make(map[string]model.TaskResourceBinding, len(bindings))
 	for _, binding := range bindings {
 		if _, exists := byPort[binding.PortName]; exists {
@@ -105,8 +127,8 @@ func validateInputBindings(def model.TaskDefinition, bindings []model.TaskResour
 		if binding.ResourceType != portDef.ResourceType {
 			return fmt.Errorf("输入端口 %s 需要 %s，实际为 %s", binding.PortName, portDef.ResourceType, binding.ResourceType)
 		}
-		if strings.TrimSpace(binding.ResourceID) == "" {
-			return fmt.Errorf("输入端口 %s 缺少 resource_id", binding.PortName)
+		if strings.TrimSpace(binding.ResourceID) == "" && strings.TrimSpace(aliases[binding.PortName]) == "" {
+			return fmt.Errorf("输入端口 %s 缺少 resource_id 或 resource_alias", binding.PortName)
 		}
 		byPort[binding.PortName] = binding
 	}

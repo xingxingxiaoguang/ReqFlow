@@ -45,6 +45,26 @@ type TaskResourceBinding struct {
 	CreatedAt    time.Time
 }
 
+// ResourceRef 是 Executor 可消费或产出的稳定资源引用。Boundary 固化读取边界，
+// 例如 Dataset 的 through_seq；资源内容本身由对应应用服务/仓储读取。
+type ResourceRef struct {
+	ResourceType ResourceType    `json:"resource_type"`
+	ResourceID   string          `json:"resource_id"`
+	Boundary     json.RawMessage `json:"boundary,omitempty"`
+}
+
+// StepResourceBinding 保存一次 StepRun 的具名输出。下游步骤只通过它解析
+// $step.<step_id>.<port>，不从 progress/checkpoint 猜测业务资源。
+type StepResourceBinding struct {
+	ID           string
+	StepRunID    string
+	PortName     string
+	ResourceType ResourceType
+	ResourceID   string
+	Boundary     json.RawMessage
+	CreatedAt    time.Time
+}
+
 // DatasetBoundary 固化 Task 对追加型 Dataset 的读取上界。
 type DatasetBoundary struct {
 	DatasetID  string `json:"dataset_id"`
