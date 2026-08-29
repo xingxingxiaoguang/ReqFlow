@@ -21,6 +21,7 @@ type Services struct {
 	V2Definitions *apporchestrator.DefinitionService
 	V2Runtime     *apporchestrator.RuntimeService
 	V2Datasets    *apppipeline.DatasetService
+	V2Assets      *apppipeline.AssetService
 
 	UploadDir string // 上传暂存目录（cmd 从配置注入）
 	MaxFileMB int64  // 上传大小上限
@@ -92,13 +93,15 @@ func New(svc Services) *gin.Engine {
 		api.GET("/settings", h.viewSettings)
 		api.POST("/settings/test-llm", h.testLLM)
 	}
-	if svc.V2Definitions != nil && svc.V2Runtime != nil && svc.V2Datasets != nil {
-		v2 := api.Group("/v2")
+	v2 := api.Group("/v2")
+	if svc.V2Datasets != nil {
 		v2.POST("/schemas", h.v2CreateSchema)
 		v2.POST("/datasets", h.v2CreateDataset)
 		v2.POST("/datasets/:id/batches", h.v2CreateBatch)
 		v2.POST("/batches/:id/commit", h.v2CommitBatch)
 		v2.GET("/datasets/:id/items", h.v2ListDatasetItems)
+	}
+	if svc.V2Definitions != nil && svc.V2Runtime != nil {
 		v2.POST("/task-definitions", h.v2CreateTaskDefinition)
 		v2.POST("/tasks", h.v2CreateTask)
 		v2.GET("/tasks/:id", h.v2GetTask)
@@ -108,6 +111,13 @@ func New(svc Services) *gin.Engine {
 		v2.POST("/tasks/:id/steps/:step_id/retry", h.v2RetryStep)
 		v2.POST("/tasks/:id/steps/:step_id/approve", h.v2ApproveStep)
 		v2.GET("/tasks/:id/events", h.v2TaskEvents)
+	}
+	if svc.V2Assets != nil {
+		v2.POST("/assets", h.v2UploadAsset)
+		v2.POST("/asset-sets", h.v2CreateAssetSet)
+		v2.GET("/asset-sets/:id", h.v2GetAssetSet)
+		v2.GET("/parsed-document-sets/:id", h.v2GetParsedDocumentSet)
+		v2.GET("/parsed-documents/:id/blocks", h.v2GetDocumentBlocks)
 	}
 	return r
 }

@@ -19,6 +19,7 @@ import (
 	"reqflow/internal/app"
 	apporchestrator "reqflow/internal/app/orchestrator"
 	apppipeline "reqflow/internal/app/pipeline"
+	"reqflow/internal/infra/blobstore"
 	"reqflow/internal/infra/config"
 	"reqflow/internal/infra/database"
 	"reqflow/internal/infra/embedding"
@@ -114,6 +115,11 @@ func main() {
 			PollInterval: time.Duration(cfg.Parser.MinerU.PollIntervalMs) * time.Millisecond,
 		},
 	})
+	localBlobs, err := blobstore.NewLocal(cfg.Workspace.BlobDir)
+	if err != nil {
+		logger.Error("V2 BlobStore 初始化失败", "err", err)
+		os.Exit(1)
+	}
 
 	datasetRepo := repository.NewDatasetRepo(db, cfg.FTS.TSConfig)
 	taskRepo := repository.NewTaskRepo(db)
@@ -150,9 +156,19 @@ func main() {
 		logger.Warn("任务恢复失败", "err", err)
 	}
 
-	// V2 Orchestrator 独立装配：当前 Registry 只接收已实现的 V2 Executor；
-	// 清洗纵向切片接入前为空，因此带机器步骤的 active definition 会在注册时被拒绝。
-	v2Registry, err := apporchestrator.NewRegistry()
+	v2Assets, err := apppipeline.NewAssetService(pipelineRepo, localBlobs, docParser,
+		int64(cfg.Parser.MaxFileMB)<<20)
+	if err != nil {
+		logger.Error("V2 Asset Pipeline 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	sourceParseExecutor, err := apppipeline.NewSourceParseExecutor(v2Assets)
+	if err != nil {
+		logger.Error("source.parse Executor 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	// V2 Registry 只注册已经具备真实资源持久化与恢复语义的 Executor。
+	v2Registry, err := apporchestrator.NewRegistry(sourceParseExecutor)
 	if err != nil {
 		logger.Error("V2 Executor Registry 初始化失败", "err", err)
 		os.Exit(1)
@@ -192,6 +208,7 @@ func main() {
 		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
 		DatasetQuery: datasetQuery, DatasetAdmin: datasetAdmin, Archive: archiveSvc, Metadata: metadataSvc,
 		V2Definitions: v2Definitions, V2Runtime: v2Runtime, V2Datasets: v2Datasets,
+		V2Assets:  v2Assets,
 		UploadDir: cfg.Workspace.UploadDir,
 		MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})

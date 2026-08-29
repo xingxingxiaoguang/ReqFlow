@@ -76,3 +76,11 @@ type RetrievalBoundary struct {
 	RetrievalSnapshotID string `json:"retrieval_snapshot_id"`
 	SourceSeq           int64  `json:"source_seq"`
 }
+
+// ParsedDocumentsBoundary 描述 source.parse 输出 Manifest 的解析身份与原始集合。
+// Manifest 本身终态不可变，Boundary 主要用于审计和输入哈希的自描述性。
+type ParsedDocumentsBoundary struct {
+	AssetSetID    string `json:"asset_set_id"`
+	ParserName    string `json:"parser_name"`
+	ParserVersion string `json:"parser_version"`
+}

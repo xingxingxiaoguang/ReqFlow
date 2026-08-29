@@ -88,6 +88,7 @@ type Config struct {
 		Name      string `yaml:"name"       env:"REQFLOW_WORKSPACE_NAME"`
 		UploadDir string `yaml:"upload_dir" env:"REQFLOW_WORKSPACE_UPLOAD_DIR"`
 		DemandDir string `yaml:"demand_dir" env:"REQFLOW_WORKSPACE_DEMAND_DIR"`
+		BlobDir   string `yaml:"blob_dir"   env:"REQFLOW_WORKSPACE_BLOB_DIR"`
 	} `yaml:"workspace"`
 }
 
@@ -174,6 +175,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Workspace.DemandDir == "" {
 		cfg.Workspace.DemandDir = "./data/demands"
+	}
+	if cfg.Workspace.BlobDir == "" {
+		cfg.Workspace.BlobDir = "./data/blobs"
 	}
 	if cfg.FTS.TSConfig == "" {
 		cfg.FTS.TSConfig = "simple"

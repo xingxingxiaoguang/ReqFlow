@@ -9,7 +9,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -18,17 +17,17 @@ import (
 
 // MinerUOptions MinerU 云端解析参数（精准解析 API v4；单文件 ≤200MB、≤200 页）。
 type MinerUOptions struct {
-	Enabled        bool
-	APIURL         string
-	APIToken       string
-	ModelVersion   string // vlm（MinerU 2.5）| pipeline
-	Timeout        time.Duration
-	PollInterval   time.Duration
+	Enabled      bool
+	APIURL       string
+	APIToken     string
+	ModelVersion string // vlm（MinerU 2.5）| pipeline
+	Timeout      time.Duration
+	PollInterval time.Duration
 }
 
 // MinerU 云端 PDF 解析客户端。
 type MinerU struct {
-	opt MinerUOptions
+	opt  MinerUOptions
 	http *http.Client
 }
 
@@ -45,7 +44,7 @@ func NewMinerU(opt MinerUOptions) *MinerU {
 
 // ParsePDF 解析本地 PDF，返回 Markdown 文本（表格已转 Markdown、水印已处理）。
 // 流程：申请预签名上传链接 → PUT 上传 → 轮询批次结果 → 下载 zip 取 full.md。
-func (m *MinerU) ParsePDF(ctx context.Context, filename, filePath string, onProgress func(port.ParseProgress)) (string, error) {
+func (m *MinerU) ParsePDF(ctx context.Context, filename string, content []byte, onProgress func(port.ParseProgress)) (string, error) {
 	if !m.opt.Enabled || m.opt.APIToken == "" {
 		return "", fmt.Errorf("PDF 解析未配置：请在 config.yaml 填写 parser.mineru.api_token 后重启（或使用 docx/md/txt 格式）")
 	}
@@ -56,7 +55,7 @@ func (m *MinerU) ParsePDF(ctx context.Context, filename, filePath string, onProg
 	if err != nil {
 		return "", err
 	}
-	if err := m.uploadFile(ctx, uploadURL, filePath); err != nil {
+	if err := m.uploadFile(ctx, uploadURL, content); err != nil {
 		return "", err
 	}
 	zipURL, err := m.waitBatchResult(ctx, batchID, onProgress)
@@ -69,7 +68,7 @@ func (m *MinerU) ParsePDF(ctx context.Context, filename, filePath string, onProg
 func (m *MinerU) createUploadURL(ctx context.Context, fileName string) (batchID, uploadURL string, err error) {
 	body, err := json.Marshal(map[string]any{
 		"model_version": m.opt.ModelVersion,
-		"files":          []map[string]string{{"name": fileName, "data_id": fileName}},
+		"files":         []map[string]string{{"name": fileName, "data_id": fileName}},
 	})
 	if err != nil {
 		return "", "", err
@@ -104,16 +103,12 @@ func (m *MinerU) createUploadURL(ctx context.Context, fileName string) (batchID,
 
 // uploadFile 上传到 OSS 预签名 URL。
 // 必须显式避免 Content-Type：预签名未包含该头，多带会导致 SignatureDoesNotMatch。
-func (m *MinerU) uploadFile(ctx context.Context, uploadURL, filePath string) error {
-	data, err := os.ReadFile(filePath)
+func (m *MinerU) uploadFile(ctx context.Context, uploadURL string, content []byte) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(content))
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPut, uploadURL, bytes.NewReader(data))
-	if err != nil {
-		return err
-	}
-	req.ContentLength = int64(len(data))
+	req.ContentLength = int64(len(content))
 	resp, err := m.http.Do(req)
 	if err != nil {
 		return fmt.Errorf("上传文件到 MinerU 失败: %w", err)
@@ -159,8 +154,8 @@ func (m *MinerU) waitBatchResult(ctx context.Context, batchID string, onProgress
 			Data struct {
 				ExtractResult []struct {
 					State      string `json:"state"`
-					FullZipURL  string `json:"full_zip_url"`
-					ErrMsg      string `json:"err_msg"`
+					FullZipURL string `json:"full_zip_url"`
+					ErrMsg     string `json:"err_msg"`
 				} `json:"extract_result"`
 			} `json:"data"`
 		}

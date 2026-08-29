@@ -64,7 +64,7 @@ make build        # → bin/reqflow
 | fts | ts_config | PG 全文检索分词配置（默认 simple；中文全文检索需安装 zhparser/pg_jieba 扩展后改配置） |
 | parser | max_file_mb / mineru.* | 上传上限与 MinerU 云端 PDF 解析 |
 | security | encryption_key | 第二波敏感字段入库加密密钥（64 hex） |
-| workspace | name / upload_dir / demand_dir | 工作区名与数据目录 |
+| workspace | name / upload_dir / demand_dir / blob_dir | 工作区名、Legacy 暂存目录与 V2 内容寻址 Blob 根目录 |
 
 ## HTTP API
 
@@ -75,12 +75,15 @@ make build        # → bin/reqflow
 - `POST /api/v2/schemas`、`POST /api/v2/datasets`
 - `POST /api/v2/datasets/:id/batches`、`POST /api/v2/batches/:id/commit`
 - `GET /api/v2/datasets/:id/items?after_seq=&through_seq=`
+- `POST /api/v2/assets`（multipart `file`）、`POST /api/v2/asset-sets`
+- `GET /api/v2/asset-sets/:id`、`GET /api/v2/parsed-document-sets/:id`
+- `GET /api/v2/parsed-documents/:id/blocks?after_ordinal=&limit=`
 - `POST /api/v2/task-definitions`、`POST /api/v2/tasks`
 - `POST /api/v2/tasks/:id/start|pause|resume`
 - `POST /api/v2/tasks/:id/steps/:step_id/retry|approve`
 - `GET /api/v2/tasks/:id`、`GET /api/v2/tasks/:id/events`
 
-V2 Schema 不提供 PUT/PATCH；结构变化必须创建新 Schema 和 Dataset。当前前端仍是 Legacy 页面，新的机器 Executor 会随产品规格清洗纵向切片逐步注册。
+V2 Schema 不提供 PUT/PATCH；结构变化必须创建新 Schema 和 Dataset。`source.parse` 已作为首个机器 Executor 注册：原始文件进入内容寻址 BlobStore，解析结果落为带逐文件状态的 `ParsedDocumentSet` 和可分页 `DocumentBlock`。当前前端仍是 Legacy 页面，其余机器 Executor 随产品规格清洗纵向切片逐步注册。
 Task 输入绑定接受具体 `resource_id`；Dataset 也可传 `resource_alias`，创建时会解析为具体 Dataset，并为 `dataset_boundary` 固化当时的 `through_seq`。
 
 ### Legacy（待 V2 前端切流后删除）

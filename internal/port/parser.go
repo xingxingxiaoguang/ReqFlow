@@ -1,6 +1,11 @@
 package port
 
-import "context"
+import (
+	"context"
+	"io"
+
+	"reqflow/internal/domain/model"
+)
 
 // ParseProgress 文档解析进度（云端解析轮询期间周期回调）。
 type ParseProgress struct {
@@ -8,9 +13,19 @@ type ParseProgress struct {
 	ElapsedSec int
 }
 
-// DocParser 文档解析器：按文件名后缀分发，返回提取的全文文本。
-// 第一波支持 txt/md/docx/pdf；xlsx 行级解析能力已就绪于 infra，
-// 第二波 bug Excel 导入在同一契约上开放。
-type DocParser interface {
-	Parse(ctx context.Context, filename, filePath string, onProgress func(ParseProgress)) (string, error)
+// ParseSource 是与 BlobStore 实现无关的解析输入。Parser 不能依赖本地路径，
+// 因而未来从本地文件切换到 S3/MinIO 时不需要改变业务契约。
+type ParseSource struct {
+	Filename  string
+	MIMEType  string
+	SizeBytes int64
+	Content   io.Reader
+}
+
+// DocumentParser 返回可稳定引用的结构化区块，而不是整篇 string。
+// ParserName + ParserVersion 共同构成解析缓存键；改变解析语义必须提升版本。
+type DocumentParser interface {
+	ParserName() string
+	ParserVersion() string
+	Parse(ctx context.Context, source ParseSource, onProgress func(ParseProgress)) ([]model.DocumentBlock, error)
 }

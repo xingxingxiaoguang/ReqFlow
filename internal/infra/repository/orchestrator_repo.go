@@ -55,6 +55,29 @@ func (r *PipelineRepo) ResolveTaskResource(ctx context.Context, workspaceID stri
 			}
 			return binding, fmt.Errorf("asset_set %s 不存在", binding.ResourceID)
 		}
+	case model.ResourceParsedDocuments:
+		if alias != "" {
+			return binding, fmt.Errorf("parsed_documents 不支持 alias")
+		}
+		var row struct {
+			ID            string
+			AssetSetID    string
+			ParserName    string
+			ParserVersion string
+			Status        string
+		}
+		if err := r.db.WithContext(ctx).Table("parsed_document_sets AS p").
+			Select("p.id, p.asset_set_id, p.parser_name, p.parser_version, p.status").
+			Joins("JOIN asset_sets AS a ON a.id = p.asset_set_id").
+			Where("p.id = ? AND a.workspace_id = ?", binding.ResourceID, workspaceID).Take(&row).Error; err != nil {
+			return binding, fmt.Errorf("ParsedDocumentSet 资源不存在: %w", err)
+		}
+		if row.Status == model.ParsedDocumentSetRunning {
+			return binding, fmt.Errorf("ParsedDocumentSet %s 尚未完成", row.ID)
+		}
+		boundary, _ := json.Marshal(model.ParsedDocumentsBoundary{AssetSetID: row.AssetSetID,
+			ParserName: row.ParserName, ParserVersion: row.ParserVersion})
+		binding.Boundary = boundary
 	case model.ResourceDataset, model.ResourceDatasetBoundary:
 		var row struct {
 			ID         string

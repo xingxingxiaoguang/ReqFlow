@@ -1,13 +1,13 @@
 # ReqFlow 异构数据管线 V2 落地方案
 
-> 状态：实施中（阶段 A 核心底座 + 阶段 B 后端已完成；尚未切前端/删除 Legacy）
+> 状态：实施中（阶段 A + 阶段 B 后端完成；阶段 C 的 Asset/结构化解析单元完成）
 > 日期：2026-08-29
 > 适用范围：ReqFlow 当前未上线版本
 > 关联文档：[产品总纲](./PRODUCT.md) · [交接文档](./HANDOVER.md) · [技术债台账](./DEBT.md)
 
 ## 0. 实施状态
 
-截至 2026-08-29，阶段 A 核心底座和阶段 B 后端已经落地：
+截至 2026-08-29，阶段 A 核心底座、阶段 B 后端和阶段 C 的首个架构单元已经落地：
 
 - [x] Asset、ParsedDocument、不可变 DatasetSchemaDefinition、DatasetBatch、ResourceBinding、TaskDefinition、StepRun、RetrievalSnapshot 和 Artifact 领域模型。
 - [x] JSON Schema 受控子集校验、规范化和稳定哈希。
@@ -22,8 +22,11 @@
 - [x] 最小 V2 HTTP API：Schema/Dataset/Batch、TaskDefinition/Task 生命周期、通用 Task Snapshot 和数据库快照 diff SSE。
 - [x] Task 输入资源存在性校验、Dataset Alias 单次解析，以及 Dataset/Retrieval 读取边界自动固化。
 - [x] Legacy/V2 查询与启动恢复隔离；Legacy `RecoverStuck` 不再触碰 V2 Task。
+- [x] 内容寻址本地 BlobStore、按 SHA-256 去重的 Asset、可复用 AssetSet 和独立 V2 上传 API。
+- [x] Reader-based 结构化 Parser、ParsedDocument/DocumentBlock 持久化和分页读取 API。
+- [x] `source.parse` Executor、逐文件失败 Manifest、成功缓存、checkpoint/progress 和 attempt fencing。
 - [ ] V2 通用 Task Detail 前端入口。
-- [ ] Asset/Parser、清洗纵向切片、查询数据集和混合检索。
+- [ ] ExtractionProfile、抽取/归一化/校验/审核/发布纵向切片、查询数据集和混合检索。
 
 V2 开发期间暂以 `0012_pipeline_v2_foundation` 叠加现有迁移，目的是让每批代码可以独立构建和验证；旧运行路径切除后按本文第 14 节压平为新的初始迁移。这不是产品兼容层，V2 服务不通过旧 API 或旧模型读写。
 
@@ -1294,10 +1297,14 @@ retrieval_snapshot_id
 
 ### 阶段 C：产品规格清洗纵向切片
 
+状态：Asset/结构化 Parser/`source.parse` 已完成；ExtractionProfile 及后续步骤待实现。
+
 范围：
 
-- 批量 AssetSet 上传。
-- 结构化 Parser。
+- [x] 批量 AssetSet 组装与 Asset 上传。
+- [x] 结构化 Parser。
+- [x] `ParsedDocumentSet` Manifest：逐文件状态、部分成功、缓存恢复和 attempt fencing。
+- [x] `source.parse` 注册到 V2 Worker。
 - ExtractionProfile。
 - LLM 抽取、归一化、校验、冲突处理和审核 UI。
 - Dataset Batch 发布。

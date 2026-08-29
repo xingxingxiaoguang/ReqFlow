@@ -64,3 +64,4 @@ workspace:
   name: ReqFlow
   upload_dir: ./data/uploads    # 上传文件暂存目录
   demand_dir: ./data/demands    # 分析原文存档目录
+  blob_dir: ./data/blobs        # V2 不可变原始资产（内容寻址 BlobStore）
