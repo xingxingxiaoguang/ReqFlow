@@ -52,7 +52,20 @@ export const v2CatalogApi = {
   listExtractionProfiles: () => api.get<{ extraction_profiles: V2ExtractionProfile[] }>('/api/v2/extraction-profiles?limit=200'),
   createExtractionProfile: (input: Record<string, unknown>) => api.post<{ extraction_profile: V2ExtractionProfile }>('/api/v2/extraction-profiles', input),
   listRetrievalProfiles: () => api.get<{ retrieval_profiles: V2RetrievalProfile[] }>('/api/v2/retrieval-profiles?limit=200'),
+  queryRetrievalProfiles: (params: { workspaceId?: string; datasetSchemaId?: string; limit?: number } = {}) =>
+    api.get<{ retrieval_profiles: V2RetrievalProfile[] }>(`/api/v2/retrieval-profiles?${query({
+      workspace_id: params.workspaceId,
+      dataset_schema_id: params.datasetSchemaId,
+      limit: params.limit ?? 200,
+    })}`),
   listRetrievalSnapshots: () => api.get<{ retrieval_snapshots: V2RetrievalSnapshot[] }>('/api/v2/retrieval-snapshots?limit=200'),
+  queryRetrievalSnapshots: (params: { datasetId?: string; retrievalProfileId?: string; status?: string; limit?: number } = {}) =>
+    api.get<{ retrieval_snapshots: V2RetrievalSnapshot[] }>(`/api/v2/retrieval-snapshots?${query({
+      dataset_id: params.datasetId,
+      retrieval_profile_id: params.retrievalProfileId,
+      status: params.status,
+      limit: params.limit ?? 200,
+    })}`),
   createRetrievalProfile: (input: Record<string, unknown>) => api.post<{ retrieval_profile: V2RetrievalProfile }>('/api/v2/retrieval-profiles', input),
   search: (input: Record<string, unknown>) => api.post<{ search: Record<string, unknown> }>('/api/v2/retrieval/search', input),
   listAnalysisProfiles: () => api.get<{ analysis_profiles: V2AnalysisProfile[] }>('/api/v2/analysis-profiles?limit=200'),

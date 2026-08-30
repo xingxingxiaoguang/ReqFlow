@@ -113,6 +113,11 @@ func New(svc Services) *gin.Engine {
 		v2.POST("/agent/sessions", h.v2CreateAgentSession)
 		v2.GET("/agent/sessions/:id", h.v2GetAgentSession)
 		v2.POST("/agent/sessions/:id/messages", h.v2RunAgentMessage)
+		v2.POST("/agent/sessions/:id/stop", h.v2StopAgentMessage)
+		v2.GET("/agent/config", h.v2GetAgentConfig)
+		v2.POST("/agent/skills", h.v2CreateAgentSkill)
+		v2.PUT("/agent/skills/:id/status", h.v2SetAgentSkillEnabled)
+		v2.PUT("/agent/tools/:name/status", h.v2SetAgentToolEnabled)
 	}
 	if svc.V2Datasets != nil {
 		v2.POST("/schemas", h.v2CreateSchema)

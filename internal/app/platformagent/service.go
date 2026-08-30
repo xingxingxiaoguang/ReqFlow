@@ -62,22 +62,25 @@ type Dependencies struct {
 type Options struct{ MaxIterations int }
 
 type Service struct {
-	repo  port.AgentSessionRepo
-	llm   port.LLMClient
-	deps  Dependencies
-	opts  Options
-	locks sync.Map
+	repo       port.AgentSessionRepo
+	configRepo port.AgentConfigRepo
+	llm        port.LLMClient
+	deps       Dependencies
+	opts       Options
+	locks      sync.Map
+	runs       sync.Map
 }
 
-func NewService(repo port.AgentSessionRepo, llm port.LLMClient, deps Dependencies, opts Options) (*Service, error) {
-	if repo == nil || llm == nil || deps.Definitions == nil || deps.Runtime == nil ||
+func NewService(repo port.AgentSessionRepo, configRepo port.AgentConfigRepo, llm port.LLMClient,
+	deps Dependencies, opts Options) (*Service, error) {
+	if repo == nil || configRepo == nil || llm == nil || deps.Definitions == nil || deps.Runtime == nil ||
 		deps.Tasks == nil || deps.Catalog == nil || deps.Retrieval == nil {
 		return nil, fmt.Errorf("platform agent 依赖不完整")
 	}
 	if opts.MaxIterations <= 0 {
 		opts.MaxIterations = 12
 	}
-	return &Service{repo: repo, llm: llm, deps: deps, opts: opts}, nil
+	return &Service{repo: repo, configRepo: configRepo, llm: llm, deps: deps, opts: opts}, nil
 }
 
 type SessionSummary struct {
@@ -100,9 +103,9 @@ type SessionView struct {
 func (s *Service) Recover(ctx context.Context) error { return s.repo.RecoverAgentSessions(ctx) }
 
 func (s *Service) CreateSession(ctx context.Context, workspaceID, title string) (*SessionView, error) {
-	workspaceID = strings.TrimSpace(workspaceID)
-	if workspaceID == "" {
-		workspaceID = "default"
+	workspaceID = normalizeWorkspaceID(workspaceID)
+	if err := s.ensureBuiltinSkills(ctx, workspaceID); err != nil {
+		return nil, err
 	}
 	title = cleanTitle(title)
 	cc := port.Context{Messages: []port.Message{}}
@@ -116,10 +119,7 @@ func (s *Service) CreateSession(ctx context.Context, workspaceID, title string) 
 }
 
 func (s *Service) ListSessions(ctx context.Context, workspaceID string, limit int) ([]SessionSummary, error) {
-	workspaceID = strings.TrimSpace(workspaceID)
-	if workspaceID == "" {
-		workspaceID = "default"
-	}
+	workspaceID = normalizeWorkspaceID(workspaceID)
 	sessions, err := s.repo.ListAgentSessions(ctx, workspaceID, limit)
 	if err != nil {
 		return nil, err
@@ -156,8 +156,8 @@ type StreamEvent struct {
 	Session    *SessionView    `json:"session,omitempty"`
 }
 
-// RunMessage 在当前请求内执行一次完整工具循环。请求取消即停止 LLM/工具执行；已完成的
-// 消息检查点仍会保留，因此刷新页面后可从中止位置继续对话。
+// RunMessage 执行一次完整工具循环。HTTP 层必须传入与客户端连接解耦的 context；
+// 用户主动停止时通过 StopMessage 取消，页面刷新或切换会话不应影响后台执行。
 func (s *Service) RunMessage(ctx context.Context, id, text string, emit func(StreamEvent)) (*SessionView, error) {
 	id, text = strings.TrimSpace(id), strings.TrimSpace(text)
 	if text == "" || len(text) > maxMessageBytes {
@@ -168,14 +168,39 @@ func (s *Service) RunMessage(ctx context.Context, id, text string, emit func(Str
 	if !lock.TryLock() {
 		return nil, port.ErrAgentSessionRunning
 	}
-	defer lock.Unlock()
-	defer s.locks.Delete(id)
+	defer func() {
+		lock.Unlock()
+		s.locks.Delete(id)
+	}()
 
-	session, err := s.repo.GetAgentSession(ctx, id)
+	runCtx, cancel := context.WithCancel(ctx)
+	s.runs.Store(id, cancel)
+	defer func() {
+		cancel()
+		s.runs.Delete(id)
+	}()
+
+	session, err := s.repo.GetAgentSession(runCtx, id)
 	if err != nil {
 		return nil, err
 	}
-	if err := s.repo.BeginAgentSession(ctx, id); err != nil {
+	if err := s.ensureBuiltinSkills(runCtx, session.WorkspaceID); err != nil {
+		return nil, err
+	}
+	settings, err := s.configRepo.ListAgentToolSettings(runCtx, session.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	skills, err := s.configRepo.ListAgentSkills(runCtx, session.WorkspaceID, true)
+	if err != nil {
+		return nil, err
+	}
+	selectedSkill, err := selectSkill(text, skills)
+	if err != nil {
+		return nil, err
+	}
+	tools := buildTools(s.deps, s.configRepo, session.WorkspaceID, enabledToolSettings(settings))
+	if err := s.repo.BeginAgentSession(runCtx, id); err != nil {
 		return nil, err
 	}
 
@@ -185,8 +210,7 @@ func (s *Service) RunMessage(ctx context.Context, id, text string, emit func(Str
 		_ = s.repo.SaveAgentSession(context.WithoutCancel(ctx), session)
 		return nil, fmt.Errorf("会话上下文损坏: %w", err)
 	}
-	tools := buildTools(s.deps, session.WorkspaceID)
-	cc.SystemPrompt = buildSystemPrompt(tools)
+	cc.SystemPrompt = buildSystemPrompt(tools, skills, selectedSkill)
 	cc.Messages = append(cc.Messages, port.NewUserMessage(text))
 	if session.Title == defaultTitle || strings.TrimSpace(session.Title) == "" {
 		session.Title = titleFromMessage(text)
@@ -200,8 +224,6 @@ func (s *Service) RunMessage(ctx context.Context, id, text string, emit func(Str
 		emit(StreamEvent{Type: "started", Session: view})
 	}
 
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
 	var callbackErr error
 	checkpoint := func() {
 		if callbackErr != nil {
@@ -263,6 +285,16 @@ func (s *Service) RunMessage(ctx context.Context, id, text string, emit func(Str
 		emit(StreamEvent{Type: "done", Session: view})
 	}
 	return view, runErr
+}
+
+// StopMessage 只取消指定会话当前正在执行的回答，不依赖任何 SSE 客户端仍然在线。
+func (s *Service) StopMessage(id string) bool {
+	cancelValue, ok := s.runs.Load(strings.TrimSpace(id))
+	if !ok {
+		return false
+	}
+	cancelValue.(context.CancelFunc)()
+	return true
 }
 
 func saveContext(ctx context.Context, repo port.AgentSessionRepo, session *model.AgentSession, cc *port.Context) error {

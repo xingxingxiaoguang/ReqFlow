@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	appcatalog "reqflow/internal/app/catalog"
 	apporchestrator "reqflow/internal/app/orchestrator"
@@ -74,11 +76,107 @@ func (r *memorySessionRepo) SaveAgentSession(_ context.Context, session *model.A
 
 func (*memorySessionRepo) RecoverAgentSessions(context.Context) error { return nil }
 
-type finalAnswerLLM struct{}
+type memoryConfigRepo struct {
+	mu       sync.Mutex
+	skills   map[string]model.AgentSkill
+	settings map[string]model.AgentToolSetting
+	nextID   int
+}
 
-func (*finalAnswerLLM) Stream(_ context.Context, cc *port.Context, emit func(port.AssistantEvent)) (*port.Message, error) {
-	if len(cc.Tools) != 7 {
+func newMemoryConfigRepo() *memoryConfigRepo {
+	return &memoryConfigRepo{skills: map[string]model.AgentSkill{}, settings: map[string]model.AgentToolSetting{}}
+}
+
+func (r *memoryConfigRepo) ListAgentSkills(_ context.Context, workspaceID string, enabledOnly bool) ([]model.AgentSkill, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []model.AgentSkill
+	for _, skill := range r.skills {
+		if skill.WorkspaceID == workspaceID && (!enabledOnly || skill.Enabled) {
+			out = append(out, skill)
+		}
+	}
+	return out, nil
+}
+
+func (r *memoryConfigRepo) CreateAgentSkill(_ context.Context, skill *model.AgentSkill) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, existing := range r.skills {
+		if existing.WorkspaceID == skill.WorkspaceID && existing.Slug == skill.Slug {
+			return fmt.Errorf("duplicate slug")
+		}
+	}
+	r.nextID++
+	if skill.ID == "" {
+		skill.ID = fmt.Sprintf("skill-%d", r.nextID)
+	}
+	r.skills[skill.ID] = *skill
+	return nil
+}
+
+func (r *memoryConfigRepo) SetAgentSkillEnabled(_ context.Context, workspaceID, id string, enabled bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	skill, ok := r.skills[id]
+	if !ok || skill.WorkspaceID != workspaceID {
+		return fmt.Errorf("not found")
+	}
+	skill.Enabled = enabled
+	r.skills[id] = skill
+	return nil
+}
+
+func (r *memoryConfigRepo) EnsureBuiltinAgentSkill(_ context.Context, skill *model.AgentSkill) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for id, existing := range r.skills {
+		if existing.WorkspaceID == skill.WorkspaceID && existing.Slug == skill.Slug {
+			skill.ID, skill.Enabled = existing.ID, existing.Enabled
+			r.skills[id] = *skill
+			return nil
+		}
+	}
+	r.nextID++
+	skill.ID = fmt.Sprintf("skill-%d", r.nextID)
+	r.skills[skill.ID] = *skill
+	return nil
+}
+
+func (r *memoryConfigRepo) ListAgentToolSettings(_ context.Context, workspaceID string) ([]model.AgentToolSetting, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var out []model.AgentToolSetting
+	for _, setting := range r.settings {
+		if setting.WorkspaceID == workspaceID {
+			out = append(out, setting)
+		}
+	}
+	return out, nil
+}
+
+func (r *memoryConfigRepo) SetAgentToolEnabled(_ context.Context, workspaceID, name string, enabled bool) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.settings[workspaceID+"/"+name] = model.AgentToolSetting{WorkspaceID: workspaceID, ToolName: name, Enabled: enabled}
+	return nil
+}
+
+type finalAnswerLLM struct {
+	wantPrompt string
+	toolCount  int
+}
+
+func (l *finalAnswerLLM) Stream(_ context.Context, cc *port.Context, emit func(port.AssistantEvent)) (*port.Message, error) {
+	wantTools := l.toolCount
+	if wantTools == 0 {
+		wantTools = 8
+	}
+	if len(cc.Tools) != wantTools {
 		return nil, fmt.Errorf("工具数量 = %d", len(cc.Tools))
+	}
+	if l.wantPrompt != "" && !strings.Contains(cc.SystemPrompt, l.wantPrompt) {
+		return nil, fmt.Errorf("系统提示词未包含 %q", l.wantPrompt)
 	}
 	message := &port.Message{Role: port.RoleAssistant, StopReason: port.StopReasonStop,
 		Content: []port.Block{{Type: port.BlockText, Text: "已经完成"}}}
@@ -92,6 +190,20 @@ func (l *finalAnswerLLM) Complete(ctx context.Context, cc *port.Context) (*port.
 	return l.Stream(ctx, cc, nil)
 }
 func (*finalAnswerLLM) Ping(context.Context) error { return nil }
+
+type blockingLLM struct{ started chan struct{} }
+
+func (l *blockingLLM) Stream(ctx context.Context, _ *port.Context, _ func(port.AssistantEvent)) (*port.Message, error) {
+	close(l.started)
+	<-ctx.Done()
+	return &port.Message{Role: port.RoleAssistant, StopReason: port.StopReasonAborted}, ctx.Err()
+}
+
+func (l *blockingLLM) Complete(ctx context.Context, cc *port.Context) (*port.Message, error) {
+	return l.Stream(ctx, cc, nil)
+}
+
+func (*blockingLLM) Ping(context.Context) error { return nil }
 
 type fakePlatform struct {
 	datasets            []appcatalog.DatasetView
@@ -165,10 +277,11 @@ func testDeps(platform *fakePlatform) Dependencies {
 		Catalog: platform, Retrieval: platform}
 }
 
-func TestSessionCanResumeWithSevenPlatformTools(t *testing.T) {
+func TestSessionCanResumeWithEightPlatformTools(t *testing.T) {
 	repo := newMemorySessionRepo()
+	configRepo := newMemoryConfigRepo()
 	platform := &fakePlatform{}
-	service, err := NewService(repo, &finalAnswerLLM{}, testDeps(platform), Options{})
+	service, err := NewService(repo, configRepo, &finalAnswerLLM{}, testDeps(platform), Options{})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
 	}
@@ -206,6 +319,53 @@ func TestSessionCanResumeWithSevenPlatformTools(t *testing.T) {
 	}
 }
 
+func TestDetachedRunSurvivesClientCancellationUntilExplicitStop(t *testing.T) {
+	repo := newMemorySessionRepo()
+	configRepo := newMemoryConfigRepo()
+	llm := &blockingLLM{started: make(chan struct{})}
+	service, err := NewService(repo, configRepo, llm, testDeps(&fakePlatform{}), Options{})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	session, err := service.CreateSession(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	requestCtx, disconnect := context.WithCancel(context.Background())
+	finished := make(chan error, 1)
+	go func() {
+		_, runErr := service.RunMessage(context.WithoutCancel(requestCtx), session.ID, "持续执行", nil)
+		finished <- runErr
+	}()
+	select {
+	case <-llm.started:
+	case <-time.After(time.Second):
+		t.Fatal("模型未开始执行")
+	}
+
+	disconnect()
+	select {
+	case runErr := <-finished:
+		t.Fatalf("客户端断开不应终止后台执行: %v", runErr)
+	case <-time.After(50 * time.Millisecond):
+	}
+	if !service.StopMessage(session.ID) {
+		t.Fatal("显式停止未找到运行中的会话")
+	}
+	select {
+	case <-finished:
+	case <-time.After(time.Second):
+		t.Fatal("显式停止后执行未退出")
+	}
+	view, err := service.GetSession(context.Background(), session.ID)
+	if err != nil {
+		t.Fatalf("GetSession: %v", err)
+	}
+	if view.Status != model.AgentSessionIdle {
+		t.Fatalf("停止后的会话状态 = %q", view.Status)
+	}
+}
+
 func TestIndexDatasetCreatesWorkflowTaskAndStartsIt(t *testing.T) {
 	platform := &fakePlatform{
 		datasets: []appcatalog.DatasetView{{ID: "dataset-1", Name: "需求数据", SchemaID: "schema-1", Status: model.DatasetStatusActive}},
@@ -227,6 +387,38 @@ func TestIndexDatasetCreatesWorkflowTaskAndStartsIt(t *testing.T) {
 	}
 	if platform.startedTaskID != "task-1" {
 		t.Fatalf("索引任务未启动: %q", platform.startedTaskID)
+	}
+}
+
+func TestSlashSkillInjectsPromptAndDisabledToolIsRemoved(t *testing.T) {
+	repo, configRepo := newMemorySessionRepo(), newMemoryConfigRepo()
+	llm := &finalAnswerLLM{wantPrompt: "必须输出三条精炼结论", toolCount: 7}
+	service, err := NewService(repo, configRepo, llm, testDeps(&fakePlatform{}), Options{})
+	if err != nil {
+		t.Fatalf("NewService: %v", err)
+	}
+	skill, err := service.CreateSkill(context.Background(), "", CreateSkillInput{
+		Slug: "three-points", Title: "三点结论", Prompt: "必须输出三条精炼结论",
+	})
+	if err != nil {
+		t.Fatalf("CreateSkill: %v", err)
+	}
+	if err := service.SetToolEnabled(context.Background(), "", "run_task", false); err != nil {
+		t.Fatalf("SetToolEnabled: %v", err)
+	}
+	session, err := service.CreateSession(context.Background(), "", "")
+	if err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	if _, err := service.RunMessage(context.Background(), session.ID, "/three-points 总结当前情况", nil); err != nil {
+		t.Fatalf("RunMessage: %v", err)
+	}
+	if err := service.SetSkillEnabled(context.Background(), "", skill.ID, false); err != nil {
+		t.Fatalf("SetSkillEnabled: %v", err)
+	}
+	if _, err := service.RunMessage(context.Background(), session.ID, "/three-points 再总结", nil); err == nil ||
+		!strings.Contains(err.Error(), "不存在或已停用") {
+		t.Fatalf("停用 Skill 后错误 = %v", err)
 	}
 }
 

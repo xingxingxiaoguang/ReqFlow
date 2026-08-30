@@ -58,10 +58,50 @@ export interface AgentStreamEvent {
   session?: AgentSession
 }
 
+export interface AgentToolConfig {
+  name: string
+  label: string
+  group: string
+  description: string
+  enabled: boolean
+}
+
+export interface AgentSkill {
+  id: string
+  slug: string
+  title: string
+  description: string
+  prompt: string
+  enabled: boolean
+  builtin: boolean
+  created_at: string
+  updated_at: string
+}
+
+export interface AgentConfig {
+  tools: AgentToolConfig[]
+  skills: AgentSkill[]
+}
+
+export interface CreateAgentSkillInput {
+  slug: string
+  title: string
+  description?: string
+  prompt: string
+  enabled?: boolean
+}
+
 export const v2AgentApi = {
   listSessions: () => api.get<{ sessions: AgentSessionSummary[] }>('/api/v2/agent/sessions?limit=100'),
   createSession: (title?: string) => api.post<{ session: AgentSession }>('/api/v2/agent/sessions', { title }),
   getSession: (id: string) => api.get<{ session: AgentSession }>(`/api/v2/agent/sessions/${id}`),
+  stopSession: (id: string) => api.post<{ stopped: boolean }>(`/api/v2/agent/sessions/${id}/stop`, {}),
+  getConfig: () => api.get<{ config: AgentConfig }>('/api/v2/agent/config'),
+  createSkill: (input: CreateAgentSkillInput) => api.post<{ skill: AgentSkill }>('/api/v2/agent/skills', input),
+  setSkillEnabled: (id: string, enabled: boolean) =>
+    api.put<{ enabled: boolean }>(`/api/v2/agent/skills/${id}/status`, { enabled }),
+  setToolEnabled: (name: string, enabled: boolean) =>
+    api.put<{ enabled: boolean }>(`/api/v2/agent/tools/${encodeURIComponent(name)}/status`, { enabled }),
   sendMessage: (
     id: string,
     message: string,

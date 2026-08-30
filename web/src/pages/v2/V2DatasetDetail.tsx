@@ -1,19 +1,22 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  App, Button, Card, Col, Empty, Form, Input, InputNumber, Row, Segmented,
+  Alert, App, Button, Card, Col, Empty, Form, Input, InputNumber, Modal, Row, Segmented,
   Select, Slider, Space, Switch, Table, Tag, Typography,
 } from 'antd'
-import { ArrowLeftOutlined, DownOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, DownOutlined, PlusOutlined, RocketOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { v2CatalogApi } from '../../api/v2/catalog'
+import { v2TasksApi } from '../../api/v2/tasks'
+import type { V2RetrievalProfile, V2TaskDefinition } from '../../api/v2/types'
+import EmbeddedResourceCreate, { type EmbeddedResource } from './EmbeddedResourceCreate'
 
 const { Paragraph, Text, Title } = Typography
 
 interface SearchForm {
   query: string
-  snapshot: string
+  snapshot?: string
   mode: 'lexical' | 'semantic' | 'hybrid'
   lexical_weight: number
   score_threshold: number
@@ -43,18 +46,46 @@ export default function V2DatasetDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { message } = App.useApp()
+  const client = useQueryClient()
   const [form] = Form.useForm<SearchForm>()
   const [advanced, setAdvanced] = useState(false)
   const [searching, setSearching] = useState(false)
   const [result, setResult] = useState<SearchResult>()
+  const [indexOpen, setIndexOpen] = useState(false)
+  const [profileCreateOpen, setProfileCreateOpen] = useState(false)
+  const [selectedProfileID, setSelectedProfileID] = useState<string>()
+  const [indexing, setIndexing] = useState(false)
+  const [indexTaskID, setIndexTaskID] = useState<string>()
   const datasets = useQuery({ queryKey: ['v2-datasets'], queryFn: () => v2CatalogApi.listDatasets({ status: 'active' }) })
   const schemas = useQuery({ queryKey: ['v2-schemas'], queryFn: v2CatalogApi.listSchemas })
-  const snapshots = useQuery({ queryKey: ['v2-retrieval-snapshots'], queryFn: v2CatalogApi.listRetrievalSnapshots })
   const dataset = datasets.data?.datasets.find((item) => item.id === id)
   const schema = schemas.data?.schemas.find((item) => item.id === dataset?.schema_id)
-  const activeSnapshots = useMemo(() => (snapshots.data?.retrieval_snapshots ?? [])
-    .filter((item) => item.dataset_id === id && item.status === 'active')
-    .sort((a, b) => b.source_seq - a.source_seq), [id, snapshots.data])
+  const snapshots = useQuery({
+    queryKey: ['v2-retrieval-snapshots', id, 'active'],
+    queryFn: () => v2CatalogApi.queryRetrievalSnapshots({ datasetId: id, status: 'active' }),
+    enabled: Boolean(id),
+  })
+  const profiles = useQuery({
+    queryKey: ['v2-retrieval-profiles', dataset?.schema_id],
+    queryFn: () => v2CatalogApi.queryRetrievalProfiles({ datasetSchemaId: dataset!.schema_id }),
+    enabled: Boolean(dataset?.schema_id),
+  })
+  const definitions = useQuery({
+    queryKey: ['v2-definitions', 'active'],
+    queryFn: () => v2CatalogApi.listDefinitions({ status: 'active', limit: 200 }),
+    enabled: indexOpen,
+  })
+  const indexTask = useQuery({
+    queryKey: ['v2-task', indexTaskID],
+    queryFn: () => v2TasksApi.get(indexTaskID!),
+    enabled: Boolean(indexTaskID),
+    refetchInterval: (query) => {
+      const status = query.state.data?.task.status
+      return status && ['succeeded', 'failed'].includes(status) ? false : 1000
+    },
+  })
+  const activeSnapshots = useMemo(() => [...(snapshots.data?.retrieval_snapshots ?? [])]
+    .sort((a, b) => b.source_seq - a.source_seq), [snapshots.data])
   const items = useQuery({
     queryKey: ['v2-dataset-items', dataset?.id, dataset?.current_seq],
     queryFn: () => v2CatalogApi.listDatasetItems(dataset!.id, 0, dataset!.current_seq, 200),
@@ -62,8 +93,63 @@ export default function V2DatasetDetail() {
   })
 
   useEffect(() => {
-    if (!form.getFieldValue('snapshot') && activeSnapshots[0]) form.setFieldValue('snapshot', activeSnapshots[0].id)
-  }, [activeSnapshots, form])
+    if (!dataset || snapshots.isLoading) return
+    const selected = form.getFieldValue('snapshot')
+    if (!activeSnapshots.some((item) => item.id === selected)) {
+      form.setFieldValue('snapshot', activeSnapshots[0]?.id)
+    }
+  }, [activeSnapshots, dataset, form, snapshots.isLoading])
+
+  useEffect(() => {
+    const available = profiles.data?.retrieval_profiles ?? []
+    if (!available.some((item) => item.id === selectedProfileID)) {
+      setSelectedProfileID(available[0]?.id)
+    }
+  }, [profiles.data, selectedProfileID])
+
+  useEffect(() => {
+    const status = indexTask.data?.task.status
+    if (status === 'succeeded') {
+      setIndexTaskID(undefined)
+      void snapshots.refetch()
+      message.success('索引已建立，搜索已自动启用')
+    } else if (status === 'failed') {
+      setIndexTaskID(undefined)
+      message.error(indexTask.data?.task.error_message || '索引任务执行失败')
+    }
+  }, [indexTask.data?.task.error_message, indexTask.data?.task.status, message, snapshots])
+
+  const startIndexing = async () => {
+    if (!dataset || !selectedProfileID) return
+    setIndexing(true)
+    try {
+      const availableDefinitions = definitions.data?.task_definitions ?? []
+      let match = findIndexDefinition(availableDefinitions, selectedProfileID)
+      if (!match) {
+        const created = await v2CatalogApi.createDefinition(indexDefinitionInput(dataset.name, selectedProfileID))
+        match = { definition: created.definition, portName: 'dataset', resourceType: 'dataset_boundary' }
+        await client.invalidateQueries({ queryKey: ['v2-definitions'] })
+      }
+      const created = await v2TasksApi.create({
+        definition_id: match.definition.id,
+        title: `为「${dataset.name}」建立检索索引`,
+        bindings: [{ port_name: match.portName, resource_type: match.resourceType, resource_id: dataset.id }],
+      })
+      await v2TasksApi.start(created.task.id)
+      setIndexTaskID(created.task.id)
+      setIndexOpen(false)
+      message.success('索引任务已启动，完成后会自动启用搜索')
+    } catch (error) {
+      message.error((error as Error).message)
+    } finally {
+      setIndexing(false)
+    }
+  }
+
+  const profileCreated = (resource: EmbeddedResource) => {
+    const profile = resource as V2RetrievalProfile
+    setSelectedProfileID(profile.id)
+  }
 
   const search = async (values: SearchForm) => {
     if (!values.snapshot) {
@@ -138,11 +224,11 @@ export default function V2DatasetDetail() {
         initialValues={{ mode: 'hybrid', lexical_weight: 0.5, score_threshold: 0, recall_limit: 100, top_k: 20, rerank_enabled: true, rerank_top_n: 10, filters: '' }}
       >
         <Form.Item name="query" rules={[{ required: true, whitespace: true, message: '请输入搜索内容' }]} style={{ marginBottom: advanced ? 18 : 0 }}>
-          <Input.Search size="large" enterButton="搜索" loading={searching} placeholder="输入关键词或业务问题" onSearch={() => form.submit()} />
+          <Input.Search size="large" enterButton="搜索" loading={searching} disabled={!snapshots.isLoading && activeSnapshots.length === 0} placeholder={activeSnapshots.length > 0 ? '输入关键词或业务问题' : '请先为当前数据集建立索引'} onSearch={() => form.submit()} />
         </Form.Item>
         {advanced && <Card size="small" type="inner" title="混合检索参数">
           <Row gutter={16}>
-            <Col xs={24} lg={14}><Form.Item name="snapshot" label="索引快照" rules={[{ required: true, message: '暂无可用索引快照' }]}><Select placeholder="选择索引快照" options={activeSnapshots.map((item) => ({ value: item.id, label: `数据边界 ${item.source_seq} · ${new Date(item.activated_at ?? item.created_at).toLocaleString('zh-CN')}` }))} /></Form.Item></Col>
+            <Col xs={24} lg={14}><Form.Item name="snapshot" label="索引版本" extra="默认自动使用覆盖数据最多的最新版本"><Select loading={snapshots.isLoading} disabled={activeSnapshots.length === 0} placeholder="暂无可用索引" options={activeSnapshots.map((item) => ({ value: item.id, label: `数据边界 ${item.source_seq} · ${new Date(item.activated_at ?? item.created_at).toLocaleString('zh-CN')}` }))} /></Form.Item></Col>
             <Col xs={24} lg={10}><Form.Item name="mode" label="检索模式"><Segmented block options={[{ label: '精准', value: 'lexical' }, { label: '语义', value: 'semantic' }, { label: '混合', value: 'hybrid' }]} /></Form.Item></Col>
           </Row>
           <Row gutter={24}>
@@ -158,7 +244,15 @@ export default function V2DatasetDetail() {
           <Form.Item name="filters" label="字段筛选（JSON，可选）"><Input.TextArea rows={2} placeholder={'例如：{"status":"active"}'} /></Form.Item>
         </Card>}
       </Form>
-      {activeSnapshots.length === 0 && <Text type="warning">当前没有可用索引快照；可先浏览数据，索引由流程的“构建检索索引”步骤生成。</Text>}
+      {!snapshots.isLoading && activeSnapshots.length === 0 && <Alert
+        type="warning"
+        showIcon
+        message={indexTaskID ? '正在建立检索索引' : '当前数据集还不能执行混合检索'}
+        description={indexTaskID ? '索引任务完成后，搜索框会自动启用。' : '选择或创建适用于当前数据结构的索引规则，系统会通过标准流程任务建立首个可用索引。'}
+        action={indexTaskID
+          ? <Button onClick={() => navigate(`/tasks/${indexTaskID}`)}>查看任务</Button>
+          : <Button type="primary" icon={<RocketOutlined />} onClick={() => setIndexOpen(true)}>立即建立索引</Button>}
+      />}
     </Card>
 
     <Card
@@ -187,7 +281,70 @@ export default function V2DatasetDetail() {
         locale={{ emptyText: <Empty description="数据集暂时没有条目" /> }}
       />}
     </Card>
+
+    <Modal
+      title="为当前数据集建立索引"
+      open={indexOpen}
+      onCancel={() => !indexing && setIndexOpen(false)}
+      onOk={() => void startIndexing()}
+      okText="创建并运行索引任务"
+      confirmLoading={indexing}
+      okButtonProps={{ disabled: !selectedProfileID || definitions.isLoading }}
+      destroyOnHidden
+    >
+      <Alert type="info" showIcon style={{ marginBottom: 16 }} message="索引会通过标准 retrieval.build 流程任务生成，不会绕过流程直接写入数据。" />
+      <Space.Compact style={{ width: '100%' }}>
+        <Select
+          value={selectedProfileID}
+          onChange={setSelectedProfileID}
+          loading={profiles.isLoading}
+          showSearch
+          optionFilterProp="label"
+          placeholder="选择适用于当前数据结构的索引规则"
+          options={(profiles.data?.retrieval_profiles ?? []).map((item) => ({ value: item.id, label: item.name }))}
+          style={{ width: 'calc(100% - 112px)' }}
+        />
+        <Button icon={<PlusOutlined />} onClick={() => setProfileCreateOpen(true)}>新建规则</Button>
+      </Space.Compact>
+      {!profiles.isLoading && profiles.data?.retrieval_profiles.length === 0 && <Text type="secondary">当前数据结构还没有索引规则，请直接新建。</Text>}
+    </Modal>
+
+    <EmbeddedResourceCreate
+      kind={profileCreateOpen ? 'retrieval' : undefined}
+      fixedSchemaId={dataset.schema_id}
+      onCancel={() => setProfileCreateOpen(false)}
+      onCreated={profileCreated}
+    />
   </Space>
+}
+
+function findIndexDefinition(definitions: V2TaskDefinition[], profileID: string) {
+  for (const definition of definitions) {
+    const step = definition.steps.find((item) => item.kind === 'retrieval.build' && item.config?.retrieval_profile_id === profileID)
+    if (!step) continue
+    const input = Object.entries(definition.input_ports).find(([portName, port]) =>
+      (port.resource_type === 'dataset' || port.resource_type === 'dataset_boundary')
+      && Object.values(step.inputs ?? {}).includes(`$task.${portName}`))
+    if (input) return { definition, portName: input[0], resourceType: input[1].resource_type }
+  }
+  return undefined
+}
+
+function indexDefinitionInput(datasetName: string, profileID: string) {
+  return {
+    key: `index_dataset_${Date.now().toString(36)}`,
+    name: `为「${datasetName}」建立检索索引`,
+    description: '由数据管理按需创建的单步骤索引流程',
+    status: 'active' as const,
+    input_ports: { dataset: { resource_type: 'dataset_boundary', required: true, description: '待建立索引的数据集边界' } },
+    output_ports: { snapshot: { resource_type: 'retrieval_snapshot', description: '激活后的检索快照' } },
+    output_bindings: { snapshot: '$step.build_index.snapshot' },
+    steps: [{
+      id: 'build_index', name: '建立检索索引', kind: 'retrieval.build',
+      inputs: { dataset: '$task.dataset' }, outputs: { snapshot: 'retrieval_snapshot' },
+      config: { retrieval_profile_id: profileID },
+    }],
+  }
 }
 
 function renderValue(value: unknown) {

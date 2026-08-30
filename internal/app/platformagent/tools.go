@@ -20,17 +20,27 @@ import (
 	"reqflow/internal/port"
 )
 
-func buildTools(deps Dependencies, workspaceID string) []baseagent.Tool {
-	base := platformTool{deps: deps, workspaceID: workspaceID}
-	return []baseagent.Tool{
+func buildTools(deps Dependencies, configRepo port.AgentConfigRepo, workspaceID string,
+	settings map[string]bool) []baseagent.Tool {
+	base := platformTool{deps: deps, configRepo: configRepo, workspaceID: workspaceID}
+	all := []baseagent.Tool{
 		&listWorkflowsTool{base}, &createWorkflowTool{base},
 		&listTasksTool{base}, &createTaskTool{base}, &runTaskTool{base},
-		&queryDataTool{base}, &indexDatasetTool{base},
+		&queryDataTool{base}, &indexDatasetTool{base}, &createSkillTool{base},
 	}
+	enabled := make([]baseagent.Tool, 0, len(all))
+	for _, tool := range all {
+		value, configured := settings[tool.Spec().Name]
+		if !configured || value {
+			enabled = append(enabled, tool)
+		}
+	}
+	return enabled
 }
 
 type platformTool struct {
 	deps        Dependencies
+	configRepo  port.AgentConfigRepo
 	workspaceID string
 }
 
@@ -497,6 +507,40 @@ func (*indexDatasetTool) PromptGuidelines() []string {
 		"建立索引前先用 query_data 确认真实 dataset_id 以及是否已有 active snapshot",
 		"多个索引规则时把工具返回的选择交给用户；只有一个规则时可直接执行",
 		"索引永远经由 retrieval.build 流程任务运行，不绕过编排器直接写快照",
+	}
+}
+
+/* ---- Skill 工具 ---- */
+
+type createSkillTool struct{ platformTool }
+
+func (*createSkillTool) Spec() port.ToolSpec {
+	return port.ToolSpec{Name: "create_skill", Description: "创建一个纯文本提示词 Skill；不支持脚本、附件、文件或依赖。",
+		Parameters: json.RawMessage(`{"type":"object","properties":{"slug":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,47}$"},"title":{"type":"string","minLength":1,"maxLength":80},"description":{"type":"string","maxLength":500},"prompt":{"type":"string","minLength":1,"maxLength":30000},"enabled":{"type":"boolean"}},"required":["slug","title","prompt"],"additionalProperties":false}`)}
+}
+
+func (t *createSkillTool) Execute(ctx context.Context, call port.ToolCall, _ func(string)) baseagent.ToolOutput {
+	var input CreateSkillInput
+	if err := decodeStrict(call.Arguments, &input); err != nil {
+		return toolError(err)
+	}
+	skill, err := createAgentSkill(ctx, t.configRepo, t.workspaceID, input)
+	if err != nil {
+		return toolError(err)
+	}
+	return toolJSON(map[string]any{"skill": skillView(*skill)},
+		fmt.Sprintf("已创建 Skill /%s（%s）", skill.Slug, skill.Title))
+}
+
+func (*createSkillTool) PromptSnippet() string {
+	return "create_skill：创建可由 /slug 激活的纯文本工作方法"
+}
+
+func (*createSkillTool) PromptGuidelines() []string {
+	return []string{
+		"只有用户明确确认创建 Skill 时才调用；讨论和预览阶段不要落库",
+		"Skill 只能包含提示词，不得声称会保存或执行脚本、附件、依赖包和外部文件",
+		"slug 使用易读的小写字母、数字和连字符，创建后向用户报告 /slug",
 	}
 }
 

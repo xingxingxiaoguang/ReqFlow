@@ -142,6 +142,7 @@ func main() {
 	metadataRepo := repository.NewMetadataRepo(db)
 	pipelineRepo := repository.NewPipelineRepo(db)
 	agentSessionRepo := repository.NewAgentSessionRepo(db)
+	agentConfigRepo := repository.NewAgentConfigRepo(db)
 	// 数据集动态索引管理器：FTS/筛选索引随数据集 schema 建删（表达式索引）
 	datasetIndexer := repository.NewDatasetIndexer(db, cfg.FTS.TSConfig)
 
@@ -308,7 +309,7 @@ func main() {
 		logger.Error("V2 Review Pipeline 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	v2Agent, err := appplatformagent.NewService(agentSessionRepo, llmClient, appplatformagent.Dependencies{
+	v2Agent, err := appplatformagent.NewService(agentSessionRepo, agentConfigRepo, llmClient, appplatformagent.Dependencies{
 		Definitions: v2Definitions, Runtime: v2Runtime, Tasks: v2TaskQueries,
 		Catalog: v2Catalog, Retrieval: v2Retrieval,
 	}, appplatformagent.Options{MaxIterations: cfg.LLM.AgentMaxIterations})
