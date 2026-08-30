@@ -35,8 +35,10 @@
 - [x] `data.publish` Executor：只消费 ApprovedRecordSet，按 StepRun 幂等创建 Batch，提交前 attempt fencing，并复用 Dataset/Item/Outbox 原子事务。
 - [x] V2 Task 目录与通用 Task Detail：独立于 Legacy 查询，按定义快照展示步骤名称/Executor、资源端口、生命周期操作和 GET SSE 快照收敛。
 - [x] 不可变 AnalysisProfile、AnalysisResult、Artifact，以及 `agent.analyze`、`data.analysis_publish`、`artifact.render`、`graph.build` 四种通用 Executor。
-- [x] 数据清洗入库、精准 + 语义索引、Bug 分析、产品方案生成、知识图谱构建五种无代码模板；业务差异仅由资源绑定、Profile 和 TaskDefinition 表达。
-- [x] 纯 V2 前端信息架构：任务、定义、数据集、元数据、混合检索、制品和归档均只调用 `/api/v2`，旧内置任务入口已从路由和导航移除。
+- [x] 数据清洗入库、精准 + 语义索引、Bug 分析、产品方案生成、知识图谱构建五种可编辑流程模板，同时支持从空白手动组合已注册 Executor；业务差异仅由资源绑定、Profile 和 TaskDefinition 表达。
+- [x] 纯 V2 前端信息架构：流程定义、从流程创建任务、任务运行、数据集、元数据、混合检索、制品和归档均只调用 `/api/v2`；旧内置任务入口已从路由和导航移除。
+- [x] Definition/Task 边界：发布流程只创建可复用 Definition，Task 只能从 active Definition 派生并冻结快照与资源边界；模板不再隐式创建任务。
+- [x] Schema/Profile 可视化编辑器：字段、枚举、必填项和 Profile 配置以业务表单呈现，不把 JSON 作为非技术用户的主操作界面。
 - [x] Schema 驱动审核工作台：逐条 approve/edit/exclude、类型化编辑、置信度、确定性转换 Diff、校验问题、provenance、不可变审核回放和发布结果展示。
 - [x] 前端路由级 code splitting，消除单一 1.5 MB 首载 Chunk。
 - [x] `data.query_derive` Executor：固定 Base Dataset `through_seq`，按 PipelineCursor 只读取未消费 `commit_seq`，确定性展开语义单元并生成 aliases/keywords/facets/source_refs。
@@ -956,6 +958,8 @@ Agent 无权通过参数传入任意 Dataset ID，也不能绕过 Snapshot 直�
 
 ## 10. 五类业务任务模板
 
+这五类内容是流程编辑器的**可修改起点**，不是固定任务类型，也不会直接创建或运行 Task。用户可以载入模板后增删步骤、调整配置和数据连接，也可以完全从空白编排；发布后得到 active `TaskDefinition`，再到独立任务创建页绑定本次资源并派生 `Task`。
+
 ### 10.1 `product_spec_clean`
 
 ```text
@@ -1068,42 +1072,49 @@ POST   /api/v2/retrieval-profiles/:id/evaluate
 
 ## 12. 前端改造
 
-实施状态：通用 Task Detail 与 Human Review 面板已完成；数据/Schema/Profile 目录和 Retrieval 页面仍按后续阶段推进。V2 前端使用独立 `/v2/tasks` 路由和 snake_case API 类型，不在 Legacy 固定四步页面上叠加兼容逻辑。
+实施状态：纯 V2 前端已完成切流。路由使用业务稳定路径（`/definitions`、`/tasks`、`/datasets` 等），API 类型继续使用独立 snake_case DTO；不在 Legacy 固定四步页面上叠加兼容逻辑。
 
 ### 12.1 信息架构
 
-建议主导航调整为：
+主导航按“先定义、后执行，再管理数据与产物”组织：
 
 ```text
-任务
-数据
-  ├── 原始资产
-  ├── 数据集
-  ├── Schema
-  └── Profiles
-检索
-  ├── Retrieval Profiles
-  ├── Snapshots
-  └── 评测集
-任务模板
-设置
+流程定义          /definitions
+从流程创建任务    /tasks/new
+任务运行          /tasks
+数据集            /datasets
+元数据与资源      /metadata
+混合检索          /retrieval
+业务制品          /artifacts
+V2 归档           /archives
 ```
 
-### 12.2 Schema Builder
+### 12.2 流程编排器
 
-- 可视化编辑常见字段类型、必填、枚举、数组和校验规则。
-- 高级模式直接编辑 JSON Schema。
-- 保存前前后端均校验。
-- 保存后只读；“修改”按钮实际执行 Clone。
+- `/definitions/new` 同时支持从空白编排和载入五种可编辑模板起点。
+- 用户添加已注册 Executor Step；每种 Kind 使用专用表单编辑配置，不暴露任意 Config JSON。
+- Step 输入只能选择类型匹配的任务端口或上游输出；前端据连接自动推导 `depends_on`。
+- 同一种 Executor Kind 可以重复使用，Step 由稳定 `step_id` 区分。
+- Definition 输出必须显式绑定到某个 Step 输出。
+- 发布动作只创建 active `TaskDefinition`，不得隐式创建或启动 Task。
 
-### 12.3 Dataset 页面
+### 12.3 从流程派生任务
 
-- 展示 Schema、current_seq、Batch 时间线和 Item 数量。
-- 按 Batch、来源 Task、commit_seq 和字段过滤。
-- Item 详情展示 provenance。
-- 不提供已提交 Item 的行内编辑或删除按钮。
+- `/definitions` 展示流程目录，并从每条 active Definition 进入“创建任务”。
+- `/tasks/new?definition_id=...` 默认选中来源流程，也允许切换其他 active Definition。
+- 页面按 Definition 输入端口动态渲染资源选择器，只允许绑定匹配资源类型。
+- 创建时固化 Definition Snapshot、Resource Binding 和 Dataset/Retrieval Boundary。
+- 用户明确选择“仅创建”或“创建并运行”；创建任务不会修改来源流程。
+- `/tasks` 展示来源流程、任务状态和运行入口，流程与任务保持 1:N。
 
-### 12.4 通用 Task Detail
+### 12.4 数据与元数据
+
+- Dataset 页面展示 Schema、current_seq、Batch 时间线、Item 数量和 provenance；已提交 Item 不提供行内修改/删除。
+- Schema Builder 可视化编辑字段名、显示名、类型、必填、枚举、数组和约束，保存前前后端共同校验。
+- Extraction/Analysis/Retrieval Profile 使用面向业务语义的表单；JSON 仅作为开发诊断数据，不作为非技术用户主入口。
+- Schema/Profile 结构变化创建新资源，不提供 PUT/PATCH 兼容修改。
+
+### 12.5 通用 Task Detail
 
 - 根据 TaskDefinition 渲染步骤 DAG/时间线。
 - 工作区按 Executor Kind 注册面板，不按固定步骤序号硬编码。
@@ -1111,12 +1122,20 @@ POST   /api/v2/retrieval-profiles/:id/evaluate
 - Human Review 面板作为通用组件，支持 Schema 驱动表格和 Artifact 预览。
 - SSE 继续只传事件提示，页面状态以服务端 Snapshot 为准。
 
-### 12.5 Retrieval 页面
+### 12.6 Retrieval 页面
 
 - Profile 字段选择、权重、分块和过滤配置。
 - 构建进度及 lexical/vector 覆盖率。
-- BM25/Vector/Hybrid 三列结果对照。
+- 查询时可调精准/语义权重、召回分数阈值、候选召回数量。
+- 可选择是否启用 SiliconFlow rerank，并独立设置 rerank top N。
+- 展示 BM25/Vector/Hybrid 结果和每条命中的排名证据、分数与 provenance。
 - 测试问题集和 Recall/MRR 指标。
+
+### 12.7 前端工程约束
+
+- 页面按路由级 code splitting 加载，避免单一大 Chunk。
+- Definition、Task、Dataset、Profile 等 V2 DTO 与 Legacy 类型物理隔离，不建立兼容映射。
+- 导航和路由只暴露 V2 页面；Legacy 组件只允许被删除，不允许被新页面引用。
 
 ## 13. 后端包结构建议
 
@@ -1450,17 +1469,21 @@ retrieval_snapshot_id
 - [x] `data.analysis_publish`：把通过审核的结构化分析结果按目标 Dataset 当前边界原子发布为 DatasetBatch。
 - [x] `artifact.render`：从 AnalysisResult 的固定 JSON 路径生成内容寻址 Markdown/JSON Artifact。
 - [x] `graph.build`：引用节点 Batch、关系 Batch 和 AnalysisResult 生成可追溯 Graph Manifest，不复制实体/关系抽取逻辑。
-- [x] 五种无代码模板：数据清洗入库、精准 + 语义索引、Bug 分析、产品方案生成、知识图谱构建。
+- [x] 五种可编辑模板起点：数据清洗入库、精准 + 语义索引、Bug 分析、产品方案生成、知识图谱构建；同时支持从空白手动编排。
 - [x] V2 Catalog 和归档/恢复 API；TaskDefinition、Dataset、Schema/Profile、Artifact 均有 V2 浏览入口。
 - [x] 前端路由、布局和操作全部切换为 V2；Legacy 内置任务、数据集、元数据和归档页面不再暴露。
+- [x] 流程定义与任务执行分离：发布 Definition 不创建任务；独立任务页只从 active Definition 派生，并支持仅创建/创建并运行。
+- [x] Schema/Profile 可视化表单替代 JSON 主界面，降低非技术用户上手成本。
 
 验收：
 
 - [x] 产品方案真实浏览器端到端完成 `agent.analyze → human.review → artifact.render`，下载内容 SHA-256 与 Artifact Boundary 一致。
 - [x] Bug 分析通过真实 UI 创建 `agent.analyze → human.review → data.analysis_publish + artifact.render` 四步 DAG。
 - [x] 知识图谱通过真实 UI 创建 `agent.analyze → human.review → publish_nodes + publish_edges → graph.build` 五步 DAG，并固化两个目标 Dataset 边界。
-- [x] 五种模板均可从同一无代码入口创建，通用 Task Detail 按定义快照展示和驱动操作。
+- [x] 五种模板均可作为流程编辑器起点，也可从空白自由编排；通用 Task Detail 按 Definition Snapshot 展示和驱动操作。
 - [x] Task 归档、归档目录展示和恢复通过真实浏览器验收。
+- [x] 自由编排检索真实验收：Definition `20d9d641-de77-4229-af95-c38efa33bfda` → Task `1236c6e2-ceb7-4a10-80dd-94e4916d4c5b` → Retrieval Snapshot `63aae631-0884-44dc-8d2f-8b5f037f08ec`，任务终态成功，浏览器 console 0 error / 0 warning。
+- [x] `make build`、`make test`、架构检查、密钥扫描和 `git diff --check` 全部通过。
 
 架构约束继续保持：只有出现无法表达的通用平台能力时才增加新 Executor Kind，禁止为业务模板复制 Runner 或在核心状态机内增加业务分支。
 

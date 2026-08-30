@@ -8,6 +8,7 @@ import (
 	appcatalog "reqflow/internal/app/catalog"
 	apporchestrator "reqflow/internal/app/orchestrator"
 	apppipeline "reqflow/internal/app/pipeline"
+	appplatformagent "reqflow/internal/app/platformagent"
 	appretrieval "reqflow/internal/app/retrieval"
 )
 
@@ -34,6 +35,7 @@ type Services struct {
 	V2Analysis      *appanalysis.Service
 	V2Artifacts     *appanalysis.ArtifactService
 	V2Catalog       *appcatalog.Service
+	V2Agent         *appplatformagent.Service
 
 	UploadDir string // 上传暂存目录（cmd 从配置注入）
 	MaxFileMB int64  // 上传大小上限
@@ -106,6 +108,12 @@ func New(svc Services) *gin.Engine {
 		api.POST("/settings/test-llm", h.testLLM)
 	}
 	v2 := api.Group("/v2")
+	if svc.V2Agent != nil {
+		v2.GET("/agent/sessions", h.v2ListAgentSessions)
+		v2.POST("/agent/sessions", h.v2CreateAgentSession)
+		v2.GET("/agent/sessions/:id", h.v2GetAgentSession)
+		v2.POST("/agent/sessions/:id/messages", h.v2RunAgentMessage)
+	}
 	if svc.V2Datasets != nil {
 		v2.POST("/schemas", h.v2CreateSchema)
 		if svc.V2Catalog != nil {

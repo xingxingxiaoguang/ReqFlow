@@ -3,7 +3,7 @@
 > 面向下一个接手开发的同学。本文只回答四件事：**项目现在是什么、怎么跑起来、改代码必须知道的上下文、接手后干什么**。
 > 产品定位、方向性决策与「重复人工任务 → AI 驱动 Task」的抽离范式见 [PRODUCT.md](./PRODUCT.md)；技术实现细节以本文件为准。
 
-> **2026-08-30 交接状态**：异构数据管线 V2 的阶段 A、B、C、D、E、F 已完成。当前系统以五种无代码任务为产品入口，不保留旧数据库、旧 API、旧前端或旧任务流程兼容；完整设计和阶段验收见 [DATA_PIPELINE_V2_PLAN.md](./DATA_PIPELINE_V2_PLAN.md)。本文中标为“Legacy”的内容只用于识别待删除代码，不是后续扩展入口。
+> **2026-08-30 交接状态**：异构数据管线 V2 的阶段 A、B、C、D、E、F 已完成。当前系统以“流程定义 → 派生任务 → 运行任务”为产品主线，五种模板只是可编辑流程起点，同时支持空白编排；不保留旧数据库、旧 API、旧前端或旧任务流程兼容。完整设计和阶段验收见 [DATA_PIPELINE_V2_PLAN.md](./DATA_PIPELINE_V2_PLAN.md)。本文中标为“Legacy”的内容只用于识别待删除代码，不是后续扩展入口。
 
 ---
 
@@ -11,10 +11,11 @@
 
 - **目标形态**：把非标准产品文档清洗为基础 Dataset，再增量派生查询 Dataset 和 BM25 + Vector Retrieval Snapshot，最后由 Bug 分析、规格书生成、知识图谱等业务 Task 消费。
 - **V2 已落地**：不可变 JSON Schema、Dataset Batch 追加、`commit_seq`、provenance/identity、TaskDefinition DAG、定义快照和资源端口；Stage B 后端已补齐 Executor Registry、Step 输出绑定、Scheduler、PostgreSQL Worker/lease/checkpoint/retry、任意位置 Human Gate、两阶段暂停和任务输出固化。
-- **V2 已有最小 API**：`/api/v2` 已开放 Asset/AssetSet/ParsedDocument、ExtractionProfile、RecordDraft/Transformed/Validation/Approved Manifest、Schema/Dataset/Batch、TaskDefinition/Task 生命周期、任务快照和 SSE；V2 Worker 已注册 `source.parse`、`llm.extract`、`data.transform`、`data.validate` 和 `data.publish`。
+- **V2 API 已闭环**：`/api/v2` 已开放 Asset/Schema/Profile/Dataset/Batch、TaskDefinition/Task、Retrieval/Analysis/Artifact/Catalog/Archive；Worker 已注册清洗、增量派生、检索构建、通用分析、分析发布、制品渲染和图谱构建 Executor。
 - **Stage C 后端已闭环**：内容寻址解析、Schema 驱动抽取、确定性转换/校验、不可变人工审核资源、幂等原子发布、完整 provenance 和 attempt fencing 已打通真实 HTTP → PostgreSQL → Worker 集成测试。
 - **输入绑定已收口**：Task API 可用 `resource_id` 或 Dataset `resource_alias` 定位输入；应用层验证资源存在性，Alias 只在创建时解析一次，`dataset_boundary` 自动固化 `through_seq`，Retrieval Snapshot 自动固化 `source_seq`。
-- **V2 前端已完成切换**：`/tasks`、`/tasks/new`、`/definitions`、`/datasets`、`/metadata`、`/retrieval`、`/artifacts`、`/archives` 均使用 V2 API；旧内置任务、数据集、元数据和归档页面已从路由与导航移除。
+- **V2 前端已完成切换**：`/definitions` 负责流程目录，`/definitions/new` 负责空白/模板起点编排，`/tasks/new?definition_id=...` 负责从已发布流程派生任务，`/tasks` 负责运行目录；数据集、元数据、检索、制品和归档也均只使用 V2 API。
+- **流程与任务边界已收口**：模板仅生成可编辑 Definition 起点；发布流程只创建 `TaskDefinition`，不创建 Task；Task 只能从 active Definition 派生，创建时冻结 Definition Snapshot、Resource Binding/Boundary 和 StepRun。
 - **Stage D 已闭环**：`data.query_derive` 按 Base Dataset Boundary + PipelineCursor 增量读取，确定性展开语义单元并生成标准 Query Item；Query Batch、Dataset 位点、Outbox 和 Cursor 在同一事务提交，失败不推进 Cursor。
 - **Stage E 已闭环**：不可变 RetrievalProfile、`retrieval.build` 状态机、OpenSearch BM25、pgvector Chunk、查询级加权 RRF/阈值/召回数、SiliconFlow rerank 和 KnowledgeScope Agent 工具已经落地。
 - **Stage F 已闭环**：不可变 AnalysisProfile/AnalysisResult/Artifact，通用分析、资源审核、分析发布、制品渲染和图谱 Manifest Executor 已落地；五种无代码模板由 Profile + TaskDefinition 组合，不存在业务专用 Runner。
@@ -128,10 +129,17 @@ internal/domain  实体模型 + 纯领域逻辑（零三方依赖，仅标准库
 | `internal/infra/database/migrations/0015_transform_validation_manifests.*.sql` | `data.transform`/`data.validate` 不可变 Manifest、记录 Diff、问题和分类结果 |
 | `internal/infra/database/migrations/0016_approved_record_sets.*.sql` | 不可变 ApprovedRecordSet、全量审核决定、最终字段与 provenance |
 | `internal/infra/repository/pipeline_integration_test.go` | PostgreSQL 真机验证 Batch、Outbox、Task 快照和资源绑定 |
+| `web/src/pages/v2/V2DefinitionNew.tsx` | 独立流程编排器：空白或模板起点、类型化数据连接、Executor 专用配置、Definition 输出与发布 |
+| `web/src/pages/v2/workflowBlocks.ts` | 前端可编排 Executor 目录、输入输出资源类型、默认配置与业务说明；必须与后端 Registry 合同同步 |
+| `web/src/pages/v2/V2Definitions.tsx` | 流程定义目录；展示 active Definition 并提供“创建任务”入口 |
+| `web/src/pages/v2/NoCodeTaskNew.tsx` | 独立任务派生页：选择 active Definition，按端口绑定本次资源，仅创建或创建并运行 |
+| `web/src/pages/v2/V2Tasks.tsx` | V2 任务运行目录；展示来源流程、状态和运行操作 |
+| `web/src/pages/v2/SchemaFieldEditor.tsx` | Schema 可视化字段编辑器；面向非技术用户，不把 JSON 作为主界面 |
+| `web/src/pages/v2/V2Metadata.tsx` | V2 Schema/Profile 目录与可视化创建入口 |
 
 #### Legacy 代码地图（理解和拆除用）
 
-下方代码仍支撑当前页面运行。除 LLM/Agent/SSE 等明确复用部件外，不要继续扩展其 Schema 编辑、固定 StepKind、单文件输入或单数据集绑定设计。
+下方代码已退出产品路由，仅用于识别和拆除。除 LLM/Agent/SSE 等明确复用部件外，不要继续扩展其 Schema 编辑、固定 StepKind、单文件输入或单数据集绑定设计。
 
 ```
 cmd/reqflow/
@@ -286,8 +294,9 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
                              与 Legacy PascalCase 类型隔离，不建立过渡兼容映射
   src/hooks/useV2TaskEvents.ts V2 GET SSE：完整 Snapshot 写入 `['v2-task', id]` 缓存，
                              断线 3 秒重连；事件只加速收敛，数据库快照仍是事实源
-  src/pages/v2/              V2Tasks 独立任务目录；V2TaskDetail 按定义快照渲染步骤与资源；
-                             ReviewWorkspace 按 JSON Schema 渲染逐条决定、类型化编辑和证据面板
+  src/pages/v2/              当前全部产品页面：Definition 编排与目录、从流程派生 Task、任务运行、
+                             Dataset/Metadata/Retrieval/Artifact/Archive；V2TaskDetail 按定义快照
+                             渲染步骤与资源，ReviewWorkspace 按 Schema 渲染审核与证据面板
   src/api/tasks.ts           任务 API 封装（创建/列表/详情/编辑/暂停/继续/完成/步骤触发/草稿保存/数据集浏览）
   src/pages/Tasks.tsx        任务列表（状态筛选 + 生命周期操作）
   src/pages/Datasets.tsx     数据集浏览（结果集 + 条目明细 + 来源任务追溯）
@@ -363,8 +372,14 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
 
 #### Task 和 Workflow
 
+- `TaskDefinition`（流程定义）与 `Task`（执行实例）必须分离，二者是 1:N；不得重新引入“模板页面同时创建流程和任务”的混合实体。
+- 发布 Definition 和创建 Task 是两个独立动作：发布不得自动运行，创建 Task 不得隐式创建或修改 Definition。
+- 模板只能生成可编辑 Definition 草案/UI 初始状态；必须同时支持从空白手动编排。
+- Task 只能从 `active` Definition 派生。Definition 目录必须提供“创建任务”入口，Task 目录必须展示来源流程。
 - TaskDefinition 是端口化 DAG；Step 身份是稳定 `step_id`，`ordinal` 只负责展示顺序，Executor 分发键是 `kind`。禁止重新引入“按 kind 找第一个步骤”。
 - 同一个 Kind 可以重复出现。Step 只能读取 `$task.<port>` 或其依赖祖先的 `$step.<step_id>.<port>`。
+- 前端数据连接只能选择资源类型匹配的任务端口或上游步骤输出，并据此推导 `depends_on`；业务用户不直接编辑 DAG JSON。
+- 编排器只能组合 Registry 已注册的 Executor Kind，并使用对应的类型化配置表单；不得允许任意脚本、任意表达式或未知 Executor Config。
 - Task 创建时必须固化完整 definition snapshot 和所有输入 ResourceBinding；Alias 只在创建任务时解析一次。
 - 下游读取追加型 Dataset 时必须绑定 `through_seq`；查询知识时必须绑定具体 RetrievalSnapshot。
 - StepRun 是执行状态唯一真相源。后续 Worker 使用数据库 lease/checkpoint；Broker/SSE 只通知 UI，不承担状态。
@@ -374,7 +389,7 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
 
 - Query Dataset 是数据，RetrievalSnapshot 是派生服务资源。禁止把物理索引状态写回 Dataset Schema。
 - BM25 和 Vector 必须覆盖相同 `source_seq` 并通过计数校验后才能激活 Snapshot。
-- 首期词法后端计划使用 OpenSearch BM25，向量后端使用 pgvector，应用层用 RRF 融合；不得用 PostgreSQL `ts_rank` 冒充 BM25。
+- 词法后端使用 OpenSearch BM25，向量后端使用 pgvector，应用层用可调权重的 RRF 融合；不得用 PostgreSQL `ts_rank` 冒充 BM25。
 - 首期 Dataset 只追加，因此固定 `source_seq` 可以稳定读取。未来若增加 UPSERT/DELETE，必须同时设计版本化搜索文档或双索引切换。
 
 #### 分阶段迁移
@@ -403,12 +418,12 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
 | `parsed_documents/document_blocks` | 按解析器版本缓存结构化文档，Block 是 provenance 的稳定引用点 |
 | `extraction_profiles` | 与 Schema 分离的抽取、归一化和业务校验配置 |
 | `record_draft_sets/extraction_units/record_drafts` | `llm.extract` 的 Manifest、稳定模型调用单元和带 Asset/Block/quote 来源的候选记录 |
-| `retrieval_profiles/snapshots/chunks` | 检索合同、覆盖位点和多 Chunk embedding；尚未接应用服务 |
+| `retrieval_profiles/snapshots/chunks` | 检索合同、覆盖位点、多 Chunk embedding、OpenSearch 文档身份和 Snapshot 构建状态 |
 | `pipeline_cursors` | 基础 Dataset → 查询 Dataset 增量消费位点 |
 | `artifacts` | Markdown/DOCX/PDF/Graph Manifest 等非 Dataset 产物 |
 | `outbox_events` | 与 Batch 同事务写入的异步事件出口 |
 
-**Legacy 表**：`task_steps/task_items/metadata_registry/metadata_audit/archived_*` 以及 `datasets.schema/schema_version/type`、`dataset_items.embedding` 等旧列仍被当前页面使用，V2 切流后删除，不做数据迁移。
+**Legacy 表**：`task_steps/task_items/metadata_registry/metadata_audit/archived_*` 以及 `datasets.schema/schema_version/type`、`dataset_items.embedding` 等旧列只被待删除 Legacy 代码引用；纯 V2 页面不依赖这些表，删除时不做数据迁移。
 
 **向量维度当前仍是硬约束**：V2 `retrieval_chunks.embedding` 暂定 `vector(1024)`。首期固定一个平台 embedding 模型；多维模型只能在检索层按维度分表/分区，不能把不同维度混进同一个 HNSW 索引。
 
@@ -432,17 +447,28 @@ Create immutable Schema
 
 同一 Batch 同一 payload 重试直接返回已提交结果；payload 不同则拒绝。第二个 Batch 从上一个 `current_seq + 1` 继续。对应测试见 `internal/app/pipeline/dataset_service_test.go` 和 `internal/infra/repository/pipeline_integration_test.go`。
 
-**V2 已落地的任务创建流程**：
+**V2 已落地的流程定义与任务派生流程**：
 
 ```text
-Validate TaskDefinition DAG/Ports/Refs
-  → 保存 immutable definition snapshot/hash
-  → 创建 Task 时校验必填输入端口
+/definitions/new
+  → 从空白编排，或载入一个可编辑模板起点
+  → 选择 Executor，按资源类型连接输入/输出并自动推导 depends_on
+  → 显式选择 Definition 输出
+  → Validate TaskDefinition DAG/Ports/Refs/Executor Config
+  → 发布 active TaskDefinition + immutable definition snapshot/hash
+  → 不创建、不运行 Task
+
+/definitions 或 /tasks/new?definition_id=<id>
+  → 选择 active TaskDefinition
+  → 按 Definition 输入端口绑定本次具体资源
+  → 校验必填端口、资源存在性和类型
+  → Dataset Alias 单次解析，Dataset/Retrieval Boundary 固化
   → 固化 Task.definition_snapshot
   → 原子写 TaskResourceBinding + 每个 step_id 的 StepRun
+  → 用户选择仅创建，或创建后显式 start
 ```
 
-**Legacy 需求导入主链路（当前页面仍在使用，待替换）**：
+**Legacy 需求导入主链路（已退出产品路由，仅供拆除对照）**：
 
 ```
 前端 /tasks/new → POST /api/tasks {type:requirement_import,title} 创建任务（播种 4 步骤）
@@ -503,9 +529,9 @@ Validate TaskDefinition DAG/Ports/Refs
 
 ### 4.3 API 速查
 
-V2 最小 API 已挂在 `/api/v2`：Schema/Dataset/Batch 创建与增量读、TaskDefinition/Task 创建、start/pause/resume/retry/approve、任务快照和 SSE。完整目录型/clone/Asset/Profile/Retrieval 端点仍按 [V2 方案 §11](./DATA_PIPELINE_V2_PLAN.md#11-api-v2-合同) 逐阶段开放。Handler 只调用 `internal/app/orchestrator`、`internal/app/pipeline` V2 用例，不回调 Legacy TaskManager，也不双写。
+V2 API 已挂在 `/api/v2`：Asset/Schema/Profile/Dataset/Batch、TaskDefinition/Task、Retrieval/Analysis/Artifact/Catalog/Archive 等产品能力均已开放。Handler 只调用对应 V2 app service，不回调 Legacy TaskManager，也不双写；完整合同以路由实现和 [V2 方案 §11](./DATA_PIPELINE_V2_PLAN.md#11-api-v2-合同) 为准。
 
-以下均为 Legacy `/api` 端点，只用于现有页面和切流对照：
+以下均为 Legacy `/api` 端点，只用于拆除和历史行为对照，当前产品页面不再调用：
 
 | 端点 | 类型 | 说明 |
 |------|------|------|
@@ -634,10 +660,10 @@ GET  /datasets/:id/items?after_seq=&through_seq=
 要求：
 
 - Handler 只调用 V2 app service，不调用 Legacy TaskManager 或 DatasetAdminService。
-- Schema 没有 PUT/PATCH；修改入口未来实现 clone。
+- Schema/Profile 没有 PUT/PATCH；当前可视化创建器通过新资源承载结构或合同变化，不做原地兼容编辑。
 - 创建 Task 时 Dataset Alias 必须解析为具体 DatasetID，并固化 through_seq。
 - SSE 使用统一 `{task_id,data}` 帧形状，但 V2 直接每秒对数据库快照做 diff；这样跨进程 Worker、Broker 丢帧和重连都不影响恢复。后续若为降延迟加 Broker，只能作为唤醒信号，不能替代数据库快照。
-- 在 V2 API 可独立跑通前，不删除 Legacy 页面；但不做新旧双写。
+- V2 页面已经独立跑通并完成切流；继续删除无路由引用的 Legacy 页面、Handler 和模型，不做新旧双写。
 
 ### 5.3 ✅ 第三个里程碑：产品规格清洗纵向切片
 
@@ -662,7 +688,7 @@ AssetSet → source.parse → llm.extract → data.transform → data.validate
 
 纵向切片已经完整闭环：`ParsedDocumentSet → RecordDraftSet → TransformedRecordSet → ValidationResultSet → ApprovedRecordSet → DatasetBatch` 均为一等资源。审核 API 只接收逐条 approve/edit/exclude 决定，服务端生成资源并记录修改、排除、审核人和确认依据；`data.publish` 只消费 ApprovedRecordSet，按 StepRun 幂等创建 Batch，并在同一提交事务前验证当前 attempt。
 
-前端已完成 `/v2/tasks` Task 目录、通用详情和审核工作台。ValidationResultSet API 聚合候选原值、字段置信度、转换 Diff、问题与来源锚点；前端按不可变 Schema 渲染类型化编辑控件并提交全量决定。2026-08-30 的 Playwright 真实浏览器验收完成了“编辑冲突记录 + 排除重复记录 → ApprovedRecordSet → Worker 原子发布 → SSE 收敛终态”，且发布 Item 保留完整审核 provenance。
+前端已完成 `/tasks` Task 目录、通用详情和审核工作台。ValidationResultSet API 聚合候选原值、字段置信度、转换 Diff、问题与来源锚点；前端按不可变 Schema 渲染类型化编辑控件并提交全量决定。2026-08-30 的真实浏览器验收完成了“编辑冲突记录 + 排除重复记录 → ApprovedRecordSet → Worker 原子发布 → SSE 收敛终态”，且发布 Item 保留完整审核 provenance。
 
 ### 5.4 ✅ 第四个里程碑：Query Dataset 增量处理
 
@@ -689,6 +715,9 @@ Batch、Dataset 汇总、Outbox 和 Cursor 推进。PostgreSQL + V2 Worker 集�
 5. [x] `agent.analyze`、通用资源审核、`data.analysis_publish`、`artifact.render`、`graph.build`。
 6. [x] 数据清洗入库、精准 + 语义索引、Bug 分析、产品方案生成、知识图谱构建五种无代码模板。
 7. [x] 纯 V2 前端路由、任务目录/详情、Definition、Dataset、元数据、检索、Artifact 和归档恢复。
+8. [x] 模板降级为可编辑 Definition 起点，并支持从空白手动组合 Executor、连接类型化数据端口和选择流程输出。
+9. [x] 发布流程与创建任务彻底分离；Definition 目录提供创建任务入口，Task 目录展示来源流程。
+10. [x] Schema/Profile 改为可视化表单操作，非技术用户无需直接编写 JSON。
 
 业务差异只能进入不可变 Profile、资源绑定和 TaskDefinition；不要从 Legacy `internal/app/bug/doc.go` 恢复 BugRunner，也不要在 Orchestrator 核心状态机增加业务类型分支。
 
@@ -699,7 +728,9 @@ Batch、Dataset 汇总、Outbox 和 Cursor 推进。PostgreSQL + V2 Worker 集�
 - `0012` 最终会被压平，不要围绕旧 `datasets.schema/schema_version`、`task_steps` 或 `metadata_registry` 设计新外键和新功能。
 - `DatasetService.CommitBatch` 当前逐条 INSERT，正确性优先。真实批量压测出现瓶颈后再改成参数化批量 SQL，必须保持同一事务与 seq 顺序。
 - `resource_id` 当前是通用 UUID，没有数据库级多态外键；资源类型和存在性应由 app service 校验。
-- 本机未配置 OpenSearch 时，BM25/Hybrid 构建和查询会明确失败；纯语义 pgvector 查询与可选 rerank 可独立工作。上线环境必须把 OpenSearch 纳入健康检查和部署门禁。
+- 本机 `config.yaml` 的 OpenSearch、embedding 和 SiliconFlow rerank 已做真实连通与混合检索验证；配置值属于本地密钥，不得写入仓库。上线环境仍必须把 OpenSearch 和 rerank 连通性纳入健康检查与部署门禁。
+- 2026-08-30 无代码自由编排真实验收：从空白发布 Definition `20d9d641-de77-4229-af95-c38efa33bfda`，派生并立即运行 Task `1236c6e2-ceb7-4a10-80dd-94e4916d4c5b`，成功产出 Retrieval Snapshot `63aae631-0884-44dc-8d2f-8b5f037f08ec`；浏览器 console 为 0 error / 0 warning。
+- 上述验收固定了产品路径：`/definitions/new` 编排并发布 → `/tasks/new?definition_id=...` 绑定资源并派生 → `/tasks`/详情运行；不要再把三个动作合并回模板页。
 - 全仓 `make test`、V2 targeted tests 和 PostgreSQL integration tests 应保持全绿。
 
 ### 5.7 Legacy 旧路线记录（只作业务背景，不按此继续开发）

@@ -1,9 +1,8 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { ProLayout } from '@ant-design/pro-components'
 import {
-  PlusCircleOutlined, DatabaseOutlined, AppstoreOutlined, UnorderedListOutlined,
-  SettingOutlined, ThunderboltFilled, InboxOutlined, BranchesOutlined,
-  SearchOutlined, FileDoneOutlined,
+  DatabaseOutlined, UnorderedListOutlined, ThunderboltFilled, InboxOutlined,
+  BranchesOutlined, RobotOutlined,
 } from '@ant-design/icons'
 import type React from 'react'
 import { Badge, Tooltip, Typography } from 'antd'
@@ -14,15 +13,11 @@ import type { SettingsView } from '../api/types'
 const menu = {
   path: '/',
   routes: [
-    { path: '/tasks/new', name: '创建无代码任务', icon: <PlusCircleOutlined /> },
-    { path: '/tasks', name: '任务运行', icon: <UnorderedListOutlined /> },
-    { path: '/definitions', name: '流程定义', icon: <BranchesOutlined /> },
-    { path: '/datasets', name: '数据集', icon: <DatabaseOutlined /> },
-    { path: '/metadata', name: '元数据与资源', icon: <AppstoreOutlined /> },
-    { path: '/retrieval', name: '混合检索', icon: <SearchOutlined /> },
-    { path: '/artifacts', name: '业务制品', icon: <FileDoneOutlined /> },
-    { path: '/archives', name: 'V2 归档', icon: <InboxOutlined /> },
-    { path: '/settings', name: '设置', icon: <SettingOutlined /> },
+    { path: '/agent', name: '数字大脑', icon: <RobotOutlined /> },
+    { path: '/definitions', name: '流程管理', icon: <BranchesOutlined /> },
+    { path: '/datasets', name: '数据管理', icon: <DatabaseOutlined /> },
+    { path: '/tasks', name: '任务管理', icon: <UnorderedListOutlined /> },
+    { path: '/archives', name: '归档管理', icon: <InboxOutlined /> },
   ],
 }
 
@@ -56,8 +51,8 @@ export default function AppLayout() {
       token={{ header: { colorHeaderTitle: '#111827' } }}
       avatarProps={{
         render: () => (
-          <Tooltip title={allOk ? '所有连接已配置' : '部分依赖未配置（见设置页）'}>
-            <Badge status={allOk ? 'success' : 'warning'} text={<Typography.Text style={{ color: '#6b7280' }}>连接 {okCount}/3</Typography.Text>} />
+          <Tooltip title={allOk ? '所有连接已配置；点击查看设置' : '部分依赖未配置；点击查看设置'}>
+            <Badge onClick={() => navigate('/settings')} style={{ cursor: 'pointer' }} status={allOk ? 'success' : 'warning'} text={<Typography.Text style={{ color: '#6b7280' }}>连接 {okCount}/3</Typography.Text>} />
           </Tooltip>
         ),
       }}

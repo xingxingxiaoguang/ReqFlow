@@ -21,6 +21,7 @@ import (
 	appcatalog "reqflow/internal/app/catalog"
 	apporchestrator "reqflow/internal/app/orchestrator"
 	apppipeline "reqflow/internal/app/pipeline"
+	appplatformagent "reqflow/internal/app/platformagent"
 	appretrieval "reqflow/internal/app/retrieval"
 	"reqflow/internal/infra/blobstore"
 	"reqflow/internal/infra/config"
@@ -140,6 +141,7 @@ func main() {
 	archiveRepo := repository.NewArchiveRepo(db)
 	metadataRepo := repository.NewMetadataRepo(db)
 	pipelineRepo := repository.NewPipelineRepo(db)
+	agentSessionRepo := repository.NewAgentSessionRepo(db)
 	// 数据集动态索引管理器：FTS/筛选索引随数据集 schema 建删（表达式索引）
 	datasetIndexer := repository.NewDatasetIndexer(db, cfg.FTS.TSConfig)
 
@@ -306,6 +308,17 @@ func main() {
 		logger.Error("V2 Review Pipeline 初始化失败", "err", err)
 		os.Exit(1)
 	}
+	v2Agent, err := appplatformagent.NewService(agentSessionRepo, llmClient, appplatformagent.Dependencies{
+		Definitions: v2Definitions, Runtime: v2Runtime, Tasks: v2TaskQueries,
+		Catalog: v2Catalog, Retrieval: v2Retrieval,
+	}, appplatformagent.Options{MaxIterations: cfg.LLM.AgentMaxIterations})
+	if err != nil {
+		logger.Error("ReqFlow Agent 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	if err := v2Agent.Recover(context.Background()); err != nil {
+		logger.Warn("ReqFlow Agent 会话恢复失败", "err", err)
+	}
 	workerCtx, stopWorker := context.WithCancel(context.Background())
 	workerDone := make(chan struct{})
 	go func() {
@@ -331,7 +344,7 @@ func main() {
 		V2Datasets: v2Datasets, V2QueryDatasets: v2QueryDatasets,
 		V2Assets: v2Assets, V2Extractions: v2Extractions, V2Cleaning: v2Cleaning, V2Review: v2Review,
 		V2Retrieval: v2Retrieval, V2Analysis: v2Analysis, V2Artifacts: v2Artifacts,
-		V2Catalog: v2Catalog,
+		V2Catalog: v2Catalog, V2Agent: v2Agent,
 		UploadDir: cfg.Workspace.UploadDir, MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})
 	mountStatic(engine)

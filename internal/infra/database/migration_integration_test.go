@@ -34,8 +34,8 @@ func TestIntegrationFreshMigration(t *testing.T) {
 	if err := target.Raw(`SELECT max(version) FROM schema_migrations`).Scan(&version).Error; err != nil {
 		t.Fatal(err)
 	}
-	if version != 16 {
-		t.Fatalf("latest migration=%d want=16", version)
+	if version != 19 {
+		t.Fatalf("latest migration=%d want=19", version)
 	}
 	var tables int64
 	if err := target.Raw(`SELECT count(*) FROM information_schema.tables

@@ -22,7 +22,7 @@ export function createDefinition(template: NoCodeTemplateId, name: string, value
   const common = {
     key: `${template}_${Date.now()}`,
     name,
-    description: `由无代码任务向导创建：${name}`,
+    description: `由可编辑流程模板创建：${name}`,
     status: 'active' as const,
   }
   if (template === 'data_clean_import') return {
