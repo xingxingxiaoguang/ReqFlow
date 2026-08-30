@@ -21,8 +21,9 @@ var validV2StepKinds = map[model.StepKind]bool{
 	model.StepKindSourceParse: true, model.StepKindLLMExtract: true,
 	model.StepKindDataTransform: true, model.StepKindDataValidate: true,
 	model.StepKindDataPublish: true, model.StepKindDataQueryDerive: true,
-	model.StepKindRetrievalBuild: true,
-	model.StepKindAgentAnalyze:   true, model.StepKindArtifactRender: true,
+	model.StepKindAnalysisPublish: true,
+	model.StepKindRetrievalBuild:  true,
+	model.StepKindAgentAnalyze:    true, model.StepKindArtifactRender: true,
 	model.StepKindGraphBuild: true, model.StepKindHumanReview: true,
 }
 
@@ -33,6 +34,7 @@ var validResourceTypes = map[model.ResourceType]bool{
 	model.ResourceDataset: true, model.ResourceDatasetBoundary: true,
 	model.ResourceDatasetBatch: true, model.ResourcePipelineCursor: true,
 	model.ResourceRetrievalSnapshot: true,
+	model.ResourceAnalysisResult:    true,
 	model.ResourceArtifact:          true,
 }
 

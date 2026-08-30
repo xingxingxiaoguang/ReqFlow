@@ -145,6 +145,43 @@ func (s *RuntimeService) ApproveHumanStep(ctx context.Context, taskID, stepID st
 	return s.scheduler.Schedule(ctx, taskID)
 }
 
+// ApprovePassThrough 处理不改写资源的通用人工 Gate。调用方只声明输出端口应放行
+// 哪个受信输入端口，不能提交资源 ID，因此审核接口不会成为资源边界绕过通道。
+func (s *RuntimeService) ApprovePassThrough(ctx context.Context, taskID, stepID string,
+	outputInputs map[string]string) error {
+	human, err := s.GetHumanStepContext(ctx, taskID, stepID)
+	if err != nil {
+		return err
+	}
+	if len(outputInputs) == 0 && len(human.Definition.Inputs) == 1 && len(human.Definition.Outputs) == 1 {
+		for output := range human.Definition.Outputs {
+			for input := range human.Definition.Inputs {
+				outputInputs = map[string]string{output: input}
+			}
+		}
+	}
+	if len(outputInputs) != len(human.Definition.Outputs) {
+		return fmt.Errorf("人工 Gate 必须为每个输出声明一个受信输入")
+	}
+	outputs := make(map[string]model.ResourceRef, len(outputInputs))
+	for outputPort, inputPort := range outputInputs {
+		expectedType, exists := human.Definition.Outputs[outputPort]
+		if !exists {
+			return fmt.Errorf("人工 Gate 不存在输出端口 %s", outputPort)
+		}
+		input, exists := human.Inputs[inputPort]
+		if !exists {
+			return fmt.Errorf("人工 Gate 不存在输入端口 %s", inputPort)
+		}
+		if input.ResourceType != expectedType {
+			return fmt.Errorf("人工 Gate %s 输出类型 %s 与输入 %s 类型 %s 不一致",
+				outputPort, expectedType, inputPort, input.ResourceType)
+		}
+		outputs[outputPort] = input
+	}
+	return s.ApproveHumanStep(ctx, taskID, stepID, StepResult{Outputs: outputs})
+}
+
 func sameStepOutputs(stepRunID string, expected, actual []model.StepResourceBinding) bool {
 	byPort := make(map[string]model.StepResourceBinding)
 	for _, binding := range actual {

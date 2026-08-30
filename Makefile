@@ -31,6 +31,7 @@ lint-arch:
 
 # 密钥护栏：扫描 git 追踪文件中的疑似泄漏（敏感字段非空值 / 带密码 DSN）
 check-secrets:
+	bash scripts/secret-check-test.sh
 	bash scripts/secret-check.sh tracked
 
 # 一次性初始化（clone 后执行）：启用 git 钩子目录

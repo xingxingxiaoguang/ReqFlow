@@ -1,13 +1,13 @@
 # ReqFlow 异构数据管线 V2 落地方案
 
-> 状态：实施中（阶段 A、B、C、D、E 已完成；下一阶段为业务任务）
+> 状态：阶段 A、B、C、D、E、F 已完成；进入上线前质量与部署门禁阶段
 > 日期：2026-08-30
 > 适用范围：ReqFlow 当前未上线版本
 > 关联文档：[产品总纲](./PRODUCT.md) · [交接文档](./HANDOVER.md) · [技术债台账](./DEBT.md)
 
 ## 0. 实施状态
 
-截至 2026-08-30，阶段 A 核心底座、阶段 B Orchestrator、阶段 C 产品规格清洗纵向切片、阶段 D Query Dataset 增量派生和阶段 E 混合检索已经落地：
+截至 2026-08-30，阶段 A 核心底座、阶段 B Orchestrator、阶段 C 产品规格清洗纵向切片、阶段 D Query Dataset 增量派生、阶段 E 混合检索和阶段 F 无代码业务任务已经落地：
 
 - [x] Asset、ParsedDocument、不可变 DatasetSchemaDefinition、DatasetBatch、ResourceBinding、TaskDefinition、StepRun、RetrievalSnapshot 和 Artifact 领域模型。
 - [x] JSON Schema 受控子集校验、规范化和稳定哈希。
@@ -34,6 +34,9 @@
 - [x] `human.review` 审核用例：全量决定覆盖、服务端生成不可变 ApprovedRecordSet、编辑重校验、审核重试幂等和 provenance 固化。
 - [x] `data.publish` Executor：只消费 ApprovedRecordSet，按 StepRun 幂等创建 Batch，提交前 attempt fencing，并复用 Dataset/Item/Outbox 原子事务。
 - [x] V2 Task 目录与通用 Task Detail：独立于 Legacy 查询，按定义快照展示步骤名称/Executor、资源端口、生命周期操作和 GET SSE 快照收敛。
+- [x] 不可变 AnalysisProfile、AnalysisResult、Artifact，以及 `agent.analyze`、`data.analysis_publish`、`artifact.render`、`graph.build` 四种通用 Executor。
+- [x] 数据清洗入库、精准 + 语义索引、Bug 分析、产品方案生成、知识图谱构建五种无代码模板；业务差异仅由资源绑定、Profile 和 TaskDefinition 表达。
+- [x] 纯 V2 前端信息架构：任务、定义、数据集、元数据、混合检索、制品和归档均只调用 `/api/v2`，旧内置任务入口已从路由和导航移除。
 - [x] Schema 驱动审核工作台：逐条 approve/edit/exclude、类型化编辑、置信度、确定性转换 Diff、校验问题、provenance、不可变审核回放和发布结果展示。
 - [x] 前端路由级 code splitting，消除单一 1.5 MB 首载 Chunk。
 - [x] `data.query_derive` Executor：固定 Base Dataset `through_seq`，按 PipelineCursor 只读取未消费 `commit_seq`，确定性展开语义单元并生成 aliases/keywords/facets/source_refs。
@@ -951,7 +954,7 @@ Agent 无权通过参数传入任意 Dataset ID，也不能绕过 Snapshot 直�
 - Agent 不能调用 `data.publish`。
 - Dataset Batch 提交、Artifact 正式发布和外部系统写操作必须经过 Human Review 或显式审批策略。
 
-## 10. 三类业务任务模板
+## 10. 五类业务任务模板
 
 ### 10.1 `product_spec_clean`
 
@@ -1437,13 +1440,29 @@ retrieval_snapshot_id
 
 ### 阶段 F：业务任务
 
-顺序：
+状态：已完成。业务任务统一由不可变资源和 TaskDefinition DAG 装配，不增加业务专用 Runner，也不兼容旧任务流程。
 
-1. `bug_analysis`。
-2. `product_spec_generate`。
-3. `knowledge_graph_build`。
+范围：
 
-每个任务都必须使用已有端口和 Executor 组合。只有出现无法表达的通用能力时才增加新 Executor Kind，禁止为每个业务任务复制一套 Runner。
+- [x] `AnalysisProfile` / `AnalysisResult` 领域模型、Repository、Service 与 V2 API。
+- [x] `agent.analyze`：以 RetrievalSnapshot + AnalysisProfile 运行受 KnowledgeScope 限制的通用 Agent，并固化模型与 ProfileHash 边界。
+- [x] 通用资源人工 Gate：审核端只决定是否放行既有 Step 输出，不能提交或伪造资源 ID。
+- [x] `data.analysis_publish`：把通过审核的结构化分析结果按目标 Dataset 当前边界原子发布为 DatasetBatch。
+- [x] `artifact.render`：从 AnalysisResult 的固定 JSON 路径生成内容寻址 Markdown/JSON Artifact。
+- [x] `graph.build`：引用节点 Batch、关系 Batch 和 AnalysisResult 生成可追溯 Graph Manifest，不复制实体/关系抽取逻辑。
+- [x] 五种无代码模板：数据清洗入库、精准 + 语义索引、Bug 分析、产品方案生成、知识图谱构建。
+- [x] V2 Catalog 和归档/恢复 API；TaskDefinition、Dataset、Schema/Profile、Artifact 均有 V2 浏览入口。
+- [x] 前端路由、布局和操作全部切换为 V2；Legacy 内置任务、数据集、元数据和归档页面不再暴露。
+
+验收：
+
+- [x] 产品方案真实浏览器端到端完成 `agent.analyze → human.review → artifact.render`，下载内容 SHA-256 与 Artifact Boundary 一致。
+- [x] Bug 分析通过真实 UI 创建 `agent.analyze → human.review → data.analysis_publish + artifact.render` 四步 DAG。
+- [x] 知识图谱通过真实 UI 创建 `agent.analyze → human.review → publish_nodes + publish_edges → graph.build` 五步 DAG，并固化两个目标 Dataset 边界。
+- [x] 五种模板均可从同一无代码入口创建，通用 Task Detail 按定义快照展示和驱动操作。
+- [x] Task 归档、归档目录展示和恢复通过真实浏览器验收。
+
+架构约束继续保持：只有出现无法表达的通用平台能力时才增加新 Executor Kind，禁止为业务模板复制 Runner 或在核心状态机内增加业务分支。
 
 ## 20. 建议的提交拆分
 
@@ -1458,7 +1477,7 @@ retrieval_snapshot_id
 7. `query dataset pipeline`：Cursor 和增量语义处理。
 8. `hybrid retrieval`：OpenSearch、pgvector、RRF 和评测。
 9. `agent knowledge tools`：Scope、工具、引用和审计。
-10. `bug analysis task`：首个消费检索层的业务闭环。
+10. `no-code business tasks`：分析、审核、发布、制品和图谱的通用业务闭环。
 
 ## 21. 完成定义
 
@@ -1471,6 +1490,6 @@ V2 基础改造完成必须同时满足：
 - BM25 和 Vector 覆盖相同 source_seq 后才对外提供 Hybrid 查询。
 - Agent 查询受 KnowledgeScope 限制，回答携带可验证来源。
 - 服务重启、任务暂停和执行重试不会重复提交 Batch。
-- Bug 分析能够使用产品规格 RetrievalSnapshot，产出结构化分析 DatasetBatch 和报告 Artifact。
+- Bug 分析能够使用产品规格 RetrievalSnapshot，产出结构化分析 DatasetBatch 和报告 Artifact；产品方案与知识图谱只通过 Profile + TaskDefinition 复用同一组通用 Executor。
 
 满足这些条件后，再评估 UPSERT/Tombstone、数据历史版本、分布式 Worker、对象存储、图数据库和多租户 ACL；在此之前不提前支付这些复杂度。

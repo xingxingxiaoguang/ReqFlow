@@ -120,7 +120,7 @@ func (s *DatasetQueryService) Query(ctx context.Context, q DatasetQuery) ([]Quer
 }
 
 // SearchFTS 数据集内全文检索（PG 表达式 tsvector）：FTS 字段取自数据集自身 schema
-//（字段定义归属数据集），多字段 OR 命中动态表达式索引，按相关度排序。
+// （字段定义归属数据集），多字段 OR 命中动态表达式索引，按相关度排序。
 func (s *DatasetQueryService) SearchFTS(ctx context.Context, datasetID, q string, n int) ([]model.DatasetItem, error) {
 	ds, err := s.datasets.GetDataset(ctx, datasetID)
 	if err != nil {

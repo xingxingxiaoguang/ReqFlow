@@ -164,11 +164,11 @@ const (
 
 // AssistantEvent 流事件。Message 指向正在构建中的 assistant 消息（增量期间为部分态）。
 type AssistantEvent struct {
-	Type         EventType  `json:"type"`
-	Delta        string     `json:"delta,omitempty"` // text/thinking/toolcall 参数增量
-	ContentIndex int        `json:"content_index,omitempty"`
-	ToolCall     *ToolCall  `json:"tool_call,omitempty"` // toolcall_end 携带
-	Message      *Message   `json:"message"`
+	Type         EventType `json:"type"`
+	Delta        string    `json:"delta,omitempty"` // text/thinking/toolcall 参数增量
+	ContentIndex int       `json:"content_index,omitempty"`
+	ToolCall     *ToolCall `json:"tool_call,omitempty"` // toolcall_end 携带
+	Message      *Message  `json:"message"`
 }
 
 // LLMClient 对话模型客户端（pi StreamFunction 的 Go 化契约）。

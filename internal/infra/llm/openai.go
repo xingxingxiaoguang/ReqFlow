@@ -6,6 +6,7 @@
 //   - tool_calls 流式增量按 index 聚合参数
 //   - finish_reason 映射；流结束缺 finish_reason 时按是否有工具调用推断（宽松偏离）
 //   - assistant 回放为纯文本字符串（部分端点会镜像内容块结构导致递归嵌套）
+//
 // 不移植：厂商 compat 矩阵、模型注册表、会话亲和头、自定义 grammar 工具。
 package llm
 
@@ -151,10 +152,10 @@ func (c *openaiClient) newRequest(ctx context.Context, cc *port.Context, stream 
 
 // toolCallAgg 流式工具调用聚合缓冲（pi ensureToolCallBlock 的对应物）。
 type toolCallAgg struct {
-	order  int
-	id     string
-	name   string
-	args   strings.Builder
+	order int
+	id    string
+	name  string
+	args  strings.Builder
 }
 
 // mapFinishReason pi mapStopReason 子集。
@@ -386,9 +387,9 @@ func (c *openaiClient) Complete(ctx context.Context, cc *port.Context) (*port.Me
 		Choices []struct {
 			FinishReason string `json:"finish_reason"`
 			Message      struct {
-				Content          string `json:"content"`
-				ReasoningContent string `json:"reasoning_content"`
-				Reasoning        string `json:"reasoning"`
+				Content          string        `json:"content"`
+				ReasoningContent string        `json:"reasoning_content"`
+				Reasoning        string        `json:"reasoning"`
 				ToolCalls        []apiToolCall `json:"tool_calls"`
 			} `json:"message"`
 		} `json:"choices"`

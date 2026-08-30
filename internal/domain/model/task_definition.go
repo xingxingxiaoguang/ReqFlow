@@ -14,6 +14,7 @@ const (
 	StepKindDataQueryDerive StepKind = "data.query_derive"
 	StepKindRetrievalBuild  StepKind = "retrieval.build"
 	StepKindAgentAnalyze    StepKind = "agent.analyze"
+	StepKindAnalysisPublish StepKind = "data.analysis_publish"
 	StepKindArtifactRender  StepKind = "artifact.render"
 	StepKindGraphBuild      StepKind = "graph.build"
 	StepKindHumanReview     StepKind = "human.review"

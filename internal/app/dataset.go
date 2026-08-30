@@ -106,9 +106,9 @@ type WriteStats struct {
 
 // PreparedWrite 两阶段写入的中间产物：Prepare（预览）与 Write（执行）共享同一分桶。
 type PreparedWrite struct {
-	Target DatasetTarget
-	Schema model.DatasetSchema
-	Items  []PreparedItem
+	Target  DatasetTarget
+	Schema  model.DatasetSchema
+	Items   []PreparedItem
 	preview WritePreview
 }
 

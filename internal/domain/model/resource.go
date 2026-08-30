@@ -19,6 +19,7 @@ const (
 	ResourceDatasetBatch       ResourceType = "dataset_batch"
 	ResourcePipelineCursor     ResourceType = "pipeline_cursor"
 	ResourceRetrievalSnapshot  ResourceType = "retrieval_snapshot"
+	ResourceAnalysisResult     ResourceType = "analysis_result"
 	ResourceArtifact           ResourceType = "artifact"
 )
 
@@ -78,6 +79,21 @@ type DatasetBoundary struct {
 type RetrievalBoundary struct {
 	RetrievalSnapshotID string `json:"retrieval_snapshot_id"`
 	SourceSeq           int64  `json:"source_seq"`
+}
+
+// AnalysisResultBoundary 固化 Agent 使用的 Profile 合同与模型身份。
+type AnalysisResultBoundary struct {
+	AnalysisResultID string `json:"analysis_result_id"`
+	ProfileID        string `json:"profile_id"`
+	ProfileHash      string `json:"profile_hash"`
+	Model            string `json:"model"`
+}
+
+// ArtifactBoundary 让下游不读取 Blob 也能校验产物身份。
+type ArtifactBoundary struct {
+	ArtifactID  string `json:"artifact_id"`
+	Kind        string `json:"kind"`
+	ContentHash string `json:"content_hash"`
 }
 
 // ParsedDocumentsBoundary 描述 source.parse 输出 Manifest 的解析身份与原始集合。

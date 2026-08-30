@@ -9,12 +9,12 @@ import (
 
 // Overview 仪表盘概览。
 type Overview struct {
-	Projects      int64        `json:"projects"`
-	WorkItems     int64        `json:"workItems"`
-	Datasets      int64        `json:"datasets"`
-	DatasetItems  int64        `json:"datasetItems"`
-	Tasks         int64        `json:"tasks"`
-	RecentTasks   []model.Task `json:"recentTasks"`
+	Projects       int64           `json:"projects"`
+	WorkItems      int64           `json:"workItems"`
+	Datasets       int64           `json:"datasets"`
+	DatasetItems   int64           `json:"datasetItems"`
+	Tasks          int64           `json:"tasks"`
+	RecentTasks    []model.Task    `json:"recentTasks"`
 	RecentDatasets []model.Dataset `json:"recentDatasets"`
 }
 

@@ -2,7 +2,6 @@ package retrieval
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"reqflow/internal/domain/model"
@@ -105,9 +104,6 @@ func (s *Service) GetSnapshotView(ctx context.Context, id string) (*SnapshotView
 
 func (s *Service) ListSnapshotViews(ctx context.Context, datasetID, profileID, status string,
 	limit int) ([]SnapshotView, error) {
-	if datasetID == "" {
-		return nil, fmt.Errorf("dataset_id 不能为空")
-	}
 	snapshots, err := s.repo.ListRetrievalSnapshots(ctx, datasetID, profileID, status, limit)
 	if err != nil {
 		return nil, err

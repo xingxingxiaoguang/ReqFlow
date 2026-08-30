@@ -55,6 +55,7 @@ export const STEP_KIND_LABEL: Record<string, string> = {
   'data.query_derive': 'Query Dataset 增量派生',
   'retrieval.build': '检索构建',
   'agent.analyze': '智能分析',
+  'data.analysis_publish': '分析数据发布',
   'artifact.render': '产物渲染',
   'graph.build': '图谱构建',
 }

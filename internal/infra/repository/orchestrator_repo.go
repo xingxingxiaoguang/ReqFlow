@@ -423,7 +423,7 @@ func (r *PipelineRepo) ListOrchestratorTasks(ctx context.Context, filter port.Or
 	if limit <= 0 || limit > 200 {
 		limit = 50
 	}
-	query := r.db.WithContext(ctx).Where("definition_id IS NOT NULL")
+	query := r.db.WithContext(ctx).Where("definition_id IS NOT NULL AND archived_at IS NULL")
 	if filter.WorkspaceID != "" {
 		query = query.Where("workspace_id = ?", filter.WorkspaceID)
 	}

@@ -11,6 +11,7 @@ type Artifact struct {
 	ContentHash     string
 	SourceTaskID    string
 	SourceStepRunID string
+	ProducerAttempt int
 	Metadata        string
 	CreatedAt       time.Time
 }

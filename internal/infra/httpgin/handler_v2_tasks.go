@@ -104,6 +104,22 @@ func (h *handlers) v2ApproveStep(c *gin.Context) {
 	h.v2GetTask(c)
 }
 
+func (h *handlers) v2ApproveResourceStep(c *gin.Context) {
+	var input struct {
+		OutputInputs map[string]string `json:"output_inputs,omitempty"`
+	}
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "资源审核决定 JSON 非法")
+		return
+	}
+	if err := h.svc.V2Runtime.ApprovePassThrough(c.Request.Context(), c.Param("id"),
+		c.Param("step_id"), input.OutputInputs); err != nil {
+		fail(c, http.StatusConflict, err.Error())
+		return
+	}
+	h.v2GetTask(c)
+}
+
 // V2 SSE 以数据库快照为事实源：每秒 diff 一次，变化时推 snapshot；即使事件丢失、
 // 服务切实例或客户端重连，也能恢复完整状态。心跳和快照在同一 goroutine 写响应。
 func (h *handlers) v2TaskEvents(c *gin.Context) {

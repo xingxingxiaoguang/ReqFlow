@@ -48,7 +48,7 @@ func TestPlanIndexesFTSAndFilter(t *testing.T) {
 
 func TestPlanIndexesRejectsInvalidKey(t *testing.T) {
 	schema := model.DatasetSchema{Fields: []model.FieldSpec{
-		{Key: "bad key", FTS: true},   // 空格：非法标识
+		{Key: "bad key", FTS: true}, // 空格：非法标识
 		{Key: "ok_key", FTS: true},
 	}}
 	want := planIndexes("ds-1", schema, "simple")

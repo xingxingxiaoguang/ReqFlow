@@ -53,6 +53,117 @@ export interface V2TaskSnapshot {
   step_outputs: Record<string, V2Resource[]>
 }
 
+export interface V2PortDefinition {
+  resource_type: string
+  required?: boolean
+  description?: string
+}
+
+export interface V2StepDefinition {
+  id: string
+  name: string
+  kind: string
+  depends_on?: string[]
+  inputs?: Record<string, string>
+  outputs?: Record<string, string>
+  config?: Record<string, unknown>
+}
+
+export interface V2TaskDefinition {
+  id: string
+  workspace_id: string
+  key: string
+  name: string
+  description?: string
+  status: 'draft' | 'active' | 'retired'
+  input_ports: Record<string, V2PortDefinition>
+  output_ports?: Record<string, V2PortDefinition>
+  output_bindings?: Record<string, string>
+  steps: V2StepDefinition[]
+  definition_hash: string
+  created_at: string
+  updated_at: string
+}
+
+export interface V2DatasetBatch {
+  id: string
+  dataset_id: string
+  source_task_id?: string
+  source_step_run_id?: string
+  status: string
+  item_count: number
+  from_seq: number
+  to_seq: number
+  payload_hash?: string
+  created_at: string
+  committed_at?: string
+}
+
+export interface V2AssetSet {
+  id: string
+  workspace_id: string
+  name: string
+  created_by?: string
+  created_at: string
+}
+
+export interface V2ExtractionProfile {
+  id: string
+  workspace_id: string
+  name: string
+  target_schema_id: string
+  record_granularity: string
+  profile_hash: string
+  created_at: string
+}
+
+export interface V2RetrievalProfile {
+  id: string
+  workspace_id: string
+  name: string
+  dataset_schema_id: string
+  profile_hash: string
+  created_at: string
+  lexical: Record<string, unknown>
+  vector: Record<string, unknown>
+  fusion: Record<string, unknown>
+  filter_fields: string[]
+}
+
+export interface V2RetrievalSnapshot {
+  id: string
+  dataset_id: string
+  retrieval_profile_id: string
+  source_seq: number
+  status: string
+  lexical_count: number
+  vector_count: number
+  created_at: string
+  activated_at?: string
+}
+
+export interface V2AnalysisProfile {
+  id: string
+  workspace_id: string
+  name: string
+  instruction: string
+  output_schema: V2JSONSchema
+  profile_hash: string
+  created_at: string
+}
+
+export interface V2Artifact {
+  id: string
+  workspace_id: string
+  kind: string
+  name: string
+  content_hash: string
+  source_task_id: string
+  source_step_run_id: string
+  metadata: Record<string, unknown>
+  created_at: string
+}
+
 export interface JSONSchemaProperty {
   type?: string | string[]
   title?: string

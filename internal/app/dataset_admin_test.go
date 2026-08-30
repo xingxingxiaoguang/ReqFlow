@@ -12,7 +12,7 @@ import (
 
 // fakeDatasetIndexer 记录同步/回收调用的索引桩（验证 schema 变更触达索引管理器）。
 type fakeDatasetIndexer struct {
-	synced []string
+	synced  []string
 	dropped []string
 }
 

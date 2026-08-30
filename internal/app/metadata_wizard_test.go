@@ -45,7 +45,7 @@ func wizardInput() TaskTypeWizardInput {
 	return TaskTypeWizardInput{
 		Type: "test_review", DatasetType: "review",
 		Schema: sc, Workflow: wf,
-		Role:   "你是评审助手。\n\n{field_spec}\n\n提取所有 issue。",
+		Role:    "你是评审助手。\n\n{field_spec}\n\n提取所有 issue。",
 		Example: `[{"title":"空指针","severity":"High","finding":"未判空"}]`,
 		Summary: "[向导] 测试注册",
 	}

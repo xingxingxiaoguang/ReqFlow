@@ -94,7 +94,7 @@ func (r *DatasetIndexer) listIndexes(ctx context.Context, datasetID string) (map
 	if err := r.db.WithContext(ctx).Raw(
 		`SELECT indexname, indexdef FROM pg_indexes
 		 WHERE schemaname = current_schema() AND tablename = 'dataset_items'
-		   AND indexname LIKE '` + dsIndexPrefix + `%'
+		   AND indexname LIKE '`+dsIndexPrefix+`%'
 		   AND indexdef LIKE ?`, "%"+datasetID+"%").Scan(&rows).Error; err != nil {
 		return nil, err
 	}

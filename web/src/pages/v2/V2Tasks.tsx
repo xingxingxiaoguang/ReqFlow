@@ -4,7 +4,7 @@ import {
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
-  FileSearchOutlined, PauseCircleOutlined, PlayCircleOutlined, RocketOutlined,
+  FileSearchOutlined, PauseCircleOutlined, PlayCircleOutlined, PlusOutlined, RocketOutlined,
 } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
@@ -64,7 +64,7 @@ export default function V2Tasks() {
       title: '操作', width: 240,
       render: (_, task) => (
         <Space wrap>
-          <Button size="small" icon={<FileSearchOutlined />} onClick={() => navigate(`/v2/tasks/${task.id}`)}>详情</Button>
+          <Button size="small" icon={<FileSearchOutlined />} onClick={() => navigate(`/tasks/${task.id}`)}>详情</Button>
           {task.status === 'pending' && (
             <Button size="small" type="primary" loading={actingId === task.id} icon={<RocketOutlined />} onClick={() => transition(task, 'start')}>启动</Button>
           )}
@@ -81,13 +81,13 @@ export default function V2Tasks() {
 
   return (
     <Card
-      title={<Space><Text strong>V2 数据管线</Text><Tag color="geekblue">新架构</Tag></Space>}
+      title={<Space><Text strong>无代码任务运行</Text><Tag color="geekblue">V2</Tag></Space>}
       extra={(
-        <Segmented
+        <Space><Segmented
           options={FILTERS.map((item) => item.label)}
           value={FILTERS.find((item) => item.value === status)?.label ?? '全部'}
           onChange={(value) => setStatus(FILTERS.find((item) => item.label === value)?.value)}
-        />
+        /><Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/tasks/new')}>创建任务</Button></Space>
       )}
     >
       <Table<V2Task>

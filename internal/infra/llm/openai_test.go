@@ -161,7 +161,7 @@ func TestOpenAIComplete(t *testing.T) {
 			"choices": []map[string]any{{
 				"finish_reason": "tool_calls",
 				"message": map[string]any{
-					"content":          "正文",
+					"content":           "正文",
 					"reasoning_content": "推理",
 					"tool_calls": []map[string]any{{
 						"id": "c1", "type": "function",

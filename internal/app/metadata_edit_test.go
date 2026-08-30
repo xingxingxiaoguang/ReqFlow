@@ -136,7 +136,7 @@ func requirementSeed(t *testing.T) model.DatasetSchema {
 func TestUpdateSchemaCompatibleChangeTakesEffectImmediately(t *testing.T) {
 	svc, repo := newEditSvc(t)
 	next := requirementSeed(t)
-	next.Fields[4].Prompt = "新的优先级提取说明" // priority：纯文案变更（兼容）
+	next.Fields[4].Prompt = "新的优先级提取说明"                               // priority：纯文案变更（兼容）
 	next.Fields[4].Enum = []string{"High", "Medium", "Low", "Urgent"} // 枚举扩值（兼容）
 
 	res, err := svc.UpdateSchema(context.Background(), SchemaUpdateInput{
@@ -487,7 +487,7 @@ func TestImportRunsSameGuards(t *testing.T) {
 		TaskTypes: []MetadataImportItem{
 			{Type: model.TaskTypeRequirementImport, Schema: &narrowed}, // 被拦截
 			{Type: model.TaskTypeRequirementImport, Schema: &okSchema}, // 落库
-			{Type: "no_such", Schema: &okSchema},                        // 未注册
+			{Type: "no_such", Schema: &okSchema},                       // 未注册
 		},
 	})
 	if err != nil {

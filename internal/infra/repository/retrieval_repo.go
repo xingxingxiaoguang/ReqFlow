@@ -142,7 +142,10 @@ func (r *PipelineRepo) ListRetrievalSnapshots(ctx context.Context, datasetID, pr
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
-	query := r.db.WithContext(ctx).Where("dataset_id = ?", datasetID)
+	query := r.db.WithContext(ctx)
+	if strings.TrimSpace(datasetID) != "" {
+		query = query.Where("dataset_id = ?", datasetID)
+	}
 	if strings.TrimSpace(profileID) != "" {
 		query = query.Where("retrieval_profile_id = ?", profileID)
 	}

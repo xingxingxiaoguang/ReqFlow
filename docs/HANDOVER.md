@@ -3,7 +3,7 @@
 > 面向下一个接手开发的同学。本文只回答四件事：**项目现在是什么、怎么跑起来、改代码必须知道的上下文、接手后干什么**。
 > 产品定位、方向性决策与「重复人工任务 → AI 驱动 Task」的抽离范式见 [PRODUCT.md](./PRODUCT.md)；技术实现细节以本文件为准。
 
-> **2026-08-30 交接状态**：项目正在从固定的需求导入工作台重建为异构数据管线 V2。阶段 A、B、C、D、E 已完成，下一里程碑是 `bug_analysis` 等业务任务。V2 不保留旧数据库、旧 API、旧前端或旧任务流程兼容；完整设计和阶段验收见 [DATA_PIPELINE_V2_PLAN.md](./DATA_PIPELINE_V2_PLAN.md)。本文中标为“Legacy”的内容只用于拆除当前仍可运行的旧路径，不是后续扩展入口。
+> **2026-08-30 交接状态**：异构数据管线 V2 的阶段 A、B、C、D、E、F 已完成。当前系统以五种无代码任务为产品入口，不保留旧数据库、旧 API、旧前端或旧任务流程兼容；完整设计和阶段验收见 [DATA_PIPELINE_V2_PLAN.md](./DATA_PIPELINE_V2_PLAN.md)。本文中标为“Legacy”的内容只用于识别待删除代码，不是后续扩展入口。
 
 ---
 
@@ -14,11 +14,12 @@
 - **V2 已有最小 API**：`/api/v2` 已开放 Asset/AssetSet/ParsedDocument、ExtractionProfile、RecordDraft/Transformed/Validation/Approved Manifest、Schema/Dataset/Batch、TaskDefinition/Task 生命周期、任务快照和 SSE；V2 Worker 已注册 `source.parse`、`llm.extract`、`data.transform`、`data.validate` 和 `data.publish`。
 - **Stage C 后端已闭环**：内容寻址解析、Schema 驱动抽取、确定性转换/校验、不可变人工审核资源、幂等原子发布、完整 provenance 和 attempt fencing 已打通真实 HTTP → PostgreSQL → Worker 集成测试。
 - **输入绑定已收口**：Task API 可用 `resource_id` 或 Dataset `resource_alias` 定位输入；应用层验证资源存在性，Alias 只在创建时解析一次，`dataset_boundary` 自动固化 `through_seq`，Retrieval Snapshot 自动固化 `source_seq`。
-- **V2 前端入口已接通**：`/v2/tasks` 提供独立 Task 目录、TaskDefinition 快照驱动的通用详情、GET SSE 自动重连、Schema 驱动审核与不可变审核/发布回放。Legacy 页面仍可运行，但不要继续在旧路径上增加业务类型。
+- **V2 前端已完成切换**：`/tasks`、`/tasks/new`、`/definitions`、`/datasets`、`/metadata`、`/retrieval`、`/artifacts`、`/archives` 均使用 V2 API；旧内置任务、数据集、元数据和归档页面已从路由与导航移除。
 - **Stage D 已闭环**：`data.query_derive` 按 Base Dataset Boundary + PipelineCursor 增量读取，确定性展开语义单元并生成标准 Query Item；Query Batch、Dataset 位点、Outbox 和 Cursor 在同一事务提交，失败不推进 Cursor。
 - **Stage E 已闭环**：不可变 RetrievalProfile、`retrieval.build` 状态机、OpenSearch BM25、pgvector Chunk、查询级加权 RRF/阈值/召回数、SiliconFlow rerank 和 KnowledgeScope Agent 工具已经落地。
+- **Stage F 已闭环**：不可变 AnalysisProfile/AnalysisResult/Artifact，通用分析、资源审核、分析发布、制品渲染和图谱 Manifest Executor 已落地；五种无代码模板由 Profile + TaskDefinition 组合，不存在业务专用 Runner。
 - **可复用底座**：LLM Provider、Agent Loop、工具调用、会话序列化、`ask_human`、SSE persist-then-publish 和前端重连机制继续复用，但要通过 V2 Executor/Orchestrator 接入。
-- **下一步**：使用 RetrievalSnapshot 和知识工具实现 `bug_analysis`，再推进规格书 Artifact 与知识图谱。执行顺序见 §5。
+- **下一步**：进入上线前门禁，补业务标注检索评测集、部署 OpenSearch、执行容量/故障恢复测试，并持续删除未被 V2 路由引用的 Legacy 代码。
 - **仓库**：`/Users/xxxg/demo/ReqFlow`。操作前始终先看 `git status --short`，不要回退不属于当前任务的修改。
 
 ## 2. 怎么接手：跑起来
@@ -677,7 +678,7 @@ Batch、Dataset 汇总、Outbox 和 Cursor 推进。PostgreSQL + V2 Worker 集�
 
 这条链路不依赖 Legacy TaskManager、固定四步 Workflow 或旧任务状态；旧任务流程无需兼容。
 
-### 5.5 后续：混合检索和业务任务
+### 5.5 ✅ 第五、六个里程碑：混合检索和无代码业务任务
 
 顺序固定：
 
@@ -685,18 +686,20 @@ Batch、Dataset 汇总、Outbox 和 Cursor 推进。PostgreSQL + V2 Worker 集�
 2. [x] RetrievalProfile 校验和 RetrievalSnapshot 构建状态机。
 3. [x] OpenSearch BM25、pgvector Chunk、加权 RRF HybridSearchService 和可选 rerank。
 4. [x] `list_knowledge_sources/search_knowledge/get_knowledge_item` Agent 工具、KnowledgeScope 和审计。
-5. [ ] `bug_analysis`，然后是规格书 Artifact，最后才是知识图谱节点/边。
+5. [x] `agent.analyze`、通用资源审核、`data.analysis_publish`、`artifact.render`、`graph.build`。
+6. [x] 数据清洗入库、精准 + 语义索引、Bug 分析、产品方案生成、知识图谱构建五种无代码模板。
+7. [x] 纯 V2 前端路由、任务目录/详情、Definition、Dataset、元数据、检索、Artifact 和归档恢复。
 
-不要直接从 Legacy `internal/app/bug/doc.go` 开始实现 Bug 流程；它保留的是旧 TaskManager 思路，只能作为业务字段和交互需求参考。
+业务差异只能进入不可变 Profile、资源绑定和 TaskDefinition；不要从 Legacy `internal/app/bug/doc.go` 恢复 BugRunner，也不要在 Orchestrator 核心状态机增加业务类型分支。
 
 ### 5.6 当前现场状态和常见误区
 
 - 不假设工作区干净；每次接手先看 `git status --short`，不要用 reset/checkout 回退他人修改。
-- 本机开发库已经执行到 `0016`。如果已合入迁移继续变化导致本地列不一致，直接重建开发数据库，不为本地草稿状态追加兼容迁移。
+- 本机开发库已经执行到 `0018`。如果迁移变化导致本地列不一致，直接重建开发数据库，不为未上线草稿数据追加兼容迁移。
 - `0012` 最终会被压平，不要围绕旧 `datasets.schema/schema_version`、`task_steps` 或 `metadata_registry` 设计新外键和新功能。
 - `DatasetService.CommitBatch` 当前逐条 INSERT，正确性优先。真实批量压测出现瓶颈后再改成参数化批量 SQL，必须保持同一事务与 seq 顺序。
 - `resource_id` 当前是通用 UUID，没有数据库级多态外键；资源类型和存在性应由 app service 校验。
-- V2 `retrieval_*` 表只有结构，OpenSearch/pgvector 构建服务尚不存在。
+- 本机未配置 OpenSearch 时，BM25/Hybrid 构建和查询会明确失败；纯语义 pgvector 查询与可选 rerank 可独立工作。上线环境必须把 OpenSearch 纳入健康检查和部署门禁。
 - 全仓 `make test`、V2 targeted tests 和 PostgreSQL integration tests 应保持全绿。
 
 ### 5.7 Legacy 旧路线记录（只作业务背景，不按此继续开发）

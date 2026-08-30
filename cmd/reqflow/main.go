@@ -17,6 +17,8 @@ import (
 	"log/slog"
 
 	"reqflow/internal/app"
+	appanalysis "reqflow/internal/app/analysis"
+	appcatalog "reqflow/internal/app/catalog"
 	apporchestrator "reqflow/internal/app/orchestrator"
 	apppipeline "reqflow/internal/app/pipeline"
 	appretrieval "reqflow/internal/app/retrieval"
@@ -227,6 +229,37 @@ func main() {
 		logger.Error("retrieval.build Executor 初始化失败", "err", err)
 		os.Exit(1)
 	}
+	v2Analysis, err := appanalysis.NewService(pipelineRepo, v2Retrieval, llmClient,
+		appanalysis.Options{Model: cfg.LLM.Model, MaxIterations: cfg.LLM.AgentMaxIterations})
+	if err != nil {
+		logger.Error("V2 Analysis 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	analyzeExecutor, err := appanalysis.NewAnalyzeExecutor(v2Analysis)
+	if err != nil {
+		logger.Error("agent.analyze Executor 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	v2Artifacts, err := appanalysis.NewArtifactService(pipelineRepo, localBlobs)
+	if err != nil {
+		logger.Error("V2 Artifact 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	analysisPublishExecutor, err := appanalysis.NewAnalysisPublishExecutor(v2Analysis, v2Datasets)
+	if err != nil {
+		logger.Error("data.analysis_publish Executor 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	artifactRenderExecutor, err := appanalysis.NewArtifactRenderExecutor(v2Analysis, v2Artifacts)
+	if err != nil {
+		logger.Error("artifact.render Executor 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	graphBuildExecutor, err := appanalysis.NewGraphBuildExecutor(v2Analysis, v2Artifacts)
+	if err != nil {
+		logger.Error("graph.build Executor 初始化失败", "err", err)
+		os.Exit(1)
+	}
 	v2Publish, err := apppipeline.NewPublishService(pipelineRepo, v2Datasets)
 	if err != nil {
 		logger.Error("V2 Publish Pipeline 初始化失败", "err", err)
@@ -240,7 +273,8 @@ func main() {
 	// V2 Registry 只注册已经具备真实资源持久化与恢复语义的 Executor。
 	v2Registry, err := apporchestrator.NewRegistry(sourceParseExecutor, llmExtractExecutor,
 		dataTransformExecutor, dataValidateExecutor, dataPublishExecutor, queryDatasetExecutor,
-		retrievalBuildExecutor)
+		retrievalBuildExecutor, analyzeExecutor, analysisPublishExecutor, artifactRenderExecutor,
+		graphBuildExecutor)
 	if err != nil {
 		logger.Error("V2 Executor Registry 初始化失败", "err", err)
 		os.Exit(1)
@@ -260,6 +294,11 @@ func main() {
 	v2TaskQueries, err := apporchestrator.NewTaskQueryService(pipelineRepo)
 	if err != nil {
 		logger.Error("V2 Task Query 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	v2Catalog, err := appcatalog.NewService(pipelineRepo)
+	if err != nil {
+		logger.Error("V2 Catalog 初始化失败", "err", err)
 		os.Exit(1)
 	}
 	v2Review, err := apppipeline.NewReviewService(pipelineRepo, v2Runtime)
@@ -291,8 +330,9 @@ func main() {
 		V2Definitions: v2Definitions, V2Runtime: v2Runtime, V2TaskQueries: v2TaskQueries,
 		V2Datasets: v2Datasets, V2QueryDatasets: v2QueryDatasets,
 		V2Assets: v2Assets, V2Extractions: v2Extractions, V2Cleaning: v2Cleaning, V2Review: v2Review,
-		V2Retrieval: v2Retrieval,
-		UploadDir:   cfg.Workspace.UploadDir, MaxFileMB: int64(cfg.Parser.MaxFileMB),
+		V2Retrieval: v2Retrieval, V2Analysis: v2Analysis, V2Artifacts: v2Artifacts,
+		V2Catalog: v2Catalog,
+		UploadDir: cfg.Workspace.UploadDir, MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})
 	mountStatic(engine)
 

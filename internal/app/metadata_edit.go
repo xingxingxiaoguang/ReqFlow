@@ -37,8 +37,8 @@ type ProfilePayload struct {
 // WorkflowPayload workflow 覆盖的载荷形状（key = 任务类型；M4 同时承担
 // 向导注册类型的「锚行」角色——dataset_type 声明该类型产出的数据集）。
 type WorkflowPayload struct {
-	DatasetType string          `json:"dataset_type"`
-	Workflow    model.Workflow  `json:"workflow"`
+	DatasetType string         `json:"dataset_type"`
+	Workflow    model.Workflow `json:"workflow"`
 }
 
 // Reload 从 metadata_registry 装载 override 并整体替换注册表合并层。
@@ -161,13 +161,13 @@ type AffectedDataset struct {
 // SchemaUpdateResult check（dry-run）与 update（保存）的统一返回。
 // Saved=false 表示未落库（check 调用 / 被 ❌ 拦截 / ⚠️ 待确认）。
 type SchemaUpdateResult struct {
-	DatasetType string               `json:"dataset_type"`
-	Version     int                  `json:"version"` // check = 当前 effective 版本；update 成功 = 新版本
-	Source      string               `json:"source"`
-	Report      logic.CompatReport   `json:"report"`
-	Datasets    []AffectedDataset    `json:"datasets"`
-	Saved       bool                 `json:"saved"`
-	BlockReason string               `json:"block_reason,omitempty"`
+	DatasetType string             `json:"dataset_type"`
+	Version     int                `json:"version"` // check = 当前 effective 版本；update 成功 = 新版本
+	Source      string             `json:"source"`
+	Report      logic.CompatReport `json:"report"`
+	Datasets    []AffectedDataset  `json:"datasets"`
+	Saved       bool               `json:"saved"`
+	BlockReason string             `json:"block_reason,omitempty"`
 }
 
 // CheckSchema 兼容性检查 dry-run：对存量数据集判定影响面，不落库。
@@ -628,8 +628,8 @@ func (s *MetadataService) History(ctx context.Context, kind, key string) ([]Meta
 
 // MetadataExport effective 视图导出（DX 语义：回 git 留档/跨环境分发人工导入）。
 type MetadataExport struct {
-	ExportedAt time.Time       `json:"exported_at"`
-	TaskTypes  []TaskTypeView  `json:"task_types"`
+	ExportedAt time.Time      `json:"exported_at"`
+	TaskTypes  []TaskTypeView `json:"task_types"`
 }
 
 // Export 导出当前 effective 聚合视图。
@@ -664,12 +664,12 @@ type MetadataImportInput struct {
 
 // MetadataImportItemResult 单项导入结果（Error 非空 = 该项被守卫拦截或失败，不中断其余）。
 type MetadataImportItemResult struct {
-	Type     string               `json:"type"`
-	Schema   *SchemaUpdateResult  `json:"schema,omitempty"`
-	Profile  *ProfileUpdateResult `json:"profile,omitempty"`
+	Type     string                `json:"type"`
+	Schema   *SchemaUpdateResult   `json:"schema,omitempty"`
+	Profile  *ProfileUpdateResult  `json:"profile,omitempty"`
 	Workflow *WorkflowUpdateResult `json:"workflow,omitempty"`
-	Drafted  bool                 `json:"drafted,omitempty"` // 新类型：已按向导注册为草稿（待人工启用）
-	Error    string               `json:"error,omitempty"`
+	Drafted  bool                  `json:"drafted,omitempty"` // 新类型：已按向导注册为草稿（待人工启用）
+	Error    string                `json:"error,omitempty"`
 }
 
 // MetadataImportResult 导入汇总。

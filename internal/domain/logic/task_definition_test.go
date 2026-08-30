@@ -71,6 +71,57 @@ func TestValidateTaskDefinitionAllowsRepeatedKindsAndTypedPorts(t *testing.T) {
 	}
 }
 
+func TestValidateTaskDefinitionAllowsBusinessAnalysisWorkflow(t *testing.T) {
+	def := model.TaskDefinition{
+		Key:  "bug_analysis",
+		Name: "Bug 分析",
+		InputPorts: map[string]model.PortDefinition{
+			"knowledge": {ResourceType: model.ResourceRetrievalSnapshot, Required: true},
+			"target":    {ResourceType: model.ResourceDatasetBoundary, Required: true},
+		},
+		OutputPorts: map[string]model.PortDefinition{
+			"batch":    {ResourceType: model.ResourceDatasetBatch},
+			"artifact": {ResourceType: model.ResourceArtifact},
+		},
+		OutputBindings: map[string]string{
+			"batch":    "$step.publish.batch",
+			"artifact": "$step.render.artifact",
+		},
+		Steps: []model.StepDefinition{
+			{
+				ID: "analyze", Name: "结构化分析", Kind: model.StepKindAgentAnalyze,
+				Inputs:  map[string]string{"knowledge": "$task.knowledge"},
+				Outputs: map[string]model.ResourceType{"analysis": model.ResourceAnalysisResult},
+			},
+			{
+				ID: "review", Name: "人工确认", Kind: model.StepKindHumanReview,
+				DependsOn: []string{"analyze"},
+				Inputs:    map[string]string{"analysis": "$step.analyze.analysis"},
+				Outputs:   map[string]model.ResourceType{"analysis": model.ResourceAnalysisResult},
+			},
+			{
+				ID: "publish", Name: "发布分析记录", Kind: model.StepKindAnalysisPublish,
+				DependsOn: []string{"review"},
+				Inputs: map[string]string{
+					"analysis": "$step.review.analysis",
+					"target":   "$task.target",
+				},
+				Outputs: map[string]model.ResourceType{"batch": model.ResourceDatasetBatch},
+			},
+			{
+				ID: "render", Name: "生成制品", Kind: model.StepKindArtifactRender,
+				DependsOn: []string{"review"},
+				Inputs:    map[string]string{"analysis": "$step.review.analysis"},
+				Outputs:   map[string]model.ResourceType{"artifact": model.ResourceArtifact},
+			},
+		},
+	}
+
+	if err := ValidateTaskDefinition(def); err != nil {
+		t.Fatalf("阶段 F 业务分析定义应通过: %v", err)
+	}
+}
+
 func TestValidateTaskDefinitionRejectsCycle(t *testing.T) {
 	def := validTaskDefinition()
 	def.Steps[0].DependsOn = []string{"publish_batch"}

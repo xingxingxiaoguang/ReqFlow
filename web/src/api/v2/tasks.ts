@@ -13,6 +13,8 @@ export const v2TasksApi = {
     return api.get<{ tasks: V2Task[] }>(`/api/v2/tasks?${query}`)
   },
   get: (id: string) => api.get<V2TaskSnapshot>(`/api/v2/tasks/${id}`),
+  create: (input: { definition_id: string; title?: string; bindings: Array<{ port_name: string; resource_type: string; resource_id: string }> }) =>
+    api.post<{ task: V2Task }>('/api/v2/tasks', input),
   start: (id: string) => api.post<V2TaskSnapshot>(`/api/v2/tasks/${id}/start`, {}),
   pause: (id: string) => api.post<V2TaskSnapshot>(`/api/v2/tasks/${id}/pause`, {}),
   resume: (id: string) => api.post<V2TaskSnapshot>(`/api/v2/tasks/${id}/resume`, {}),
@@ -20,6 +22,9 @@ export const v2TasksApi = {
     api.post<V2TaskSnapshot>(`/api/v2/tasks/${id}/steps/${stepId}/retry`, {}),
   approve: (id: string, stepId: string, input: ReviewRecordsInput) =>
     api.post<V2TaskSnapshot>(`/api/v2/tasks/${id}/steps/${stepId}/approve`, input),
+  approveResource: (id: string, stepId: string, outputInputs: Record<string, string> = {}) =>
+    api.post<V2TaskSnapshot>(`/api/v2/tasks/${id}/steps/${stepId}/approve-resource`, { output_inputs: outputInputs }),
+  archive: (id: string) => api.post<{ archived: boolean }>(`/api/v2/tasks/${id}/archive`, {}),
   getValidationSet: (id: string) =>
     api.get<{ validation_result_set: ValidationResultSet }>(`/api/v2/validation-result-sets/${id}`),
   getApprovedSet: (id: string) =>

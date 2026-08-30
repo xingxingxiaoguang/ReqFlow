@@ -68,6 +68,7 @@ type taskRow struct {
 	UpdatedAt          time.Time  `gorm:"column:updated_at"`
 	StartedAt          *time.Time `gorm:"column:started_at"`
 	FinishedAt         *time.Time `gorm:"column:finished_at"`
+	ArchivedAt         *time.Time `gorm:"column:archived_at"`
 }
 
 func (taskRow) TableName() string { return "tasks" }

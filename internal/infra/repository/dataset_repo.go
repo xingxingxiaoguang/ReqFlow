@@ -133,7 +133,7 @@ func (r *DatasetRepo) ReplaceDatasetItems(ctx context.Context, datasetID string,
 				ID: id, DatasetID: datasetID, Fields: it.Fields,
 				ItemKey: it.ItemKey, Fingerprint: it.Fingerprint,
 				SourceTaskID: strPtr(it.SourceTaskID),
-				Embedding: vectorPtr(it.Embedding), CreatedAt: now, UpdatedAt: now,
+				Embedding:    vectorPtr(it.Embedding), CreatedAt: now, UpdatedAt: now,
 			}
 		}
 		return tx.Create(&rows).Error
@@ -417,14 +417,14 @@ func (r *DatasetRepo) SearchDatasetItemsFTS(ctx context.Context, datasetID strin
 	args = append(args, q, n)
 	// 显式列投影（嵌套带 TableName 的行结构会被 GORM 当关联表丢列——archive_repo 老坑）
 	var rows []struct {
-		ID           string     `gorm:"column:id"`
-		DatasetID    string     `gorm:"column:dataset_id"`
-		Fields       string     `gorm:"column:fields"`
-		ItemKey      string     `gorm:"column:item_key"`
-		Fingerprint  string     `gorm:"column:fingerprint"`
-		SourceTaskID *string    `gorm:"column:source_task_id"`
-		CreatedAt    time.Time  `gorm:"column:created_at"`
-		UpdatedAt    time.Time  `gorm:"column:updated_at"`
+		ID           string    `gorm:"column:id"`
+		DatasetID    string    `gorm:"column:dataset_id"`
+		Fields       string    `gorm:"column:fields"`
+		ItemKey      string    `gorm:"column:item_key"`
+		Fingerprint  string    `gorm:"column:fingerprint"`
+		SourceTaskID *string   `gorm:"column:source_task_id"`
+		CreatedAt    time.Time `gorm:"column:created_at"`
+		UpdatedAt    time.Time `gorm:"column:updated_at"`
 	}
 	if err := r.db.WithContext(ctx).Raw(sql, args...).Scan(&rows).Error; err != nil {
 		return nil, err

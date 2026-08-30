@@ -30,10 +30,10 @@ func NewDatasetAdminService(datasets port.DatasetRepo, indexer port.DatasetIndex
 
 // CreateDatasetInput 新建数据集入参（字段定义缺省从类型模板带出，可整体自定义）。
 type CreateDatasetInput struct {
-	Name        string              `json:"name"`
-	Type        string              `json:"type"`                  // 模板类型标识（新建后即为本数据集的 type 标识）
-	Description string              `json:"description,omitempty"` // 人类可读说明
-	Tags        []string            `json:"tags,omitempty"`
+	Name        string               `json:"name"`
+	Type        string               `json:"type"`                  // 模板类型标识（新建后即为本数据集的 type 标识）
+	Description string               `json:"description,omitempty"` // 人类可读说明
+	Tags        []string             `json:"tags,omitempty"`
 	Schema      *model.DatasetSchema `json:"schema,omitempty"` // 缺省 = 类型模板；提供时必须合法
 }
 

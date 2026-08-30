@@ -4,6 +4,7 @@
 //   - system 顶层抽取；SSE 事件状态机（message_start / content_block_* / message_delta）
 //   - thinking 块含签名（回放必须原样带回）；tool_use 流式 input_json_delta 聚合
 //   - 连续 toolResult 合并为单条 user 消息的 tool_result 块（协议要求）
+//
 // 不移植：cache_control 提示缓存、fallbacks、fine-grained tool streaming beta 头。
 package llm
 
@@ -201,9 +202,9 @@ func (c *anthropicClient) Stream(ctx context.Context, cc *port.Context, onEvent 
 
 	// Anthropic SSE：event 行命名，data 行携带 JSON；块按协议 index 追踪
 	type tracked struct {
-		blockIdx   int // 我们的 Content 下标；-1 表示尚未建块
-		kind       port.BlockType
-		jsonBuf    strings.Builder
+		blockIdx int // 我们的 Content 下标；-1 表示尚未建块
+		kind     port.BlockType
+		jsonBuf  strings.Builder
 	}
 	blocks := map[int]*tracked{}
 
@@ -233,10 +234,10 @@ func (c *anthropicClient) Stream(ctx context.Context, cc *port.Context, onEvent 
 			var ev struct {
 				Message struct {
 					Usage struct {
-						InputTokens      int `json:"input_tokens"`
-						OutputTokens     int `json:"output_tokens"`
-						CacheReadInput   int `json:"cache_read_input_tokens"`
-						CacheCreationIn  int `json:"cache_creation_input_tokens"`
+						InputTokens     int `json:"input_tokens"`
+						OutputTokens    int `json:"output_tokens"`
+						CacheReadInput  int `json:"cache_read_input_tokens"`
+						CacheCreationIn int `json:"cache_creation_input_tokens"`
 					} `json:"usage"`
 				} `json:"message"`
 			}
@@ -248,7 +249,7 @@ func (c *anthropicClient) Stream(ctx context.Context, cc *port.Context, onEvent 
 			}
 		case "content_block_start":
 			var ev struct {
-				Index int `json:"index"`
+				Index        int `json:"index"`
 				ContentBlock struct {
 					Type      string `json:"type"`
 					Text      string `json:"text"`
@@ -280,10 +281,10 @@ func (c *anthropicClient) Stream(ctx context.Context, cc *port.Context, onEvent 
 			var ev struct {
 				Index int `json:"index"`
 				Delta struct {
-					Type      string `json:"type"`
-					Text      string `json:"text"`
-					Thinking  string `json:"thinking"`
-					Signature string `json:"signature"`
+					Type        string `json:"type"`
+					Text        string `json:"text"`
+					Thinking    string `json:"thinking"`
+					Signature   string `json:"signature"`
 					PartialJSON string `json:"partial_json"`
 				} `json:"delta"`
 			}
@@ -400,17 +401,17 @@ func (c *anthropicClient) Complete(ctx context.Context, cc *port.Context) (*port
 	var parsed struct {
 		StopReason string `json:"stop_reason"`
 		Content    []struct {
-			Type      string `json:"type"`
-			Text      string `json:"text"`
-			Thinking  string `json:"thinking"`
-			Signature string `json:"signature"`
-			ID        string `json:"id"`
-			Name      string `json:"name"`
+			Type      string          `json:"type"`
+			Text      string          `json:"text"`
+			Thinking  string          `json:"thinking"`
+			Signature string          `json:"signature"`
+			ID        string          `json:"id"`
+			Name      string          `json:"name"`
 			Input     json.RawMessage `json:"input"`
 		} `json:"content"`
 		Usage struct {
-			InputTokens     int `json:"input_tokens"`
-			OutputTokens    int `json:"output_tokens"`
+			InputTokens  int `json:"input_tokens"`
+			OutputTokens int `json:"output_tokens"`
 		} `json:"usage"`
 	}
 	if err := json.Unmarshal(body, &parsed); err != nil {

@@ -6,11 +6,12 @@ import {
 import type { ColumnsType } from 'antd/es/table'
 import {
   ArrowLeftOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined,
-  RocketOutlined,
+  RocketOutlined, InboxOutlined, DownloadOutlined,
 } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { v2TasksApi } from '../../api/v2/tasks'
+import { v2CatalogApi } from '../../api/v2/catalog'
 import type {
   ApprovedRecordSet, RecordReviewDecision, V2Resource, V2StepRun, V2TaskSnapshot,
 } from '../../api/v2/types'
@@ -36,7 +37,9 @@ export default function V2TaskDetail() {
   const validationRef = useMemo(() => findResource(snapshot, 'validation_results'), [snapshot])
   const approvedRef = useMemo(() => findResource(snapshot, 'approved_records'), [snapshot])
   const batchRef = useMemo(() => findResource(snapshot, 'dataset_batch'), [snapshot])
-  const reviewStep = snapshot?.steps?.find((step) => step.kind === 'human.review')
+  const analysisRef = useMemo(() => findResource(snapshot, 'analysis_result'), [snapshot])
+  const artifactRef = useMemo(() => findResource(snapshot, 'artifact'), [snapshot])
+  const reviewStep = snapshot?.steps?.find((step) => step.kind === 'human.review' && step.status === 'awaiting') ?? snapshot?.steps?.find((step) => step.kind === 'human.review')
 
   const validationQuery = useQuery({
     queryKey: ['v2-validation-set', validationRef?.resource_id],
@@ -58,6 +61,11 @@ export default function V2TaskDetail() {
     queryKey: ['v2-approved-set', approvedRef?.resource_id],
     queryFn: () => v2TasksApi.getApprovedSet(approvedRef!.resource_id),
     enabled: Boolean(approvedRef?.resource_id),
+  })
+  const analysisQuery = useQuery({
+    queryKey: ['v2-analysis-result', analysisRef?.resource_id],
+    queryFn: () => v2CatalogApi.getAnalysisResult(analysisRef!.resource_id),
+    enabled: Boolean(analysisRef?.resource_id),
   })
 
   const applySnapshot = (next: V2TaskSnapshot) => {
@@ -95,9 +103,23 @@ export default function V2TaskDetail() {
     }
   }
 
+  const approveAnalysis = async () => {
+    if (!id || !reviewStep) return
+    setActing('review')
+    try {
+      applySnapshot(await v2TasksApi.approveResource(id, reviewStep.step_id))
+      message.success('分析结果已放行，后续发布与制品生成已进入调度')
+    } catch (error) { message.error((error as Error).message) } finally { setActing(undefined) }
+  }
+
+  const archiveTask = async () => {
+    setActing('archive')
+    try { await v2TasksApi.archive(task.id); message.success('任务已归档'); navigate('/tasks') } catch (error) { message.error((error as Error).message) } finally { setActing(undefined) }
+  }
+
   if (snapshotQuery.isLoading) return <Card><Spin tip="读取 V2 Task 快照…" /></Card>
   if (!snapshot || snapshotQuery.error) {
-    return <Result status="404" title="V2 任务不存在" subTitle={(snapshotQuery.error as Error | undefined)?.message} extra={<Button onClick={() => navigate('/v2/tasks')}>返回任务列表</Button>} />
+    return <Result status="404" title="V2 任务不存在" subTitle={(snapshotQuery.error as Error | undefined)?.message} extra={<Button onClick={() => navigate('/tasks')}>返回任务列表</Button>} />
   }
 
   const task = snapshot.task
@@ -109,7 +131,7 @@ export default function V2TaskDetail() {
           <Col>
             <Space direction="vertical" size={3}>
               <Space>
-                <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/v2/tasks')} />
+                <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')} />
                 <Title level={3} style={{ margin: 0 }}>{task.title}</Title>
                 <TaskStatusTag status={task.status} />
                 <Tag color="purple">{task.type}</Tag>
@@ -127,6 +149,7 @@ export default function V2TaskDetail() {
               {task.status === 'pending' && <Button type="primary" loading={acting === 'start'} icon={<RocketOutlined />} onClick={() => transition('start', () => v2TasksApi.start(task.id))}>启动</Button>}
               {task.status === 'running' && <Button loading={acting === 'pause'} icon={<PauseCircleOutlined />} onClick={() => transition('pause', () => v2TasksApi.pause(task.id))}>暂停</Button>}
               {task.status === 'paused' && <Button type="primary" loading={acting === 'resume'} icon={<PlayCircleOutlined />} onClick={() => transition('resume', () => v2TasksApi.resume(task.id))}>继续</Button>}
+              {['succeeded', 'failed'].includes(task.status) && <Button danger loading={acting === 'archive'} icon={<InboxOutlined />} onClick={archiveTask}>归档</Button>}
             </Space>
           </Col>
         </Row>
@@ -162,6 +185,11 @@ export default function V2TaskDetail() {
           submitting={acting === 'review'}
           onSubmit={submitReview}
         />
+      ) : task.status === 'awaiting' && analysisQuery.data?.analysis_result && reviewStep ? (
+        <Card title="人工确认结构化分析" extra={<Button type="primary" loading={acting === 'review'} onClick={approveAnalysis}>确认并继续</Button>}>
+          <Alert type="info" showIcon message="这是资源放行 Gate" description="确认后将原 AnalysisResult 原样绑定到审核输出；浏览器不能提交或替换资源 ID。" style={{ marginBottom: 16 }} />
+          <pre style={{ whiteSpace: 'pre-wrap', background: '#0f172a', color: '#e2e8f0', padding: 18, borderRadius: 8 }}>{JSON.stringify(analysisQuery.data.analysis_result.output, null, 2)}</pre>
+        </Card>
       ) : task.status === 'awaiting' ? (
         <Card><Spin tip={validationQuery.isLoading ? '读取校验结果…' : '准备审核上下文…'} /></Card>
       ) : null}
@@ -176,6 +204,8 @@ export default function V2TaskDetail() {
           description={<Space split={<Divider type="vertical" />}><Text code>{batchRef.resource_id}</Text><Text>目标数据写入已由原子事务提交，可通过 Batch 追溯本次发布。</Text></Space>}
         />
       )}
+
+      {artifactRef && <Alert type="success" showIcon message="业务制品已生成" description={<Space><Text code>{artifactRef.resource_id}</Text><Button type="link" icon={<DownloadOutlined />} href={`/api/v2/artifacts/${artifactRef.resource_id}/content`}>下载制品</Button></Space>} />}
 
       <Row gutter={[16, 16]}>
         <Col xs={24} xl={12}><ResourceCard title="任务输入" resources={snapshot.inputs ?? []} /></Col>

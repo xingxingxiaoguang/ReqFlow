@@ -1,9 +1,9 @@
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { ProLayout } from '@ant-design/pro-components'
 import {
-  DashboardOutlined, PlusCircleOutlined, FileAddOutlined, BugOutlined,
-  DatabaseOutlined, AppstoreOutlined, UnorderedListOutlined, SettingOutlined, ThunderboltFilled, InboxOutlined,
-  BranchesOutlined,
+  PlusCircleOutlined, DatabaseOutlined, AppstoreOutlined, UnorderedListOutlined,
+  SettingOutlined, ThunderboltFilled, InboxOutlined, BranchesOutlined,
+  SearchOutlined, FileDoneOutlined,
 } from '@ant-design/icons'
 import type React from 'react'
 import { Badge, Tooltip, Typography } from 'antd'
@@ -14,21 +14,14 @@ import type { SettingsView } from '../api/types'
 const menu = {
   path: '/',
   routes: [
-    { path: '/overview', name: '概览', icon: <DashboardOutlined /> },
-    {
-      path: '/tasks/new',
-      name: '开始任务',
-      icon: <PlusCircleOutlined />,
-      routes: [
-        { path: '/tasks/new', name: '需求导入', icon: <FileAddOutlined /> },
-        { path: '/bugs', name: 'Bug 分析', icon: <BugOutlined /> },
-      ],
-    },
-    { path: '/tasks', name: '任务管理', icon: <UnorderedListOutlined /> },
-    { path: '/v2/tasks', name: 'V2 数据管线', icon: <BranchesOutlined /> },
+    { path: '/tasks/new', name: '创建无代码任务', icon: <PlusCircleOutlined /> },
+    { path: '/tasks', name: '任务运行', icon: <UnorderedListOutlined /> },
+    { path: '/definitions', name: '流程定义', icon: <BranchesOutlined /> },
     { path: '/datasets', name: '数据集', icon: <DatabaseOutlined /> },
-    { path: '/metadata', name: '元数据', icon: <AppstoreOutlined /> },
-    { path: '/archives', name: '归档', icon: <InboxOutlined /> },
+    { path: '/metadata', name: '元数据与资源', icon: <AppstoreOutlined /> },
+    { path: '/retrieval', name: '混合检索', icon: <SearchOutlined /> },
+    { path: '/artifacts', name: '业务制品', icon: <FileDoneOutlined /> },
+    { path: '/archives', name: 'V2 归档', icon: <InboxOutlined /> },
     { path: '/settings', name: '设置', icon: <SettingOutlined /> },
   ],
 }
