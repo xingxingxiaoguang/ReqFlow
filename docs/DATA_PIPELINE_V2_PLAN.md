@@ -1,13 +1,13 @@
 # ReqFlow 异构数据管线 V2 落地方案
 
-> 状态：实施中（阶段 A、B、C 已完成；下一阶段为 Query Dataset 增量处理）
+> 状态：实施中（阶段 A、B、C、D 已完成；下一阶段为混合检索与 Agent 知识工具）
 > 日期：2026-08-30
 > 适用范围：ReqFlow 当前未上线版本
 > 关联文档：[产品总纲](./PRODUCT.md) · [交接文档](./HANDOVER.md) · [技术债台账](./DEBT.md)
 
 ## 0. 实施状态
 
-截至 2026-08-30，阶段 A 核心底座、阶段 B Orchestrator 和阶段 C 产品规格清洗纵向切片已经落地：
+截至 2026-08-30，阶段 A 核心底座、阶段 B Orchestrator、阶段 C 产品规格清洗纵向切片和阶段 D Query Dataset 增量派生已经落地：
 
 - [x] Asset、ParsedDocument、不可变 DatasetSchemaDefinition、DatasetBatch、ResourceBinding、TaskDefinition、StepRun、RetrievalSnapshot 和 Artifact 领域模型。
 - [x] JSON Schema 受控子集校验、规范化和稳定哈希。
@@ -36,7 +36,10 @@
 - [x] V2 Task 目录与通用 Task Detail：独立于 Legacy 查询，按定义快照展示步骤名称/Executor、资源端口、生命周期操作和 GET SSE 快照收敛。
 - [x] Schema 驱动审核工作台：逐条 approve/edit/exclude、类型化编辑、置信度、确定性转换 Diff、校验问题、provenance、不可变审核回放和发布结果展示。
 - [x] 前端路由级 code splitting，消除单一 1.5 MB 首载 Chunk。
-- [ ] Query Dataset 增量处理和混合检索。
+- [x] `data.query_derive` Executor：固定 Base Dataset `through_seq`，按 PipelineCursor 只读取未消费 `commit_seq`，确定性展开语义单元并生成 aliases/keywords/facets/source_refs。
+- [x] Query Dataset Batch 与 PipelineCursor 同事务提交；并发/失败时整批回滚且 Cursor 不前移，重试复用 StepRun 幂等 Batch。
+- [x] Query Item 固化 `source_item_id + source_fingerprint`，provenance 同时保留 Base DatasetItem 与原 Asset/Block 链路。
+- [ ] RetrievalProfile、混合检索和 Agent 知识工具。
 
 V2 开发期间暂以 `0012_pipeline_v2_foundation` 叠加现有迁移，目的是让每批代码可以独立构建和验证；旧运行路径切除后按本文第 14 节压平为新的初始迁移。这不是产品兼容层，V2 服务不通过旧 API 或旧模型读写。
 
@@ -677,6 +680,13 @@ LLM 不负责决定最终单位、日期格式和枚举编码。
 
 查询数据集仍使用通用 Dataset/Batch/Item 模型，不建立专用业务表。
 
+实施状态：阶段 D 已完成。`data.query_derive` 是纯 V2 Executor，只消费
+`source: dataset_boundary` 与 `target: dataset`，输出 `batch: dataset_batch` 和
+`cursor: pipeline_cursor`。映射合同固化在 TaskDefinition `config` 中，包含
+`pipeline_key/title_field/definition_fields/alias_fields/keyword_fields/facet_fields`；
+若 Base Item 含结构化语义单元数组，可用 `semantic_units_field + unit_key_field`
+一对多展开。这里不复用 Legacy Task 固定步骤，也不引入可变 TransformProfile 兼容层。
+
 一个查询条目建议包含：
 
 ```json
@@ -728,6 +738,11 @@ AND commit_seq <= task_input_through_seq
 ```
 
 目标 Query Batch 提交成功后才推进 Cursor。中途失败不能推进位点。
+
+实现中 Batch 提交、Dataset `current_seq/item_count`、Outbox 和 Cursor CAS 推进位于
+同一个 PostgreSQL 事务。Cursor 仍为可变消费位点，因此 Executor 输出同时携带
+`PipelineCursorBoundary`，固化本次 `processed_through_seq/target_batch_id/target_through_seq`，
+下游不得反查 Cursor 当前值来重建历史输入。
 
 查询条目必须保留 `source_item_id + source_fingerprint`，这样重复触发时可以判定已经处理过，不重复调用 LLM 和 embedding。
 
@@ -1368,18 +1383,20 @@ retrieval_snapshot_id
 
 ### 阶段 D：查询数据集增量处理
 
+状态：已完成。生产仓储、V2 Worker、HTTP Cursor 读模型和 PostgreSQL 集成验收均已接通。
+
 范围：
 
-- PipelineCursor。
-- 语义单元、关键词、别名和 source_refs 抽取。
-- Query Dataset Batch。
-- 增量处理和失败位点保护。
+- [x] PipelineCursor。
+- [x] 语义单元、关键词、别名、facets 和 source_refs 确定性派生。
+- [x] Query Dataset Batch。
+- [x] 增量处理、并发 CAS 和失败位点保护。
 
 验收：
 
-- Batch 2 运行时不重复处理 Batch 1。
-- 目标 Batch 失败时 Cursor 不前移。
-- 查询条目可追溯到基础 DatasetItem 和原 Asset Block。
+- [x] Batch 2 运行时不重复处理 Batch 1。
+- [x] 目标 Batch 失败时 Cursor 不前移。
+- [x] 查询条目可追溯到基础 DatasetItem 和原 Asset Block。
 
 ### 阶段 E：混合检索和 Agent 工具
 

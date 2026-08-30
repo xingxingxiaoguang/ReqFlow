@@ -238,6 +238,39 @@ func (r *PipelineRepo) ResolveTaskResource(ctx context.Context, workspaceID stri
 		boundary, _ := json.Marshal(model.DatasetBatchBoundary{DatasetID: batch.DatasetID,
 			FromSeq: batch.FromSeq, ToSeq: batch.ToSeq})
 		binding.Boundary = boundary
+	case model.ResourcePipelineCursor:
+		if alias != "" {
+			return binding, fmt.Errorf("pipeline_cursor 不支持 alias")
+		}
+		var cursor struct {
+			PipelineKey         string
+			SourceDatasetID     string
+			TargetDatasetID     string
+			ProcessedThroughSeq int64
+			LastSuccessTaskID   *string
+			TargetThroughSeq    int64
+		}
+		if err := r.db.WithContext(ctx).Table("pipeline_cursors AS c").
+			Select(`c.pipeline_key, c.source_dataset_id, c.target_dataset_id,
+				c.processed_through_seq, c.last_success_task_id, target.current_seq AS target_through_seq`).
+			Joins("JOIN datasets AS source ON source.id = c.source_dataset_id").
+			Joins("JOIN datasets AS target ON target.id = c.target_dataset_id").
+			Where("c.id = ? AND source.workspace_id = ? AND target.workspace_id = ?",
+				binding.ResourceID, workspaceID, workspaceID).Take(&cursor).Error; err != nil {
+			return binding, fmt.Errorf("PipelineCursor 资源不存在: %w", err)
+		}
+		var targetBatchID string
+		if cursor.LastSuccessTaskID != nil {
+			_ = r.db.WithContext(ctx).Model(&pipelineBatchRow{}).Select("id").
+				Where("dataset_id = ? AND source_task_id = ? AND status = ?", cursor.TargetDatasetID,
+					*cursor.LastSuccessTaskID, model.DatasetBatchCommitted).
+				Order("committed_at DESC").Limit(1).Scan(&targetBatchID).Error
+		}
+		boundary, _ := json.Marshal(model.PipelineCursorBoundary{PipelineKey: cursor.PipelineKey,
+			SourceDatasetID: cursor.SourceDatasetID, TargetDatasetID: cursor.TargetDatasetID,
+			ProcessedThroughSeq: cursor.ProcessedThroughSeq, TargetBatchID: targetBatchID,
+			TargetThroughSeq: cursor.TargetThroughSeq})
+		binding.Boundary = boundary
 	case model.ResourceRetrievalSnapshot:
 		if alias != "" {
 			return binding, fmt.Errorf("retrieval_snapshot 不支持 alias")

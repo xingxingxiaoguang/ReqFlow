@@ -194,6 +194,16 @@ func main() {
 		os.Exit(1)
 	}
 	v2Datasets := apppipeline.NewDatasetService(pipelineRepo)
+	v2QueryDatasets, err := apppipeline.NewQueryDatasetService(pipelineRepo, v2Datasets)
+	if err != nil {
+		logger.Error("V2 Query Dataset 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	queryDatasetExecutor, err := apppipeline.NewQueryDatasetDeriveExecutor(v2QueryDatasets)
+	if err != nil {
+		logger.Error("data.query_derive Executor 初始化失败", "err", err)
+		os.Exit(1)
+	}
 	v2Publish, err := apppipeline.NewPublishService(pipelineRepo, v2Datasets)
 	if err != nil {
 		logger.Error("V2 Publish Pipeline 初始化失败", "err", err)
@@ -206,7 +216,7 @@ func main() {
 	}
 	// V2 Registry 只注册已经具备真实资源持久化与恢复语义的 Executor。
 	v2Registry, err := apporchestrator.NewRegistry(sourceParseExecutor, llmExtractExecutor,
-		dataTransformExecutor, dataValidateExecutor, dataPublishExecutor)
+		dataTransformExecutor, dataValidateExecutor, dataPublishExecutor, queryDatasetExecutor)
 	if err != nil {
 		logger.Error("V2 Executor Registry 初始化失败", "err", err)
 		os.Exit(1)
@@ -254,7 +264,8 @@ func main() {
 	engine := httpgin.New(httpgin.Services{
 		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
 		DatasetQuery: datasetQuery, DatasetAdmin: datasetAdmin, Archive: archiveSvc, Metadata: metadataSvc,
-		V2Definitions: v2Definitions, V2Runtime: v2Runtime, V2TaskQueries: v2TaskQueries, V2Datasets: v2Datasets,
+		V2Definitions: v2Definitions, V2Runtime: v2Runtime, V2TaskQueries: v2TaskQueries,
+		V2Datasets: v2Datasets, V2QueryDatasets: v2QueryDatasets,
 		V2Assets: v2Assets, V2Extractions: v2Extractions, V2Cleaning: v2Cleaning, V2Review: v2Review,
 		UploadDir: cfg.Workspace.UploadDir, MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})

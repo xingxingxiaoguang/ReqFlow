@@ -131,8 +131,43 @@ func (r *PipelineRepo) GetDatasetBatch(ctx context.Context, id string) (*model.D
 	return row.toModel(), nil
 }
 
+func (r *PipelineRepo) GetPipelineCursor(ctx context.Context, pipelineKey, sourceDatasetID,
+	targetDatasetID string) (*model.PipelineCursor, error) {
+	var row pipelineCursorRow
+	if err := r.db.WithContext(ctx).Where("pipeline_key = ? AND source_dataset_id = ? AND target_dataset_id = ?",
+		pipelineKey, sourceDatasetID, targetDatasetID).First(&row).Error; err != nil {
+		return nil, err
+	}
+	return row.toModel(), nil
+}
+
+func (r *PipelineRepo) GetOrCreatePipelineCursor(ctx context.Context, pipelineKey, sourceDatasetID,
+	targetDatasetID string) (*model.PipelineCursor, error) {
+	id := uuid.NewString()
+	now := time.Now()
+	var cursor *model.PipelineCursor
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec(`INSERT INTO pipeline_cursors
+			(id, pipeline_key, source_dataset_id, target_dataset_id, processed_through_seq, updated_at)
+			VALUES (?, ?, ?, ?, 0, ?)
+			ON CONFLICT (pipeline_key, source_dataset_id, target_dataset_id) DO NOTHING`,
+			id, pipelineKey, sourceDatasetID, targetDatasetID, now).Error; err != nil {
+			return err
+		}
+		var row pipelineCursorRow
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("pipeline_key = ? AND source_dataset_id = ? AND target_dataset_id = ?",
+				pipelineKey, sourceDatasetID, targetDatasetID).First(&row).Error; err != nil {
+			return err
+		}
+		cursor = row.toModel()
+		return nil
+	})
+	return cursor, err
+}
+
 func (r *PipelineRepo) CommitDatasetBatch(ctx context.Context, batchID, payloadHash string, items []model.DatasetItem) (*model.DatasetBatch, error) {
-	return r.commitDatasetBatch(ctx, batchID, payloadHash, items, nil)
+	return r.commitDatasetBatch(ctx, batchID, payloadHash, items, nil, nil)
 }
 
 func (r *PipelineRepo) CommitDatasetBatchForStep(ctx context.Context, batchID, sourceStepRunID string,
@@ -142,11 +177,74 @@ func (r *PipelineRepo) CommitDatasetBatchForStep(ctx context.Context, batchID, s
 			return port.ErrStaleResourceExecution
 		}
 		return assertActiveStepProducer(tx, sourceStepRunID, producerAttempt)
-	})
+	}, nil)
+}
+
+type batchCommitFinalizer func(tx *gorm.DB, batch *pipelineBatchRow, alreadyCommitted bool) error
+
+func (r *PipelineRepo) CommitQueryDatasetBatchForStep(ctx context.Context, batchID, sourceStepRunID string,
+	producerAttempt int, payloadHash string, items []model.DatasetItem, cursorID string,
+	expectedThroughSeq, advanceThroughSeq int64, lastSuccessTaskID string) (*model.DatasetBatch, *model.PipelineCursor, error) {
+	if advanceThroughSeq <= expectedThroughSeq {
+		return nil, nil, fmt.Errorf("Cursor 新位点必须大于原位点")
+	}
+	var committedCursor *model.PipelineCursor
+	batch, err := r.commitDatasetBatch(ctx, batchID, payloadHash, items, func(tx *gorm.DB, batch *pipelineBatchRow) error {
+		if batch.SourceStepRunID == nil || *batch.SourceStepRunID != sourceStepRunID {
+			return port.ErrStaleResourceExecution
+		}
+		return assertActiveStepProducer(tx, sourceStepRunID, producerAttempt)
+	}, pipelineCursorCommitFinalizer(cursorID, expectedThroughSeq, advanceThroughSeq,
+		lastSuccessTaskID, &committedCursor))
+	if err != nil {
+		return nil, nil, err
+	}
+	return batch, committedCursor, nil
+}
+
+func pipelineCursorCommitFinalizer(cursorID string, expectedThroughSeq, advanceThroughSeq int64,
+	lastSuccessTaskID string, committedCursor **model.PipelineCursor) batchCommitFinalizer {
+	return func(tx *gorm.DB, _ *pipelineBatchRow, alreadyCommitted bool) error {
+		var cursor pipelineCursorRow
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", cursorID).First(&cursor).Error; err != nil {
+			return err
+		}
+		if alreadyCommitted {
+			if cursor.ProcessedThroughSeq < advanceThroughSeq {
+				return fmt.Errorf("%w: Batch 已提交但 Cursor 位点仅为 %d", port.ErrPipelineCursorConflict,
+					cursor.ProcessedThroughSeq)
+			}
+			*committedCursor = cursor.toModel()
+			return nil
+		}
+		if cursor.ProcessedThroughSeq != expectedThroughSeq {
+			return fmt.Errorf("%w: 期望位点 %d，实际为 %d", port.ErrPipelineCursorConflict,
+				expectedThroughSeq, cursor.ProcessedThroughSeq)
+		}
+		now := time.Now()
+		result := tx.Model(&pipelineCursorRow{}).Where("id = ? AND processed_through_seq = ?",
+			cursor.ID, expectedThroughSeq).Updates(map[string]any{
+			"processed_through_seq": advanceThroughSeq,
+			"last_success_task_id":  nullableUUID(lastSuccessTaskID),
+			"updated_at":            now,
+		})
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected != 1 {
+			return port.ErrPipelineCursorConflict
+		}
+		cursor.ProcessedThroughSeq = advanceThroughSeq
+		cursor.LastSuccessTaskID = strPtr(lastSuccessTaskID)
+		cursor.UpdatedAt = now
+		*committedCursor = cursor.toModel()
+		return nil
+	}
 }
 
 func (r *PipelineRepo) commitDatasetBatch(ctx context.Context, batchID, payloadHash string,
-	items []model.DatasetItem, fence func(*gorm.DB, *pipelineBatchRow) error) (*model.DatasetBatch, error) {
+	items []model.DatasetItem, fence func(*gorm.DB, *pipelineBatchRow) error,
+	finalize batchCommitFinalizer) (*model.DatasetBatch, error) {
 	var committed *model.DatasetBatch
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var batch pipelineBatchRow
@@ -161,6 +259,11 @@ func (r *PipelineRepo) commitDatasetBatch(ctx context.Context, batchID, payloadH
 		if batch.Status == model.DatasetBatchCommitted {
 			if batch.PayloadHash != payloadHash {
 				return fmt.Errorf("%w: 已提交 Batch 的 payload_hash 不一致", port.ErrDatasetBatchNotWritable)
+			}
+			if finalize != nil {
+				if err := finalize(tx, &batch, true); err != nil {
+					return err
+				}
 			}
 			committed = batch.toModel()
 			return nil
@@ -245,6 +348,11 @@ func (r *PipelineRepo) commitDatasetBatch(ctx context.Context, batchID, payloadH
 			VALUES (?, 'dataset.batch_committed', 'dataset', ?, ?::jsonb)`,
 			uuid.NewString(), dataset.ID, string(payload)).Error; err != nil {
 			return err
+		}
+		if finalize != nil {
+			if err := finalize(tx, &batch, false); err != nil {
+				return err
+			}
 		}
 
 		batch.Status = model.DatasetBatchCommitted
@@ -374,6 +482,25 @@ type pipelineDatasetItemRow struct {
 	SourceTaskID *string   `gorm:"column:source_task_id"`
 	CreatedAt    time.Time `gorm:"column:created_at"`
 	UpdatedAt    time.Time `gorm:"column:updated_at"`
+}
+
+type pipelineCursorRow struct {
+	ID                  string    `gorm:"column:id;primaryKey"`
+	PipelineKey         string    `gorm:"column:pipeline_key"`
+	SourceDatasetID     string    `gorm:"column:source_dataset_id"`
+	TargetDatasetID     string    `gorm:"column:target_dataset_id"`
+	ProcessedThroughSeq int64     `gorm:"column:processed_through_seq"`
+	LastSuccessTaskID   *string   `gorm:"column:last_success_task_id"`
+	UpdatedAt           time.Time `gorm:"column:updated_at"`
+}
+
+func (pipelineCursorRow) TableName() string { return "pipeline_cursors" }
+
+func (row pipelineCursorRow) toModel() *model.PipelineCursor {
+	return &model.PipelineCursor{ID: row.ID, PipelineKey: row.PipelineKey,
+		SourceDatasetID: row.SourceDatasetID, TargetDatasetID: row.TargetDatasetID,
+		ProcessedThroughSeq: row.ProcessedThroughSeq, LastSuccessTaskID: strVal(row.LastSuccessTaskID),
+		UpdatedAt: row.UpdatedAt}
 }
 
 func (pipelineDatasetItemRow) TableName() string { return "dataset_items" }

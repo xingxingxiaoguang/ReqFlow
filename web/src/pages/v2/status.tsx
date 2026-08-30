@@ -52,6 +52,7 @@ export const STEP_KIND_LABEL: Record<string, string> = {
   'data.validate': '数据校验',
   'human.review': '人工审核',
   'data.publish': '原子发布',
+  'data.query_derive': 'Query Dataset 增量派生',
   'retrieval.build': '检索构建',
   'agent.analyze': '智能分析',
   'artifact.render': '产物渲染',

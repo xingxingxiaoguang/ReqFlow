@@ -108,17 +108,20 @@ func TestDatasetServiceRejectsInvalidAndExistingKeys(t *testing.T) {
 }
 
 type memoryPipelineRepo struct {
-	next     int
-	schemas  map[string]*model.DatasetSchemaDefinition
-	datasets map[string]*model.Dataset
-	batches  map[string]*model.DatasetBatch
-	items    map[string][]model.DatasetItem
+	next            int
+	schemas         map[string]*model.DatasetSchemaDefinition
+	datasets        map[string]*model.Dataset
+	batches         map[string]*model.DatasetBatch
+	items           map[string][]model.DatasetItem
+	cursors         map[string]*model.PipelineCursor
+	failQueryCommit bool
 }
 
 func newMemoryPipelineRepo() *memoryPipelineRepo {
 	return &memoryPipelineRepo{
 		schemas: map[string]*model.DatasetSchemaDefinition{}, datasets: map[string]*model.Dataset{},
 		batches: map[string]*model.DatasetBatch{}, items: map[string][]model.DatasetItem{},
+		cursors: map[string]*model.PipelineCursor{},
 	}
 }
 
@@ -214,6 +217,10 @@ func (r *memoryPipelineRepo) CommitDatasetBatch(_ context.Context, batchID, payl
 		return nil, err
 	}
 	for i := range items {
+		if items[i].ID == "" {
+			items[i].ID = r.id("item")
+		}
+		items[i].DatasetID = dataset.ID
 		items[i].CommitSeq = from + int64(i)
 		items[i].BatchID = batch.ID
 		r.items[dataset.ID] = append(r.items[dataset.ID], items[i])

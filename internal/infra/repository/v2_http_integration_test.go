@@ -29,11 +29,16 @@ func TestIntegrationV2HTTPDatasetAndAliasBoundary(t *testing.T) {
 	}
 	repo := NewPipelineRepo(db)
 	datasets := apppipeline.NewDatasetService(repo)
+	queryDatasets, err := apppipeline.NewQueryDatasetService(repo, datasets)
+	if err != nil {
+		t.Fatal(err)
+	}
 	queries, err := apporchestrator.NewTaskQueryService(repo)
 	if err != nil {
 		t.Fatal(err)
 	}
-	engine := httpgin.New(httpgin.Services{V2Datasets: datasets, V2TaskQueries: queries})
+	engine := httpgin.New(httpgin.Services{V2Datasets: datasets, V2QueryDatasets: queryDatasets,
+		V2TaskQueries: queries})
 
 	schemaID := postID(t, engine, "/api/v2/schemas", "schema", map[string]any{
 		"name": "HTTP Schema",
@@ -44,6 +49,19 @@ func TestIntegrationV2HTTPDatasetAndAliasBoundary(t *testing.T) {
 	datasetID := postID(t, engine, "/api/v2/datasets", "dataset", map[string]any{
 		"name": "HTTP Dataset", "purpose": "base", "schema_id": schemaID, "key_fields": []string{"sku"},
 	})
+	queryDatasetID := postID(t, engine, "/api/v2/datasets", "dataset", map[string]any{
+		"name": "HTTP Query Dataset", "purpose": "query", "schema_id": schemaID, "key_fields": []string{"sku"},
+	})
+	if _, err := repo.GetOrCreatePipelineCursor(context.Background(), "http_query_v1", datasetID, queryDatasetID); err != nil {
+		t.Fatal(err)
+	}
+	cursorResponse := requestJSON(t, engine, http.MethodGet,
+		"/api/v2/pipeline-cursors?pipeline_key=http_query_v1&source_dataset_id="+datasetID+"&target_dataset_id="+queryDatasetID,
+		nil, http.StatusOK)
+	cursorView := cursorResponse["data"].(map[string]any)["pipeline_cursor"].(map[string]any)
+	if cursorView["processed_through_seq"].(float64) != 0 || cursorView["target_dataset_id"] != queryDatasetID {
+		t.Fatalf("PipelineCursor 读端点错误: %+v", cursorView)
+	}
 	schemaResponse := requestJSON(t, engine, http.MethodGet, "/api/v2/schemas/"+schemaID, nil, http.StatusOK)
 	if schemaResponse["data"].(map[string]any)["schema"].(map[string]any)["name"] != "HTTP Schema" {
 		t.Fatal("V2 Schema 读端点未返回创建结果")
@@ -87,7 +105,7 @@ func TestIntegrationV2HTTPDatasetAndAliasBoundary(t *testing.T) {
 	t.Cleanup(func() {
 		_ = db.Exec(`DELETE FROM outbox_events WHERE aggregate_id = ?`, datasetID).Error
 		_ = db.Exec(`DELETE FROM dataset_aliases WHERE name = ?`, aliasName).Error
-		_ = db.Exec(`DELETE FROM datasets WHERE id = ?`, datasetID).Error
+		_ = db.Exec(`DELETE FROM datasets WHERE id IN (?, ?)`, datasetID, queryDatasetID).Error
 		_ = db.Exec(`DELETE FROM dataset_schemas WHERE id = ?`, schemaID).Error
 	})
 }

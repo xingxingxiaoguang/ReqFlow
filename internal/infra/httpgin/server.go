@@ -10,22 +10,23 @@ import (
 
 // Services 组装点注入的全部业务用例（cmd 负责构造）。
 type Services struct {
-	Tasks         *app.TaskManager
-	Match         *app.MatchService
-	Settings      *app.SettingsService
-	Overview      *app.OverviewService
-	DatasetQuery  *app.DatasetQueryService
-	DatasetAdmin  *app.DatasetAdminService
-	Archive       *app.ArchiveService
-	Metadata      *app.MetadataService
-	V2Definitions *apporchestrator.DefinitionService
-	V2Runtime     *apporchestrator.RuntimeService
-	V2TaskQueries *apporchestrator.TaskQueryService
-	V2Datasets    *apppipeline.DatasetService
-	V2Assets      *apppipeline.AssetService
-	V2Extractions *apppipeline.ExtractionService
-	V2Cleaning    *apppipeline.CleaningService
-	V2Review      *apppipeline.ReviewService
+	Tasks           *app.TaskManager
+	Match           *app.MatchService
+	Settings        *app.SettingsService
+	Overview        *app.OverviewService
+	DatasetQuery    *app.DatasetQueryService
+	DatasetAdmin    *app.DatasetAdminService
+	Archive         *app.ArchiveService
+	Metadata        *app.MetadataService
+	V2Definitions   *apporchestrator.DefinitionService
+	V2Runtime       *apporchestrator.RuntimeService
+	V2TaskQueries   *apporchestrator.TaskQueryService
+	V2Datasets      *apppipeline.DatasetService
+	V2QueryDatasets *apppipeline.QueryDatasetService
+	V2Assets        *apppipeline.AssetService
+	V2Extractions   *apppipeline.ExtractionService
+	V2Cleaning      *apppipeline.CleaningService
+	V2Review        *apppipeline.ReviewService
 
 	UploadDir string // 上传暂存目录（cmd 从配置注入）
 	MaxFileMB int64  // 上传大小上限
@@ -106,6 +107,9 @@ func New(svc Services) *gin.Engine {
 		v2.POST("/datasets/:id/batches", h.v2CreateBatch)
 		v2.POST("/batches/:id/commit", h.v2CommitBatch)
 		v2.GET("/datasets/:id/items", h.v2ListDatasetItems)
+	}
+	if svc.V2QueryDatasets != nil {
+		v2.GET("/pipeline-cursors", h.v2GetPipelineCursor)
 	}
 	if svc.V2Definitions != nil && svc.V2Runtime != nil {
 		v2.POST("/task-definitions", h.v2CreateTaskDefinition)

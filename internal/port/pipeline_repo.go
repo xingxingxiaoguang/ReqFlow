@@ -10,6 +10,7 @@ import (
 var (
 	ErrDatasetItemKeyConflict  = errors.New("dataset item key conflict")
 	ErrDatasetBatchNotWritable = errors.New("dataset batch is not writable")
+	ErrPipelineCursorConflict  = errors.New("pipeline cursor conflict")
 )
 
 // DatasetPipelineRepo 是 V2 不可变 Schema 与追加型 Dataset 的持久化边界。
@@ -27,4 +28,19 @@ type DatasetPipelineRepo interface {
 	CommitDatasetBatchForStep(ctx context.Context, batchID, sourceStepRunID string, producerAttempt int,
 		payloadHash string, items []model.DatasetItem) (*model.DatasetBatch, error)
 	ListDatasetItemsAfter(ctx context.Context, datasetID string, afterSeq, throughSeq int64, limit int) ([]model.DatasetItem, error)
+}
+
+// QueryDatasetPipelineRepo 为 Base Dataset → Query Dataset 的增量派生提供专用事务边界。
+// Batch 提交与 Cursor 推进必须由同一实现原子完成，应用层禁止拆成两个调用。
+type QueryDatasetPipelineRepo interface {
+	GetAppendDataset(ctx context.Context, id string) (*model.Dataset, error)
+	GetDatasetSchema(ctx context.Context, id string) (*model.DatasetSchemaDefinition, error)
+	ListDatasetItemsAfter(ctx context.Context, datasetID string, afterSeq, throughSeq int64, limit int) ([]model.DatasetItem, error)
+	GetOrCreateDatasetBatchForStep(ctx context.Context, batch *model.DatasetBatch, producerAttempt int) (*model.DatasetBatch, error)
+
+	GetPipelineCursor(ctx context.Context, pipelineKey, sourceDatasetID, targetDatasetID string) (*model.PipelineCursor, error)
+	GetOrCreatePipelineCursor(ctx context.Context, pipelineKey, sourceDatasetID, targetDatasetID string) (*model.PipelineCursor, error)
+	CommitQueryDatasetBatchForStep(ctx context.Context, batchID, sourceStepRunID string, producerAttempt int,
+		payloadHash string, items []model.DatasetItem, cursorID string, expectedThroughSeq, advanceThroughSeq int64,
+		lastSuccessTaskID string) (*model.DatasetBatch, *model.PipelineCursor, error)
 }

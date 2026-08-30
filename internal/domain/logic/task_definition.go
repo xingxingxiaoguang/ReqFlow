@@ -20,8 +20,9 @@ const (
 var validV2StepKinds = map[model.StepKind]bool{
 	model.StepKindSourceParse: true, model.StepKindLLMExtract: true,
 	model.StepKindDataTransform: true, model.StepKindDataValidate: true,
-	model.StepKindDataPublish: true, model.StepKindRetrievalBuild: true,
-	model.StepKindAgentAnalyze: true, model.StepKindArtifactRender: true,
+	model.StepKindDataPublish: true, model.StepKindDataQueryDerive: true,
+	model.StepKindRetrievalBuild: true,
+	model.StepKindAgentAnalyze:   true, model.StepKindArtifactRender: true,
 	model.StepKindGraphBuild: true, model.StepKindHumanReview: true,
 }
 
@@ -30,8 +31,9 @@ var validResourceTypes = map[model.ResourceType]bool{
 	model.ResourceRecordDrafts: true, model.ResourceTransformedRecords: true,
 	model.ResourceValidationResults: true, model.ResourceApprovedRecords: true,
 	model.ResourceDataset: true, model.ResourceDatasetBoundary: true,
-	model.ResourceDatasetBatch: true, model.ResourceRetrievalSnapshot: true,
-	model.ResourceArtifact: true,
+	model.ResourceDatasetBatch: true, model.ResourcePipelineCursor: true,
+	model.ResourceRetrievalSnapshot: true,
+	model.ResourceArtifact:          true,
 }
 
 // ValidateTaskDefinition 校验 V2 工作流的 DAG、端口引用和资源类型。

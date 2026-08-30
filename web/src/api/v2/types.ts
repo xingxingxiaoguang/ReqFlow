@@ -121,6 +121,10 @@ export interface SourceReference {
 
 export interface ItemProvenance {
   source_refs?: SourceReference[]
+  pipeline_key?: string
+  source_dataset_id?: string
+  source_dataset_item_id?: string
+  source_fingerprint?: string
   extraction_profile_id?: string
   model?: string
   prompt_hash?: string

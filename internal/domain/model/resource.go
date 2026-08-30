@@ -17,6 +17,7 @@ const (
 	ResourceDataset            ResourceType = "dataset"
 	ResourceDatasetBoundary    ResourceType = "dataset_boundary"
 	ResourceDatasetBatch       ResourceType = "dataset_batch"
+	ResourcePipelineCursor     ResourceType = "pipeline_cursor"
 	ResourceRetrievalSnapshot  ResourceType = "retrieval_snapshot"
 	ResourceArtifact           ResourceType = "artifact"
 )
@@ -133,4 +134,15 @@ type DatasetBatchBoundary struct {
 	DatasetID string `json:"dataset_id"`
 	FromSeq   int64  `json:"from_seq"`
 	ToSeq     int64  `json:"to_seq"`
+}
+
+// PipelineCursorBoundary 固化一次派生任务成功消费的源位点及对应目标 Batch。
+// Cursor 行本身会继续前移，因此消费者必须依赖 Boundary，而不是反查当前值。
+type PipelineCursorBoundary struct {
+	PipelineKey         string `json:"pipeline_key"`
+	SourceDatasetID     string `json:"source_dataset_id"`
+	TargetDatasetID     string `json:"target_dataset_id"`
+	ProcessedThroughSeq int64  `json:"processed_through_seq"`
+	TargetBatchID       string `json:"target_batch_id"`
+	TargetThroughSeq    int64  `json:"target_through_seq"`
 }

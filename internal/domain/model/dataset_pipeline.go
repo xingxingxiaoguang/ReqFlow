@@ -80,6 +80,10 @@ type SourceReference struct {
 // ItemProvenance 记录产生 DatasetItem 的可审计上下文。
 type ItemProvenance struct {
 	SourceRefs          []SourceReference `json:"source_refs,omitempty"`
+	PipelineKey         string            `json:"pipeline_key,omitempty"`
+	SourceDatasetID     string            `json:"source_dataset_id,omitempty"`
+	SourceDatasetItemID string            `json:"source_dataset_item_id,omitempty"`
+	SourceFingerprint   string            `json:"source_fingerprint,omitempty"`
 	ExtractionProfileID string            `json:"extraction_profile_id,omitempty"`
 	Model               string            `json:"model,omitempty"`
 	PromptHash          string            `json:"prompt_hash,omitempty"`

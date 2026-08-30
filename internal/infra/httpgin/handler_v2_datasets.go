@@ -55,6 +55,16 @@ func (h *handlers) v2GetDataset(c *gin.Context) {
 	ok(c, gin.H{"dataset": dataset})
 }
 
+func (h *handlers) v2GetPipelineCursor(c *gin.Context) {
+	cursor, err := h.svc.V2QueryDatasets.GetCursorView(c.Request.Context(), c.Query("pipeline_key"),
+		c.Query("source_dataset_id"), c.Query("target_dataset_id"))
+	if err != nil {
+		fail(c, http.StatusNotFound, "PipelineCursor 不存在或查询条件非法")
+		return
+	}
+	ok(c, gin.H{"pipeline_cursor": cursor})
+}
+
 func (h *handlers) v2CreateBatch(c *gin.Context) {
 	var request apppipeline.CreateBatchRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
