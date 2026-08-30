@@ -6,6 +6,7 @@ import (
 	"reqflow/internal/app"
 	apporchestrator "reqflow/internal/app/orchestrator"
 	apppipeline "reqflow/internal/app/pipeline"
+	appretrieval "reqflow/internal/app/retrieval"
 )
 
 // Services 组装点注入的全部业务用例（cmd 负责构造）。
@@ -27,6 +28,7 @@ type Services struct {
 	V2Extractions   *apppipeline.ExtractionService
 	V2Cleaning      *apppipeline.CleaningService
 	V2Review        *apppipeline.ReviewService
+	V2Retrieval     *appretrieval.Service
 
 	UploadDir string // 上传暂存目录（cmd 从配置注入）
 	MaxFileMB int64  // 上传大小上限
@@ -145,6 +147,15 @@ func New(svc Services) *gin.Engine {
 	}
 	if svc.V2Review != nil {
 		v2.GET("/approved-record-sets/:id", h.v2GetApprovedRecordSet)
+	}
+	if svc.V2Retrieval != nil {
+		v2.POST("/retrieval-profiles", h.v2CreateRetrievalProfile)
+		v2.GET("/retrieval-profiles", h.v2ListRetrievalProfiles)
+		v2.GET("/retrieval-profiles/:id", h.v2GetRetrievalProfile)
+		v2.POST("/retrieval-profiles/:id/clone", h.v2CloneRetrievalProfile)
+		v2.GET("/retrieval-snapshots", h.v2ListRetrievalSnapshots)
+		v2.GET("/retrieval-snapshots/:id", h.v2GetRetrievalSnapshot)
+		v2.POST("/retrieval/search", h.v2SearchRetrieval)
 	}
 	return r
 }

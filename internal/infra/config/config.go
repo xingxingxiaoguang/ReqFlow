@@ -50,13 +50,23 @@ type Config struct {
 	} `yaml:"llm"`
 
 	Embedding struct {
-		BaseURL    string `yaml:"base_url"   env:"REQFLOW_EMBEDDING_BASE_URL"`
-		APIKey     string `yaml:"api_key"    env:"REQFLOW_EMBEDDING_API_KEY"`
-		Model      string `yaml:"model"      env:"REQFLOW_EMBEDDING_MODEL"`
-		Dimensions int    `yaml:"dimensions" env:"REQFLOW_EMBEDDING_DIMENSIONS"`
-		BatchSize  int    `yaml:"batch_size" env:"REQFLOW_EMBEDDING_BATCH_SIZE"`
-		TimeoutMs  int    `yaml:"timeout_ms" env:"REQFLOW_EMBEDDING_TIMEOUT_MS"`
+		BaseURL         string `yaml:"base_url"          env:"REQFLOW_EMBEDDING_BASE_URL"`
+		APIKey          string `yaml:"api_key"           env:"REQFLOW_EMBEDDING_API_KEY"`
+		Model           string `yaml:"model"             env:"REQFLOW_EMBEDDING_MODEL"`
+		Dimensions      int    `yaml:"dimensions"        env:"REQFLOW_EMBEDDING_DIMENSIONS"`
+		BatchSize       int    `yaml:"batch_size"        env:"REQFLOW_EMBEDDING_BATCH_SIZE"`
+		TimeoutMs       int    `yaml:"timeout_ms"        env:"REQFLOW_EMBEDDING_TIMEOUT_MS"`
+		RerankModel     string `yaml:"rerank_model"      env:"REQFLOW_EMBEDDING_RERANK_MODEL"`
+		RerankTimeoutMs int    `yaml:"rerank_timeout_ms" env:"REQFLOW_EMBEDDING_RERANK_TIMEOUT_MS"`
 	} `yaml:"embedding"`
+
+	OpenSearch struct {
+		BaseURL     string `yaml:"base_url"     env:"REQFLOW_OPENSEARCH_BASE_URL"`
+		Username    string `yaml:"username"     env:"REQFLOW_OPENSEARCH_USERNAME"`
+		Password    string `yaml:"password"     env:"REQFLOW_OPENSEARCH_PASSWORD"`
+		IndexPrefix string `yaml:"index_prefix" env:"REQFLOW_OPENSEARCH_INDEX_PREFIX"`
+		TimeoutMs   int    `yaml:"timeout_ms"   env:"REQFLOW_OPENSEARCH_TIMEOUT_MS"`
+	} `yaml:"opensearch"`
 
 	Match struct {
 		DuplicateThreshold float64 `yaml:"duplicate_threshold" env:"REQFLOW_MATCH_DUPLICATE_THRESHOLD"`
@@ -182,6 +192,12 @@ func applyDefaults(cfg *Config) {
 	if cfg.FTS.TSConfig == "" {
 		cfg.FTS.TSConfig = "simple"
 	}
+	if cfg.Embedding.RerankModel == "" {
+		cfg.Embedding.RerankModel = "BAAI/bge-reranker-v2-m3"
+	}
+	if cfg.OpenSearch.IndexPrefix == "" {
+		cfg.OpenSearch.IndexPrefix = "reqflow"
+	}
 }
 
 // Validate 校验配置完整性。
@@ -197,6 +213,9 @@ func (c *Config) Validate() (errs, warns []string) {
 	if c.LLM.Provider != "" && c.LLM.Provider != "openai" && c.LLM.Provider != "anthropic" {
 		errs = append(errs, fmt.Sprintf("llm.provider = %q 非法，必须为 openai 或 anthropic", c.LLM.Provider))
 	}
+	if (strings.TrimSpace(c.OpenSearch.Username) == "") != (c.OpenSearch.Password == "") {
+		errs = append(errs, "opensearch.username 与 opensearch.password 必须同时配置或同时留空")
+	}
 	// fts.ts_config 会拼进索引与查询 SQL（表达式两侧），必须是合法的文本搜索配置标识
 	if !regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.]{0,62}$`).MatchString(c.FTS.TSConfig) {
 		errs = append(errs, fmt.Sprintf("fts.ts_config = %q 非法（须为 PG 文本搜索配置标识，如 simple / zhparser）", c.FTS.TSConfig))
@@ -205,7 +224,10 @@ func (c *Config) Validate() (errs, warns []string) {
 		warns = append(warns, "llm.api_key 未配置：需求文档 LLM 分析不可用（其余功能不受影响）")
 	}
 	if c.Embedding.APIKey == "" {
-		warns = append(warns, "embedding.api_key 未配置：语义匹配降级为仅精确匹配，生成数据集时不写入向量")
+		warns = append(warns, "embedding.api_key 未配置：语义检索、Retrieval Snapshot 向量构建与 rerank 不可用")
+	}
+	if strings.TrimSpace(c.OpenSearch.BaseURL) == "" {
+		warns = append(warns, "opensearch.base_url 未配置：Retrieval Snapshot BM25 构建与混合检索不可用")
 	}
 	if c.Parser.MinerU.Enabled && c.Parser.MinerU.APIToken == "" {
 		warns = append(warns, "parser.mineru.api_token 未配置：PDF 解析不可用（docx/md/txt 不受影响）")
@@ -220,7 +242,8 @@ func (c *Config) LLMReady() bool {
 func (c *Config) EmbeddingReady() bool {
 	return c.Embedding.APIKey != "" && c.Embedding.BaseURL != "" && c.Embedding.Model != ""
 }
-func (c *Config) MinerUReady() bool { return c.Parser.MinerU.Enabled && c.Parser.MinerU.APIToken != "" }
+func (c *Config) OpenSearchReady() bool { return strings.TrimSpace(c.OpenSearch.BaseURL) != "" }
+func (c *Config) MinerUReady() bool     { return c.Parser.MinerU.Enabled && c.Parser.MinerU.APIToken != "" }
 
 // FilledSecrets 列出已配置非空的敏感字段名（仅名称不含值，用于启动日志自检）。
 func (c *Config) FilledSecrets() []string {
@@ -230,6 +253,9 @@ func (c *Config) FilledSecrets() []string {
 	}
 	if c.Embedding.APIKey != "" {
 		out = append(out, "embedding.api_key")
+	}
+	if c.OpenSearch.Password != "" {
+		out = append(out, "opensearch.password")
 	}
 	if c.Parser.MinerU.APIToken != "" {
 		out = append(out, "parser.mineru.api_token")
@@ -254,6 +280,9 @@ func CheckExampleLeak(path string) []string {
 		Embedding struct {
 			APIKey string `yaml:"api_key"`
 		} `yaml:"embedding"`
+		OpenSearch struct {
+			Password string `yaml:"password"`
+		} `yaml:"opensearch"`
 		Parser struct {
 			MinerU struct {
 				APIToken string `yaml:"api_token"`
@@ -272,6 +301,9 @@ func CheckExampleLeak(path string) []string {
 	}
 	if probe.Embedding.APIKey != "" {
 		out = append(out, "embedding.api_key")
+	}
+	if probe.OpenSearch.Password != "" {
+		out = append(out, "opensearch.password")
 	}
 	if probe.Parser.MinerU.APIToken != "" {
 		out = append(out, "parser.mineru.api_token")

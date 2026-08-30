@@ -19,5 +19,25 @@ services:
       timeout: 3s
       retries: 10
 
+  opensearch:
+    # 仅用于本地开发；生产环境必须启用认证和 TLS。
+    image: opensearchproject/opensearch:3.8.0
+    container_name: reqflow-opensearch
+    environment:
+      discovery.type: single-node
+      DISABLE_SECURITY_PLUGIN: "true"
+      OPENSEARCH_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+      - "9600:9600"
+    volumes:
+      - reqflow_opensearch_data:/usr/share/opensearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:9200/_cluster/health >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+
 volumes:
   reqflow_pgdata:
+  reqflow_opensearch_data:

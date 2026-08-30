@@ -3,7 +3,7 @@
 > 面向下一个接手开发的同学。本文只回答四件事：**项目现在是什么、怎么跑起来、改代码必须知道的上下文、接手后干什么**。
 > 产品定位、方向性决策与「重复人工任务 → AI 驱动 Task」的抽离范式见 [PRODUCT.md](./PRODUCT.md)；技术实现细节以本文件为准。
 
-> **2026-08-30 交接状态**：项目正在从固定的需求导入工作台重建为异构数据管线 V2。阶段 A、B、C、D 已完成，下一里程碑是 RetrievalProfile、混合检索和 Agent 知识工具。V2 不保留旧数据库、旧 API、旧前端或旧任务流程兼容；完整设计和阶段验收见 [DATA_PIPELINE_V2_PLAN.md](./DATA_PIPELINE_V2_PLAN.md)。本文中标为“Legacy”的内容只用于拆除当前仍可运行的旧路径，不是后续扩展入口。
+> **2026-08-30 交接状态**：项目正在从固定的需求导入工作台重建为异构数据管线 V2。阶段 A、B、C、D、E 已完成，下一里程碑是 `bug_analysis` 等业务任务。V2 不保留旧数据库、旧 API、旧前端或旧任务流程兼容；完整设计和阶段验收见 [DATA_PIPELINE_V2_PLAN.md](./DATA_PIPELINE_V2_PLAN.md)。本文中标为“Legacy”的内容只用于拆除当前仍可运行的旧路径，不是后续扩展入口。
 
 ---
 
@@ -16,8 +16,9 @@
 - **输入绑定已收口**：Task API 可用 `resource_id` 或 Dataset `resource_alias` 定位输入；应用层验证资源存在性，Alias 只在创建时解析一次，`dataset_boundary` 自动固化 `through_seq`，Retrieval Snapshot 自动固化 `source_seq`。
 - **V2 前端入口已接通**：`/v2/tasks` 提供独立 Task 目录、TaskDefinition 快照驱动的通用详情、GET SSE 自动重连、Schema 驱动审核与不可变审核/发布回放。Legacy 页面仍可运行，但不要继续在旧路径上增加业务类型。
 - **Stage D 已闭环**：`data.query_derive` 按 Base Dataset Boundary + PipelineCursor 增量读取，确定性展开语义单元并生成标准 Query Item；Query Batch、Dataset 位点、Outbox 和 Cursor 在同一事务提交，失败不推进 Cursor。
+- **Stage E 已闭环**：不可变 RetrievalProfile、`retrieval.build` 状态机、OpenSearch BM25、pgvector Chunk、查询级加权 RRF/阈值/召回数、SiliconFlow rerank 和 KnowledgeScope Agent 工具已经落地。
 - **可复用底座**：LLM Provider、Agent Loop、工具调用、会话序列化、`ask_human`、SSE persist-then-publish 和前端重连机制继续复用，但要通过 V2 Executor/Orchestrator 接入。
-- **下一步**：进入 RetrievalProfile 校验、RetrievalSnapshot 状态机、OpenSearch BM25、pgvector Chunk 与 RRF HybridSearchService。执行顺序见 §5。
+- **下一步**：使用 RetrievalSnapshot 和知识工具实现 `bug_analysis`，再推进规格书 Artifact 与知识图谱。执行顺序见 §5。
 - **仓库**：`/Users/xxxg/demo/ReqFlow`。操作前始终先看 `git status --short`，不要回退不属于当前任务的修改。
 
 ## 2. 怎么接手：跑起来
@@ -90,7 +91,10 @@ internal/domain  实体模型 + 纯领域逻辑（零三方依赖，仅标准库
 | `internal/domain/model/dataset_pipeline.go` | DatasetSchemaDefinition、DatasetBatch、Alias、provenance、PipelineCursor，以及 ExtractionProfile/Unit/RecordDraft Manifest |
 | `internal/domain/model/resource.go` | ResourceType、Task Port、TaskResourceBinding、Dataset/Retrieval/ParsedDocuments/RecordDrafts Boundary |
 | `internal/domain/model/task_definition.go` | V2 StepKind、TaskDefinition、StepDefinition、StepRun；StepRun 用 `step_id + ordinal` 定位，不按 kind 定位 |
-| `internal/domain/model/retrieval.go` | RetrievalProfile、Snapshot、Chunk 领域形状，尚未接应用服务 |
+| `internal/domain/model/retrieval.go` | RetrievalProfile、Snapshot、Chunk、运行时检索策略和带排名证据的命中模型 |
+| `internal/app/retrieval/` | Profile 用例、Snapshot 构建状态机、加权 RRF HybridSearchService、`retrieval.build` Executor 和 KnowledgeScope Agent 工具 |
+| `internal/infra/{opensearch,embedding/reranker.go}` | OpenSearch BM25 适配器与复用 embedding 凭证的 SiliconFlow rerank 适配器 |
+| `internal/infra/repository/retrieval_repo.go` | Profile/Snapshot/pgvector Chunk、attempt fencing 和 Agent 工具审计持久化 |
 | `internal/domain/logic/dataset_contract.go` | JSON Schema 受控子集、UI Schema、Item 校验、key_fields、item_key、fingerprint、commit_seq 纯函数 |
 | `internal/domain/logic/task_definition.go` | DAG、端口引用、资源类型、Executor Kind、拓扑顺序和定义快照哈希校验 |
 | `internal/app/pipeline/dataset_service.go` | 创建不可变 Schema/Dataset，创建和提交追加型 Batch；提交前完成字段校验和稳定排序 |
@@ -678,9 +682,9 @@ Batch、Dataset 汇总、Outbox 和 Cursor 推进。PostgreSQL + V2 Worker 集�
 顺序固定：
 
 1. [x] PipelineCursor + 基础 Dataset 增量派生 Query Dataset。
-2. [ ] RetrievalProfile 校验和 RetrievalSnapshot 构建状态机。
-3. [ ] OpenSearch BM25、pgvector Chunk、RRF HybridSearchService。
-4. [ ] `list_knowledge_sources/search_knowledge/get_knowledge_item` Agent 工具和 KnowledgeScope。
+2. [x] RetrievalProfile 校验和 RetrievalSnapshot 构建状态机。
+3. [x] OpenSearch BM25、pgvector Chunk、加权 RRF HybridSearchService 和可选 rerank。
+4. [x] `list_knowledge_sources/search_knowledge/get_knowledge_item` Agent 工具、KnowledgeScope 和审计。
 5. [ ] `bug_analysis`，然后是规格书 Artifact，最后才是知识图谱节点/边。
 
 不要直接从 Legacy `internal/app/bug/doc.go` 开始实现 Bug 流程；它保留的是旧 TaskManager 思路，只能作为业务字段和交互需求参考。

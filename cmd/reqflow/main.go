@@ -19,12 +19,14 @@ import (
 	"reqflow/internal/app"
 	apporchestrator "reqflow/internal/app/orchestrator"
 	apppipeline "reqflow/internal/app/pipeline"
+	appretrieval "reqflow/internal/app/retrieval"
 	"reqflow/internal/infra/blobstore"
 	"reqflow/internal/infra/config"
 	"reqflow/internal/infra/database"
 	"reqflow/internal/infra/embedding"
 	"reqflow/internal/infra/httpgin"
 	"reqflow/internal/infra/llm"
+	"reqflow/internal/infra/opensearch"
 	"reqflow/internal/infra/parser"
 	"reqflow/internal/infra/repository"
 )
@@ -103,6 +105,16 @@ func main() {
 		Model:     cfg.Embedding.Model,
 		BatchSize: cfg.Embedding.BatchSize,
 		Timeout:   time.Duration(cfg.Embedding.TimeoutMs) * time.Millisecond,
+	})
+	rerankClient := embedding.NewReranker(embedding.RerankerOptions{
+		BaseURL: cfg.Embedding.BaseURL, APIKey: cfg.Embedding.APIKey,
+		Model:   cfg.Embedding.RerankModel,
+		Timeout: time.Duration(cfg.Embedding.RerankTimeoutMs) * time.Millisecond,
+	})
+	lexicalClient := opensearch.New(opensearch.Options{
+		BaseURL: cfg.OpenSearch.BaseURL, Username: cfg.OpenSearch.Username,
+		Password: cfg.OpenSearch.Password, IndexPrefix: cfg.OpenSearch.IndexPrefix,
+		Timeout: time.Duration(cfg.OpenSearch.TimeoutMs) * time.Millisecond,
 	})
 	docParser := parser.New(parser.Options{
 		MaxFileMB: cfg.Parser.MaxFileMB,
@@ -204,6 +216,17 @@ func main() {
 		logger.Error("data.query_derive Executor 初始化失败", "err", err)
 		os.Exit(1)
 	}
+	v2Retrieval, err := appretrieval.NewService(pipelineRepo, lexicalClient, embedClient, rerankClient,
+		appretrieval.Options{EmbeddingModel: cfg.Embedding.Model, PageSize: cfg.Embedding.BatchSize})
+	if err != nil {
+		logger.Error("V2 Retrieval 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	retrievalBuildExecutor, err := appretrieval.NewBuildExecutor(v2Retrieval)
+	if err != nil {
+		logger.Error("retrieval.build Executor 初始化失败", "err", err)
+		os.Exit(1)
+	}
 	v2Publish, err := apppipeline.NewPublishService(pipelineRepo, v2Datasets)
 	if err != nil {
 		logger.Error("V2 Publish Pipeline 初始化失败", "err", err)
@@ -216,7 +239,8 @@ func main() {
 	}
 	// V2 Registry 只注册已经具备真实资源持久化与恢复语义的 Executor。
 	v2Registry, err := apporchestrator.NewRegistry(sourceParseExecutor, llmExtractExecutor,
-		dataTransformExecutor, dataValidateExecutor, dataPublishExecutor, queryDatasetExecutor)
+		dataTransformExecutor, dataValidateExecutor, dataPublishExecutor, queryDatasetExecutor,
+		retrievalBuildExecutor)
 	if err != nil {
 		logger.Error("V2 Executor Registry 初始化失败", "err", err)
 		os.Exit(1)
@@ -267,7 +291,8 @@ func main() {
 		V2Definitions: v2Definitions, V2Runtime: v2Runtime, V2TaskQueries: v2TaskQueries,
 		V2Datasets: v2Datasets, V2QueryDatasets: v2QueryDatasets,
 		V2Assets: v2Assets, V2Extractions: v2Extractions, V2Cleaning: v2Cleaning, V2Review: v2Review,
-		UploadDir: cfg.Workspace.UploadDir, MaxFileMB: int64(cfg.Parser.MaxFileMB),
+		V2Retrieval: v2Retrieval,
+		UploadDir:   cfg.Workspace.UploadDir, MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})
 	mountStatic(engine)
 

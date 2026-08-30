@@ -37,6 +37,16 @@ embedding:
   dimensions: 1024      # 第一波向量列固定 1024 维，如需其它维度须调整迁移
   batch_size: 32
   timeout_ms: 30000
+  rerank_model: BAAI/bge-reranker-v2-m3  # 与 embedding 复用 base_url / api_key
+  rerank_timeout_ms: 60000
+
+# RetrievalProfile 的 BM25 物理后端。本地 docker-compose 默认关闭安全插件。
+opensearch:
+  base_url: http://127.0.0.1:9200
+  username: ""
+  password: ""
+  index_prefix: reqflow
+  timeout_ms: 30000
 
 match:
   duplicate_threshold: 0.75   # 查重相似度阈值，低于视为新工作项

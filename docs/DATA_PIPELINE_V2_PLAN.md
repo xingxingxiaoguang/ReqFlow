@@ -1,13 +1,13 @@
 # ReqFlow 异构数据管线 V2 落地方案
 
-> 状态：实施中（阶段 A、B、C、D 已完成；下一阶段为混合检索与 Agent 知识工具）
+> 状态：实施中（阶段 A、B、C、D、E 已完成；下一阶段为业务任务）
 > 日期：2026-08-30
 > 适用范围：ReqFlow 当前未上线版本
 > 关联文档：[产品总纲](./PRODUCT.md) · [交接文档](./HANDOVER.md) · [技术债台账](./DEBT.md)
 
 ## 0. 实施状态
 
-截至 2026-08-30，阶段 A 核心底座、阶段 B Orchestrator、阶段 C 产品规格清洗纵向切片和阶段 D Query Dataset 增量派生已经落地：
+截至 2026-08-30，阶段 A 核心底座、阶段 B Orchestrator、阶段 C 产品规格清洗纵向切片、阶段 D Query Dataset 增量派生和阶段 E 混合检索已经落地：
 
 - [x] Asset、ParsedDocument、不可变 DatasetSchemaDefinition、DatasetBatch、ResourceBinding、TaskDefinition、StepRun、RetrievalSnapshot 和 Artifact 领域模型。
 - [x] JSON Schema 受控子集校验、规范化和稳定哈希。
@@ -39,7 +39,7 @@
 - [x] `data.query_derive` Executor：固定 Base Dataset `through_seq`，按 PipelineCursor 只读取未消费 `commit_seq`，确定性展开语义单元并生成 aliases/keywords/facets/source_refs。
 - [x] Query Dataset Batch 与 PipelineCursor 同事务提交；并发/失败时整批回滚且 Cursor 不前移，重试复用 StepRun 幂等 Batch。
 - [x] Query Item 固化 `source_item_id + source_fingerprint`，provenance 同时保留 Base DatasetItem 与原 Asset/Block 链路。
-- [ ] RetrievalProfile、混合检索和 Agent 知识工具。
+- [x] 不可变 RetrievalProfile、`retrieval.build`、OpenSearch BM25、pgvector Chunk、加权 RRF、SiliconFlow rerank 和 KnowledgeScope Agent 工具。
 
 V2 开发期间暂以 `0012_pipeline_v2_foundation` 叠加现有迁移，目的是让每批代码可以独立构建和验证；旧运行路径切除后按本文第 14 节压平为新的初始迁移。这不是产品兼容层，V2 服务不通过旧 API 或旧模型读写。
 
@@ -852,10 +852,28 @@ RetrievalChunk
   "retrieval_snapshot_id": "...",
   "query": "设备高温后为什么自动关断",
   "filters": {"product_family": ["X100"]},
-  "mode": "hybrid",
-  "top_k": 20
+  "strategy": {
+    "mode": "hybrid",
+    "lexical_weight": 0.35,
+    "semantic_weight": 0.65,
+    "score_threshold": 0.12,
+    "recall_limit": 100,
+    "top_k": 20,
+    "rerank_enabled": true,
+    "rerank_top_n": 10
+  }
 }
 ```
+
+`lexical_weight` 与 `semantic_weight` 是单次查询的运行时比例，服务端会归一化，
+不写回不可变 RetrievalProfile。`mode=lexical/semantic` 分别强制只启用精准词法或语义通道。
+`recall_limit` 控制每个后端的候选召回规模，`top_k` 控制未重排时的最终返回数；
+`score_threshold` 作用于 0..1 的归一化加权 RRF 分数。
+
+`rerank_enabled=true` 时，融合并过阈值的候选会调用与 embedding 相同供应商、复用同一
+`base_url/api_key` 的 rerank 接口；首个实现使用 `BAAI/bge-reranker-v2-m3`。
+`rerank_top_n` 独立控制重排后的最终返回数量，返回结果同时保留 `fusion_score`、
+`rerank_score` 和 lexical/semantic 原始排名证据。
 
 处理过程：
 
@@ -1402,19 +1420,20 @@ retrieval_snapshot_id
 
 范围：
 
-- RetrievalProfile。
-- OpenSearch BM25。
-- pgvector Chunk/Embedding。
-- RetrievalSnapshot 激活。
-- RRF HybridSearchService。
-- Agent 知识工具和审计。
+- [x] RetrievalProfile 创建、读取、目录和不可变 clone；字段类型、analyzer、chunker、embedding model 与 RRF 合同创建时校验。
+- [x] OpenSearch BM25：按 Dataset + Profile 建物理索引，按 DatasetItemID 幂等增量写入。
+- [x] pgvector Chunk/Embedding：`rune_v1` 分块合同、模型身份和 Item 聚合搜索。
+- [x] `retrieval.build` 与 RetrievalSnapshot building → validating → active/failed 状态机，StepRun attempt fencing。
+- [x] 加权 RRF HybridSearchService：词法/语义权重、融合阈值、召回数、top_k、Filter 白名单均为查询级参数。
+- [x] SiliconFlow rerank：复用 embedding 凭证，支持启停和独立 `rerank_top_n`。
+- [x] `list_knowledge_sources/search_knowledge/get_knowledge_item`、KnowledgeScope 逻辑名白名单和持久化调用审计。
 
 验收：
 
-- Snapshot 未完整覆盖时不能 Active。
-- Agent 只能查询 KnowledgeScope 内的数据。
-- 每个命中可返回 DatasetItem、Asset 和 Block 引用。
-- 固定评测集 Hybrid 指标不低于 BM25 和 Vector 中较优者的预定门槛。
+- [x] Snapshot 未完整覆盖时不能 Active；真实 PostgreSQL 集成测试覆盖增量构建和 pgvector Filter 查询。
+- [x] Agent 只能查询 KnowledgeScope 内的数据，越权逻辑名拒绝并记审计。
+- [x] 每个命中返回 DatasetItem fields、Chunk、排名证据和原 provenance，Asset/Block 引用不丢失。
+- [ ] 固定评测集 Hybrid 指标不低于 BM25 和 Vector 中较优者的预定门槛（需要业务标注集，作为上线门禁，不阻塞当前工程阶段）。
 
 ### 阶段 F：业务任务
 
