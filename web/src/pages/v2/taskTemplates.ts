@@ -32,7 +32,7 @@ export function createDefinition(template: NoCodeTemplateId, name: string, value
     output_bindings: { batch: '$step.publish.batch' },
     steps: [
       { id: 'parse', name: '解析文件', kind: 'source.parse', inputs: { assets: '$task.assets' }, outputs: { documents: 'parsed_documents' }, config: {} },
-      { id: 'extract', name: '结构化抽取', kind: 'llm.extract', depends_on: ['parse'], inputs: { documents: '$step.parse.documents' }, outputs: { drafts: 'record_drafts' }, config: { extraction_profile_id: values.extractionProfileId } },
+      { id: 'extract', name: '结构化抽取', kind: 'document.extract', depends_on: ['parse'], inputs: { documents: '$step.parse.documents' }, outputs: { drafts: 'record_drafts' }, config: { extraction_profile_id: values.extractionProfileId } },
       { id: 'transform', name: '确定性清洗', kind: 'data.transform', depends_on: ['extract'], inputs: { drafts: '$step.extract.drafts' }, outputs: { records: 'transformed_records' }, config: {} },
       { id: 'validate', name: 'Schema 与业务校验', kind: 'data.validate', depends_on: ['transform'], inputs: { records: '$step.transform.records', dataset: '$task.target' }, outputs: { validation: 'validation_results' }, config: {} },
       { id: 'review', name: '人工审核', kind: 'human.review', depends_on: ['validate'], inputs: { validation: '$step.validate.validation' }, outputs: { approved: 'approved_records' }, config: { allow_edit: true } },
@@ -47,7 +47,7 @@ export function createDefinition(template: NoCodeTemplateId, name: string, value
     steps: [{ id: 'build', name: '构建混合检索索引', kind: 'retrieval.build', inputs: { dataset: '$task.dataset' }, outputs: { snapshot: 'retrieval_snapshot' }, config: { retrieval_profile_id: values.retrievalProfileId } }],
   }
   const analyze = {
-    id: 'analyze', name: '知识检索与结构化分析', kind: 'agent.analyze',
+    id: 'analyze', name: '知识检索与结构化分析', kind: 'knowledge.analyze',
     inputs: { knowledge: '$task.knowledge' }, outputs: { analysis: 'analysis_result' },
     config: { analysis_profile_id: values.analysisProfileId, knowledge_sources: { knowledge: { name: 'business_knowledge', description: '本任务的权威业务知识' } } },
   }

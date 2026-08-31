@@ -71,6 +71,7 @@ parser:
 # 预留：第二波 OAuth 用户授权令牌入库时的字段加密密钥（64 位 hex = 32 字节）
 security:
   encryption_key: ""
+  encryption_key_file: ./data/.platform-config.key  # encryption_key 为空时自动生成，仅限本机读取
 
 workspace:
   name: ReqFlow

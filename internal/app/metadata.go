@@ -94,20 +94,15 @@ type PromptPreviewInput struct {
 	Special  string `json:"special_requirements,omitempty"`
 }
 
-// PromptPreview 三段提示词的实时渲染（与运行时装配同一函数）。
+// PromptPreview 展示 Agent 系统提示词与首轮消息。
 type PromptPreview struct {
 	TaskType          string `json:"task_type"`
-	AgentSystemPrompt string `json:"agent_system_prompt"` // agent 模式系统提示词
+	AgentSystemPrompt string `json:"agent_system_prompt"`
 	AgentFirstMessage string `json:"agent_first_message"` // 首轮文档清单（模板示意）
-	ClassicPrompt     string `json:"classic_prompt"`      // 单发模式完整 prompt
 }
 
-// 预览的文档占位（预览无真实文档：首轮消息为模板示意，规模数字随实际文档；
-// 单发 prompt 中标注全文拼入位置）。
-const (
-	previewDocName = "（文档名，如：需求文档 V1.2.docx）"
-	previewDocText = "（需求文档全文将在分析时拼入此处）"
-)
+// 预览无真实文档：首轮消息为模板示意，规模数字随实际文档。
+const previewDocName = "（文档名，如：需求文档 V1.2.docx）"
 
 // MetadataService 元数据目录用例。
 type MetadataService struct {
@@ -268,7 +263,7 @@ func (s *MetadataService) PromptPreview(in PromptPreviewInput) (*PromptPreview, 
 // previewToolset 以零值运行依赖构造工具集（空文档/空 sink/无交互桥）：
 // 与运行时 buildToolset 同一构造函数，预览即装配的精确复现。
 func previewToolset(d TaskTypeDefinition) []agent.Tool {
-	return buildToolset(AnalyzeInput{}, tools.NewDraftSink(), d.Profile)
+	return tools.BuildForRun(tools.RunDeps{Doc: tools.DocSource{}, Sink: tools.NewDraftSink(), Write: d.Profile.Write})
 }
 
 // promptPreviewOf 按聚合定义实时渲染三段提示词（effective 与向导草稿预览共用）。
@@ -278,6 +273,5 @@ func promptPreviewOf(d TaskTypeDefinition, special string) *PromptPreview {
 		TaskType:          d.Type,
 		AgentSystemPrompt: renderAgentSystem(now, special, previewToolset(d), d.Profile),
 		AgentFirstMessage: renderDocManifest(tools.DocSource{FileName: previewDocName}),
-		ClassicPrompt:     renderAnalyzePrompt(previewDocText, now, special, d.Profile),
 	}
 }

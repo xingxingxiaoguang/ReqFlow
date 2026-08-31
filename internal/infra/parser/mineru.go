@@ -46,7 +46,7 @@ func NewMinerU(opt MinerUOptions) *MinerU {
 // 流程：申请预签名上传链接 → PUT 上传 → 轮询批次结果 → 下载 zip 取 full.md。
 func (m *MinerU) ParsePDF(ctx context.Context, filename string, content []byte, onProgress func(port.ParseProgress)) (string, error) {
 	if !m.opt.Enabled || m.opt.APIToken == "" {
-		return "", fmt.Errorf("PDF 解析未配置：请在 config.yaml 填写 parser.mineru.api_token 后重启（或使用 docx/md/txt 格式）")
+		return "", fmt.Errorf("PDF 解析未配置：请在平台配置中激活可用的 MinerU 配置（或使用 docx/md/txt 格式）")
 	}
 	ctx, cancel := context.WithTimeout(ctx, m.opt.Timeout)
 	defer cancel()

@@ -28,14 +28,14 @@ func validTaskDefinition() model.TaskDefinition {
 				Outputs: map[string]model.ResourceType{"documents": model.ResourceParsedDocuments},
 			},
 			{
-				ID: "extract_records", Name: "抽取记录", Kind: model.StepKindLLMExtract,
+				ID: "extract_records", Name: "抽取记录", Kind: model.StepKindDocumentExtract,
 				DependsOn: []string{"parse_documents"},
 				Inputs:    map[string]string{"documents": "$step.parse_documents.documents"},
 				Outputs:   map[string]model.ResourceType{"drafts": model.ResourceRecordDrafts},
 				Config:    json.RawMessage(`{"profile_id":"p1"}`),
 			},
 			{
-				ID: "refine_records", Name: "二次抽取", Kind: model.StepKindLLMExtract,
+				ID: "refine_records", Name: "二次抽取", Kind: model.StepKindDocumentExtract,
 				DependsOn: []string{"extract_records"},
 				Inputs:    map[string]string{"drafts": "$step.extract_records.drafts"},
 				Outputs:   map[string]model.ResourceType{"validation": model.ResourceValidationResults},
@@ -89,7 +89,7 @@ func TestValidateTaskDefinitionAllowsBusinessAnalysisWorkflow(t *testing.T) {
 		},
 		Steps: []model.StepDefinition{
 			{
-				ID: "analyze", Name: "结构化分析", Kind: model.StepKindAgentAnalyze,
+				ID: "analyze", Name: "结构化分析", Kind: model.StepKindKnowledgeAnalyze,
 				Inputs:  map[string]string{"knowledge": "$task.knowledge"},
 				Outputs: map[string]model.ResourceType{"analysis": model.ResourceAnalysisResult},
 			},

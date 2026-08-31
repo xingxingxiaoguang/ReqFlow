@@ -6,18 +6,18 @@ import (
 )
 
 const (
-	StepKindSourceParse     StepKind = "source.parse"
-	StepKindLLMExtract      StepKind = "llm.extract"
-	StepKindDataTransform   StepKind = "data.transform"
-	StepKindDataValidate    StepKind = "data.validate"
-	StepKindDataPublish     StepKind = "data.publish"
-	StepKindDataQueryDerive StepKind = "data.query_derive"
-	StepKindRetrievalBuild  StepKind = "retrieval.build"
-	StepKindAgentAnalyze    StepKind = "agent.analyze"
-	StepKindAnalysisPublish StepKind = "data.analysis_publish"
-	StepKindArtifactRender  StepKind = "artifact.render"
-	StepKindGraphBuild      StepKind = "graph.build"
-	StepKindHumanReview     StepKind = "human.review"
+	StepKindSourceParse      StepKind = "source.parse"
+	StepKindDocumentExtract  StepKind = "document.extract"
+	StepKindDataTransform    StepKind = "data.transform"
+	StepKindDataValidate     StepKind = "data.validate"
+	StepKindDataPublish      StepKind = "data.publish"
+	StepKindDataQueryDerive  StepKind = "data.query_derive"
+	StepKindRetrievalBuild   StepKind = "retrieval.build"
+	StepKindKnowledgeAnalyze StepKind = "knowledge.analyze"
+	StepKindAnalysisPublish  StepKind = "data.analysis_publish"
+	StepKindArtifactRender   StepKind = "artifact.render"
+	StepKindGraphBuild       StepKind = "graph.build"
+	StepKindHumanReview      StepKind = "human.review"
 )
 
 // StepDefinition 的输入引用使用 $task.<port> 或 $step.<step_id>.<port>。

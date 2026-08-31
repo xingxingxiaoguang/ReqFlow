@@ -1,4 +1,4 @@
-package pipeline
+package extraction
 
 import (
 	"context"
@@ -35,7 +35,7 @@ type ExtractionProfileView struct {
 	CreatedAt          time.Time       `json:"created_at"`
 }
 
-func (s *ExtractionService) RegisterProfile(ctx context.Context, request CreateExtractionProfileRequest) (*ExtractionProfileView, error) {
+func (s *Service) RegisterProfile(ctx context.Context, request CreateExtractionProfileRequest) (*ExtractionProfileView, error) {
 	profile, err := s.CreateProfile(ctx, CreateExtractionProfileInput(request))
 	if err != nil {
 		return nil, err
@@ -44,7 +44,7 @@ func (s *ExtractionService) RegisterProfile(ctx context.Context, request CreateE
 	return &view, nil
 }
 
-func (s *ExtractionService) ViewProfile(ctx context.Context, id string) (*ExtractionProfileView, error) {
+func (s *Service) ViewProfile(ctx context.Context, id string) (*ExtractionProfileView, error) {
 	profile, err := s.GetProfile(ctx, id)
 	if err != nil {
 		return nil, err
@@ -105,7 +105,7 @@ type RecordDraftSetView struct {
 	FinishedAt          time.Time            `json:"finished_at,omitempty"`
 }
 
-func (s *ExtractionService) ViewRecordDraftSet(ctx context.Context, id string) (*RecordDraftSetView, error) {
+func (s *Service) ViewRecordDraftSet(ctx context.Context, id string) (*RecordDraftSetView, error) {
 	set, units, drafts, err := s.GetRecordDraftSet(ctx, id)
 	if err != nil {
 		return nil, err

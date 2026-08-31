@@ -11,6 +11,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
+	"strings"
 )
 
 // Encryptor AES-256-GCM 加解密器；密钥为 32 字节（由 64 位 hex 配置解析）。
@@ -39,6 +42,50 @@ func New(keyHex string) (*Encryptor, error) {
 		return nil, err
 	}
 	return &Encryptor{aead: aead}, nil
+}
+
+// NewOrCreate 优先使用显式配置的主密钥；未配置时在本机创建权限为 0600 的
+// 持久化密钥文件。这样平台配置密钥不会明文入库，也不会因服务重启而失效。
+func NewOrCreate(keyHex, keyFile string) (*Encryptor, error) {
+	if strings.TrimSpace(keyHex) != "" {
+		return New(strings.TrimSpace(keyHex))
+	}
+	keyFile = strings.TrimSpace(keyFile)
+	if keyFile == "" {
+		return nil, errors.New("加密密钥与密钥文件不能同时为空")
+	}
+	if raw, err := os.ReadFile(keyFile); err == nil {
+		return New(strings.TrimSpace(string(raw)))
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("读取平台配置密钥文件: %w", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(keyFile), 0o700); err != nil {
+		return nil, fmt.Errorf("创建平台配置密钥目录: %w", err)
+	}
+	key := make([]byte, 32)
+	if _, err := io.ReadFull(rand.Reader, key); err != nil {
+		return nil, err
+	}
+	encoded := hex.EncodeToString(key)
+	file, err := os.OpenFile(keyFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, os.ErrExist) {
+		raw, readErr := os.ReadFile(keyFile)
+		if readErr != nil {
+			return nil, readErr
+		}
+		return New(strings.TrimSpace(string(raw)))
+	}
+	if err != nil {
+		return nil, fmt.Errorf("创建平台配置密钥文件: %w", err)
+	}
+	if _, err = file.WriteString(encoded + "\n"); err != nil {
+		_ = file.Close()
+		return nil, err
+	}
+	if err = file.Close(); err != nil {
+		return nil, err
+	}
+	return New(encoded)
 }
 
 // Encrypt 输出 base64(nonce + 密文)。

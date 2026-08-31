@@ -26,9 +26,6 @@ func TestPromptPreviewRenders(t *testing.T) {
 	if !strings.Contains(pv.AgentFirstMessage, "read_document") {
 		t.Fatal("首轮消息缺首步行动指引")
 	}
-	if !strings.Contains(pv.ClassicPrompt, "输出格式") || !strings.Contains(pv.ClassicPrompt, "重点关注性能需求") {
-		t.Fatal("单发 prompt 缺输出契约或额外要求")
-	}
 	// Role 的 {field_spec} 占位必须已被渲染替换（原文不外漏）
 	if strings.Contains(pv.AgentSystemPrompt, "{field_spec}") {
 		t.Fatal("系统提示词仍含未渲染的 {field_spec} 占位")

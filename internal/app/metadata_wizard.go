@@ -227,7 +227,7 @@ func composeExtensionDefinition(typ, datasetType string, wf model.Workflow, sc m
 		Workflow:    wf,
 		DatasetType: datasetType,
 		Schema:      func() model.DatasetSchema { return sc },
-		Profile: AnalyzeProfile{
+		Profile: MetadataAgentProfile{
 			Role:    role,
 			Example: example,
 			Write:   tools.DefaultWriteSpec(),

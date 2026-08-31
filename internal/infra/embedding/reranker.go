@@ -42,7 +42,7 @@ func (r *Reranker) Available() bool {
 
 func (r *Reranker) Rerank(ctx context.Context, query string, documents []string, topN int) ([]port.RerankResult, error) {
 	if !r.Available() {
-		return nil, fmt.Errorf("rerank 未配置（复用 embedding base_url/api_key，并配置 rerank_model）")
+		return nil, fmt.Errorf("rerank 未配置，请在平台配置中激活可用配置")
 	}
 	if len(documents) == 0 {
 		return []port.RerankResult{}, nil

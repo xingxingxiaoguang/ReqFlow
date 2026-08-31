@@ -121,7 +121,7 @@ type ExtractionProfile struct {
 	CreatedAt          time.Time
 }
 
-// RecordDraftSet 是 llm.extract 的一等输出 Manifest。它与一个解析结果集和一个
+// RecordDraftSet 是 document.extract 的一等输出 Manifest。它与一个解析结果集和一个
 // 不可变 ExtractionProfile 绑定，后续 transform/validate 只读取这个快照资源。
 type RecordDraftSet struct {
 	ID                  string
@@ -151,7 +151,7 @@ const (
 	RecordDraftSetFailed    = "failed"
 )
 
-// ExtractionUnit 是按 DocumentBlock 稳定切分的最小 LLM 调用单元。UnitKey 和
+// ExtractionUnit 是按 DocumentBlock 稳定切分的最小抽取 Agent 运行单元。UnitKey 和
 // InputHash 由输入区块与 Profile 决定，重试时成功单元不会重复调用模型。
 type ExtractionUnit struct {
 	ID                string
@@ -177,6 +177,7 @@ type ExtractionUnit struct {
 // LLMUsage 是领域层可持久化的模型用量快照；Provider 的响应类型在应用层转换，
 // 仓储不依赖具体 LLM port 实现。
 type LLMUsage struct {
+	RequestCount     int
 	InputTokens      int
 	OutputTokens     int
 	CacheReadTokens  int

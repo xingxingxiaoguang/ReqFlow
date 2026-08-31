@@ -31,7 +31,7 @@ llm:
   temperature: 0.9
   max_tokens: 128000
   timeout_ms: 600000
-  agent_mode: false     # true 时需求分析启用 agent loop：模型经工具自主工作——
+  agent_mode: true     # true 时需求分析启用 agent loop：模型经工具自主工作——
                        # read_document 分批阅读 / search_document 检索定位 /
                        # write_work_items 分批产出草稿 / ask_human 关键决策点问人
                        # （草稿落库仍需人工确认）
@@ -77,6 +77,7 @@ parser:
 # 预留：第二波 OAuth 用户授权令牌入库时的字段加密密钥（64 位 hex = 32 字节）
 security:
   encryption_key: ""
+  encryption_key_file: ./data/.platform-config.key  # encryption_key 为空时自动生成，仅限本机读取
 
 workspace:
   name: ReqFlow

@@ -101,7 +101,9 @@ internal/domain  实体模型 + 纯领域逻辑（零三方依赖，仅标准库
 | `internal/domain/logic/task_definition.go` | DAG、端口引用、资源类型、Executor Kind、拓扑顺序和定义快照哈希校验 |
 | `internal/app/pipeline/dataset_service.go` | 创建不可变 Schema/Dataset，创建和提交追加型 Batch；提交前完成字段校验和稳定排序 |
 | `internal/app/pipeline/{asset_service,source_parse_executor}.go` | Asset/AssetSet 用例、逐文件结构化解析、缓存恢复、checkpoint/progress 与首个机器 Executor |
-| `internal/app/pipeline/{extraction_service,llm_extract_executor}.go` | Profile 用例、稳定分块、严格 LLM 抽取、原文证据校验、逐单元恢复和 `llm.extract` Executor |
+| `internal/app/agent/{loop,run}.go` | 所有流程 Agent 共用的循环、显式终止、可恢复 RunState、用量统计、trace/checkpoint 节流和通用 `agent_runs` 协议 |
+| `internal/app/extraction/` | Profile 用例、稳定分块、抽取领域工具/状态、原文证据校验和 `document.extract` Executor |
+| `internal/app/analysis/` | KnowledgeScope 工具、`submit_analysis_result` Schema 校验完成工具、分析领域状态和 `knowledge.analyze` Executor |
 | `internal/domain/logic/record_cleaning.go` | 受控归一化/校验 DSL、确定性类型编码、字段 Diff 与业务规则纯函数 |
 | `internal/app/pipeline/{cleaning_service,cleaning_executors}.go` | TransformedRecordSet/ValidationResultSet 用例、逐记录恢复和 `data.transform`/`data.validate` Executor |
 | `internal/app/pipeline/{review_service,review_api}.go` | 从 ValidationResultSet 生成不可变 ApprovedRecordSet；审核决定全量覆盖、编辑重校验、重试幂等 |
@@ -125,7 +127,7 @@ internal/domain  实体模型 + 纯领域逻辑（零三方依赖，仅标准库
 | `internal/infra/httpgin/handler_v2_*.go` | `/api/v2` 最小独立入口；Task SSE 从数据库快照 diff，不以进程 Broker 为事实源 |
 | `internal/infra/database/migrations/0012_pipeline_v2_foundation.*.sql` | V2 分阶段开发迁移；Legacy 删除后压平为新 `0001` |
 | `internal/infra/database/migrations/0013_asset_parse_manifests.*.sql` | `source.parse` 多文件输出 Manifest 与逐文件状态 |
-| `internal/infra/database/migrations/0014_extraction_drafts.*.sql` | `llm.extract` 输出 Manifest、稳定 ExtractionUnit 与可追溯 RecordDraft |
+| `internal/infra/database/migrations/0014_extraction_drafts.*.sql` | `document.extract` 输出 Manifest、稳定 ExtractionUnit 与可追溯 RecordDraft |
 | `internal/infra/database/migrations/0015_transform_validation_manifests.*.sql` | `data.transform`/`data.validate` 不可变 Manifest、记录 Diff、问题和分类结果 |
 | `internal/infra/database/migrations/0016_approved_record_sets.*.sql` | 不可变 ApprovedRecordSet、全量审核决定、最终字段与 provenance |
 | `internal/infra/repository/pipeline_integration_test.go` | PostgreSQL 真机验证 Batch、Outbox、Task 快照和资源绑定 |
@@ -137,205 +139,9 @@ internal/domain  实体模型 + 纯领域逻辑（零三方依赖，仅标准库
 | `web/src/pages/v2/SchemaFieldEditor.tsx` | Schema 可视化字段编辑器；面向非技术用户，不把 JSON 作为主界面 |
 | `web/src/pages/v2/V2Metadata.tsx` | V2 Schema/Profile 目录与可视化创建入口 |
 
-#### Legacy 代码地图（理解和拆除用）
+### 3.3 元数据系统不变量
 
-下方代码已退出产品路由，仅用于识别和拆除。除 LLM/Agent/SSE 等明确复用部件外，不要继续扩展其 Schema 编辑、固定 StepKind、单文件输入或单数据集绑定设计。
-
-```
-cmd/reqflow/
-  main.go            组装点：配置→DB→迁移→infra→app→http；启动时 taskMgr.Recover
-                     （服务重启把卡在 running 的任务/步骤标为 paused 可手动继续）
-  static_embed.go    //go:build embed：go:embed dist，SPA 直出（注意：不用 http.FileServer，见 §4.5）
-  static_dev.go      //go:build !embed：开发模式空实现（前端由 Vite 提供）
-
-internal/domain/
-  model/model.go     Dataset/DatasetItem/Task/TaskStep/TaskItem（草稿字段袋：Fields 为
-                     schema 类型化字段 JSON 文本，与 DatasetItem.Fields 同构；Values()
-                     为读侧统一解析入口）+ 工作流元数据（Workflow/WorkflowStep/
-                     StepDependency/StepKind）+ 状态常量
-  logic/             全部纯函数 + 单元测试（改这里不需要起任何服务）
-    normalize.go       归一化精确匹配用（全角→半角含 U+3000、小写、空白压缩）
-    similarity.go      余弦距离 0-2 → 分数 0-1
-    lenientjson.go     LLM 宽松 JSON 恢复三级降级（剥围栏→截取[...]→修复截断数组）
-    draft.go           ⭐ NormalizeValues：LLM 输出 → schema 字段袋归一化——默认值
-                       （Default 含 {current_time}）/枚举越界回落/数字宽松解析/清洗声明
-                       （Clean）全部来自 FieldSpec，代码零字段知识（M2 消灭 B1 双源）
-    schema.go          ItemKeyOf（条目主键）/ FingerprintOf（指纹 = 字段值 + 向量相关
-                       schema 摘要盐——InKey/InVector/截断变更不再跳过重嵌，M3 已知
-                       缺陷修复）/ ValidateValues / VectorDocOf（向量文档组装）/
-                       VectorBodyLimit（写入/查询/指纹三方共用）；TitleFieldOf 标题口径
-    schema_compat.go   ⭐ 兼容规则引擎（M3 写守卫核心）：CheckSchemaCompat 按 METADATA
-                       §4.4 规则表逐条判定（✅/⚠️/❌）；ValidateSchemaShape 形状硬校验
-                       （字段 key 白名单 snake_case——key 会拼进过滤 SQL，注入面收口）；
-                       ValidateProfileText + {{ 模板注入告警
-    workflow.go        工作流形状校验 + 兼容引擎（M4）：ValidateWorkflowShape（kind 封闭集/
-                       seq 连续/步骤名唯一——注入面与编排语法收口）/ CheckWorkflowCompat
-                       （按步骤名对齐；gate_removed/output_missing 等全 ✅⚠️ 无 ❌——快照
-                       天然隔离存量任务）/ IsValidIdentifier 标识符白名单
-
-internal/port/
-  repo.go            DatasetRepo/TaskRepo/MetadataRepo（M3：registry/audit 仓储契约，
-                     effective = 每 (kind,key) 最大 version 且 enabled）+ 向量 DTO
-  llm.go             LLMClient（Stream/Complete/Ping）+ pi 式消息模型（Context/Message/内容块/
-                     ToolSpec 全可 JSON 序列化——Context 即会话，暂停检查点与 refine 以它为单位；
-                     Context.TaskSchema 为任务产出 schema 快照——Resume 重放按执行时
-                     schema，元数据热编辑不影响进行中任务）+ 流事件协议
-  embedding.go       Embedder（Available() 驱动降级）
-  parser.go          DocParser
-
-internal/app/        用例层；全部依赖构造注入，进度用回调上报
-  registry.go        ⭐ 任务类型聚合注册表（唯一注册点）：工作流 + 产出数据集类型 +
-                     schema + 装配 profile 一处声明（TaskTypeOf/TaskTypes）；旧查找
-                     入口（WorkflowOf/AnalyzeProfileOf/写入计划）均为薄委托，一致性
-                     有单测钉住；新增任务类型 = 加一条聚合定义（PRODUCT §4 决策二）；
-                     M3 起 seed 之上叠加 DB override 合并层（metadataOverrides，整体
-                     替换无竞态）——TaskTypeOf 返回 effective 视图，运行时仍进程内
-                     调用不经 HTTP；effectiveSchemaOf 是按数据集类型工作的读侧
-                     （match/query）统一入口
-  workflow.go        工作流定义（半元数据驱动）：步骤链 + 依赖声明（StepKind:
-                     parse/human/analyze/dataset）；创建任务时快照进 tasks.workflow
-                     （任务自描述，不受定义演进影响）；查找入口委托聚合注册表
-  metadata.go        ⭐ 元数据目录用例（M1 只读部分）：Catalog（总览 + M4 向导草稿组）/ TaskTypeView
-                     （聚合视图，含分构件 source + custom/draft 徽标字段）/
-                     PromptPreview（三段提示词实时渲染，复用运行时渲染器与工具集
-                     构造——预览即装配的精确复现）
-  metadata_edit.go   ⭐ 元数据受控编辑（M3 写路径）：Reload（seed→override→effective
-                     装载，写后整体刷新）/ UpdateSchema（形状校验→兼容引擎→❌拦截
-                     ⚠️confirm_risky→版本递增+审计）/ UpdateProfile / Reset*（enabled=
-                     false 最新版回退 seed，版本历史保留）/ History / Export / Import
-                     （逐项同一守卫；M4 起新类型按向导注册为草稿）/ UpdateWorkflow /
-                     ResetWorkflow / SetWorkflowStatus（启停翻锚行）/ Reload 装 kind=workflow +
-                     向导扩展类型（锚行 enabled 且三构件齐备才装载）；effective 版本 =
-                     seed.Version + 注册表版本（扩展类型无 seed 基线则仅行版本）
-  metadata_wizard.go ⭐ 新任务类型向导（M4）：RegisterTaskType 整体校验→三行落库
-                     （schema/profile 生效态就绪、workflow 锚行 disabled=草稿）→即时
-                     提示词预览；lookupDraftRows/WizardDraftView 草稿组合视图；
-                     composeExtensionDefinition 构件组装（Write 绑定 DefaultWriteSpec）
-  task.go            ⭐ TaskManager 任务门面：CRUD/编辑/触发/暂停/继续/完成/Recover +
-                     运行登记表（每任务单写者 goroutine）+ 数据集浏览透传——httpgin 唯一任务入口
-  runner.go          ⭐ 步骤执行器小接口（parse/analyze/dataset 服务结构即满足，测试注入假实现）
-                     + 按 StepKind 分发执行 + 元数据驱动的门推进（advanceGate）/
-                     触发校验（canTriggerStep）/ 暂停恢复；状态机转换先落库后发 Broker；
-                     触发时**同步预置任务级状态**（见 §3.3）；token 事件 150ms 节流合并（见 §4.2）；
-                     错误分类（ctx 取消→paused / 其他→门内重试或终态）
-  broker.go          ⭐ 进程内事件扇出（非阻塞发布，订阅/退订锁内串行）——SSE 可重接的基础
-  analyze.go         流式分析编排（agent 模式：文档经工具阅读 → write_work_items 分批产出 →
-                     必要时 ask_human 问人；sink 空则降级单发直调：prompt 渲染→流式→宽松
-                     恢复→非流式回退）→ 产出 AnalyzeOutcome（明细+会话 JSON+存档路径，不落库
-                     ——持久化移交 TaskManager）+ Resume（从 agent_context 检查点重放 sink 续跑）
-  analyze_profile.go 任务类型 → agent 装配描述（聚合注册表的 agent 侧构件；AnalyzeProfileOf
-                     委托注册表）：指令头（{field_spec} 占位由产出 schema 渲染）+
-                     写入工具绑定 + 单发示例。提示词零固定模板：字段规范段从 schema
-                     生成（FieldSpec.Prompt 同源），新增任务类型 = 聚合注册表加一条，装配零改动
-  dialog.go          ⭐ DialogHub 人工交互桥：ask_human 工具阻塞登记 → SSE dialog 事件 →
-                     HTTP Answer 投递；pending 随 SSE 快照下发（刷新恢复弹窗）；ctx 取消
-                     即空回答收束（任务暂停检查点语义不变）
-  dataset.go         ⭐ DatasetWriter 数据集生成用例：草稿 → 向量化（分批）→ 幂等写入数据集；
-                     任务产物的落点，任务间衔接的载体；含 DraftSaveInput 草稿 DTO
-                     （{id,fields}——schema 字段袋，形状由任务类型产出 schema 驱动）
-  prompt.go          ⭐ 提示词动态装配渲染器（零固定模板）：renderFieldSpecSection（schema →
-                     字段规范段，类型/枚举值域/必填自动标注 + FieldSpec.Prompt 提取说明）/
-                     renderAnalyzeHead（profile.Role 的 {field_spec} 占位替换）/ renderClassicOutputFormat
-                     （单发契约 + 示例：profile.Example 覆盖或 schema 骨架生成）/ renderAgentSystem
-                     （+ DocumentedTool 工具指南）/ renderDocManifest（agent 首轮文档清单 + 首步指引）
-  match.go           查重（两层匹配：归一化精确 + 向量语义，语料 = 需求数据集；入参为
-                     schema 字段袋，标题/向量文档口径由 requirement schema 驱动）
-  parse.go settings.go overview.go
-  bug/doc.go         Legacy Bug 域设计存档；只提取业务字段与人工确认需求，禁止
-                     再接入旧 TaskManager（新任务实现顺序见 §5.4）
-  tools/             ⭐ agent 过程工具（pi 工具模式，按运行构造，tools.BuildForRun）：read.go
-                     （read_document 行号分页+续读提示+超长行硬拆）/ search.go（search_document
-                     正则/字面量 grep 式输出+可行动截断提示）/ write.go（写入工具+DraftSink：
-                     WriteSpec={Name,Schema} 绑定任务产出 schema；草稿为字段袋 map，key =
-                     ItemKeyOf（与数据集条目身份同一口径）；归一化走 logic.NormalizeValues，
-                     同 key 覆盖增量产出、replace_all 整体重写、逐条校验即时回执；ReplayFrom
-                     按同一 WriteSpec 从会话重放）/ ask.go（ask_human 经 HumanAsker 阻塞问人，
-                     options 候选单选）；splitLines 全包共享，行号口径一致
-  agent/loop.go      pi 式 agent loop 骨架（Tool 接口 + 自然终止 + MaxIterations 安全阀 +
-                     length 截断整批 fail + ToolOutput 的 output/details 拆分）；ctx 取消即
-                     干净中止并返回已积累 Context——任务暂停检查点的载体
-
-internal/infra/
-  config/config.go   YAML+env 覆盖（反射走 env tag）、Validate（dsn 硬校验/其余降级 warns）、
-                     FilledSecrets/CheckExampleLeak（安全自检）；example.yaml 内嵌（首启生成模板）
-  database.go         GORM 连接（重试）+ 手写迁移器（内嵌 SQL，schema_migrations 表，幂等）
-  migrations/         0001_init（projects/work_items 等，已被 0005 剪除）/ 0003_tasks（任务三表）
-                       / 0004_workflow（tasks.workflow 列）/ 0005_datasets（datasets/
-                       dataset_items 建表 + 任务衔接列 + DROP 平台语料表）/ 0006_dataset_generic
-                       （数据集通用底座：item_key/fingerprint/元数据列）/ 0007_archive（归档表）
-                       / 0008_task_items_fields（task_items 推倒重建为字段袋：fields TEXT JSON，
-                       与 dataset_items.fields 决策一致）/ 0009_metadata_registry + 0010_metadata_audit
-                       （M3 元数据覆盖层与审计，payload 同为 TEXT JSON）；研发阶段无数据搬迁，改表直接推倒重建
-  repository/        仓储实现（GORM + pgvector；dataset_repo 的 Raw SQL 向量检索注意
-                      **显式列映射**——嵌套结构体 Scan 会丢 fields 列，踩过坑；
-                      metadata_repo 的 LatestEntries 用 DISTINCT ON 取每 (kind,key) 最大版）
-  llm/               双协议适配器（均移植自 pi，偏离清单见 §4.6）：client.go 工厂按 provider 分发
-                     openai.go——OpenAI 兼容 /chat/completions（reasoning 三字段防重复、
-                       tool_calls 流式增量聚合、缺 finish_reason 时推断）
-                     anthropic.go——Anthropic Messages 协议（SSE 状态机、thinking 签名回放、
-                       连续 toolResult 合并为单条 user 消息）
-  embedding/         OpenAI 兼容 /embeddings（批量、按 index 归位）
-  parser/            parser.go（分发+docx 标准库 zip+XML）mineru.go（四步云端解析）xlsx.go（行级解析，第二波用）
-  httpgin/           server.go（路由表）sse.go heartbeat.go handler_tasks.go（任务/工作流/数据集端点）
-                     handler_misc.go handler_match.go handler_metadata.go（元数据目录 3 端点）
-                     handler_metadata_edit.go（M3 受控编辑 + M4 工作流/向导端点；守卫拦截
-                     409 时判定明细随 data 载荷带回前端：workflows/:type 的 check/PUT/DELETE/
-                     status 启停 + POST task-types 向导注册）
-  database/migrations 见上
-
-web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-router
-  src/hooks/useTaskEvents.ts ⭐ 任务 SSE 订阅：snapshot 整包写缓存 + task/step/items 补丁，
-                     token/progress/tool_trace/dialog 只进页面本地态（不落缓存）；dialog 为
-                     阻塞事件——pending 随 snapshot 恢复（刷新/重连弹窗不丢）、按 call_id 幂等；
-                     **断线 3s 自动重连（重连重收快照）；snapshot 帧带 data 包装，与实时事件形状
-                     统一**；卸载即退订
-  src/api/sse.ts             GET/POST SSE 解析器（fetch + ReadableStream）；**单帧异常只丢该帧不断流**
-  src/api/v2/                V2 snake_case DTO 与 Task/Schema/Dataset/Validation/Approved API；
-                             与 Legacy PascalCase 类型隔离，不建立过渡兼容映射
-  src/hooks/useV2TaskEvents.ts V2 GET SSE：完整 Snapshot 写入 `['v2-task', id]` 缓存，
-                             断线 3 秒重连；事件只加速收敛，数据库快照仍是事实源
-  src/pages/v2/              当前全部产品页面：Definition 编排与目录、从流程派生 Task、任务运行、
-                             Dataset/Metadata/Retrieval/Artifact/Archive；V2TaskDetail 按定义快照
-                             渲染步骤与资源，ReviewWorkspace 按 Schema 渲染审核与证据面板
-  src/api/tasks.ts           任务 API 封装（创建/列表/详情/编辑/暂停/继续/完成/步骤触发/草稿保存/数据集浏览）
-  src/pages/Tasks.tsx        任务列表（状态筛选 + 生命周期操作）
-  src/pages/Datasets.tsx     数据集浏览（结果集 + 条目明细 + 来源任务追溯）
-  src/pages/Metadata.tsx     元数据目录：任务类型聚合视图（步骤链/工作流编辑/字段合同/
-                             装配描述）+ 提示词预览（可填额外要求实时渲染）+ 导出按钮 +
-                             「新建类型」入口 + 待启用草稿组（详情页一键启用），/metadata 路由
-  src/pages/MetadataWizard.tsx 新任务类型向导（M4）：类型标识/数据集类型 → 步骤链编排
-                             （StepsEditor 增删移位）→ 字段合同轻量编辑 → 指令头填写 →
-                             提交注册为草稿，右栏即时判定 + 三段提示词预览；?edit= 回填草稿
-  src/pages/MetadataEditors.tsx ⭐ M3 受控编辑器：SchemaEditor（字段合同编辑：行点击
-                             弹窗改 Label/枚举/属性/提取说明 → 保存自动 check → 判定
-                             弹窗 ❌标红/⚠️勾选确认/影响面数据集表 → 保存生效）+
-                             ProfileEditor（指令头/示例）+ WorkflowEditor（步骤链编排：
-                             StepModal 改名/kind/依赖、上下移、check 保存流）+
-                             HistoryDrawer（版本历史，kind 含 workflow；点选两版 LCS 行 diff）；
-                             409 守卫拦截不抛错——判定明细随响应 data 带回（api.putDetail）
-  src/pages/tasks/           详情页 TaskDetail（头部+步骤时间线+按阶段工作区；analyze 步骤
-                     标签按 settings.llm.agentMode 如实显示）+
-                     panels/（ConfirmParsePanel / AnalysisPane（双区实时滚动+工具轨迹+人工
-                     交互 Modal：候选单选或自由文本，可关闭保留重开入口防丢）/ MatchImportPanel）
-                     + TaskNew（工作流预览，步骤标签同上）
-  其余页面：Overview/Settings(Bugs 占位)；Settings 含「分析模式」展示（agent 工具驱动/单轮直调）
-```
-
-### 3.3 Legacy 任务系统不变量（拆除 task/runner/broker 前必读）
-
-> 本节描述当前仍可运行的旧路径。V2 不继续使用进程内 goroutine 作为执行事实源，但 SSE 的 persist-then-publish、快照恢复、token 节流和 Agent Context 检查点应保留。
-
-- **执行脱离 HTTP**：步骤跑在 `TaskManager.spawn` 的 goroutine 里，持有独立可取消 ctx（`context.WithoutCancel` 派生 persistCtx 供收尾落库）；触发端点 fire-and-forget，进度走 `/events` 订阅。
-- **触发同步预置（fire-and-forget 竞态根除）**：`triggerStep` 在 spawn 前**同步**把任务置为 `running + 目标步骤序号` 并落库 + 发布 task 事件——202 返回时 DB 已是新状态，客户端任意时刻的 GET 都拿不到旧状态；goroutine 内 beginStep 落库的是相同值（幂等）。spawn 被拒（并发触发）时回滚预置。
-- **每任务单写者**：任务/步骤的 DB 写入只发生在步骤 goroutine 内（`running` 登记表保证）；生命周期操作（Pause 等）先取消、等 `<-done`、再重读 DB 定夺（取消落地前已自然完成 → 报「任务已完成，无法暂停」，不覆盖终态）。
-- **persist-then-publish**：所有状态变更先落库再发 Broker；Broker 非阻塞发布（通道满丢帧，快照兜底）；SSE 端点**先订阅再回放快照**（消除竞态窗口），客户端断开只退订。
-- **SSE 帧形状统一**：所有事件（含 snapshot）负载统一 `{"task_id","data":…}` 包装，前端统一 `payload = data?.data` 解包——**新增事件类型必须带 data 键**（形状不一致会杀流，踩过坑）。前端单帧解析/回调异常只丢该帧；断线 3s 自动重连重收快照。
-- **token 节流合并**：token 事件逐 token 一帧会打爆 broker 64 缓冲（慢消费者丢帧→推理/正文面板空白），`execAnalyzeStep` 内按 150ms 窗口合并成批帧（阶段切换先 flush 旧段），分析结束兜底 flush。改 token 发布方式时保持节流语义。
-- **暂停语义**：analyze=取消 loop ctx → 已积累 `port.Context` 序列化进 `agent_context` → paused；继续=回放 Context 调 `Analyze.Resume`。dataset=向量化分批间取消 → paused（building 数据集保留）；继续=复用同一数据集幂等重建条目。parse=取消重跑（幂等）。
-- **步骤失败不杀任务**：requirement_import 步骤失败 → 回到对应人工门（awaiting）可重试；任务可手动完成（awaiting 态）进入终态。
-- **人工交互（dialog）是阻塞事件**：ask_human 工具经 DialogHub 登记 pending 后阻塞等待 `POST /tasks/:id/dialog` 应答（loop 顺序执行 → 每任务至多一个 pending）。可靠性走快照而不是瞬时事件：pending 随 SSE snapshot 下发（刷新/重连恢复弹窗），Broker 丢帧也能恢复；ctx 取消（暂停）以 IsError 回执收束——loop 先追加回执再退出，会话保持合法，续跑后模型可重新发问。
-
-### 3.4 Legacy 元数据系统不变量（拆除 metadata/registry 前必读）
+旧任务运行时已删除；以下约束仅描述仍在使用的元数据管理服务。
 
 > 原《元数据模块设计》（docs/METADATA.md）与《分波执行计划》（docs/METADATA_PLAN.md）已于 2026-08 合并删除，长效决策全部并入本节；历史代码注释中的「METADATA §N」编号指该文档，git 历史可溯。开发范式（定义即数据 / 半元数据驱动）见 PRODUCT §4 决策二。
 
@@ -343,7 +149,7 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
 - **合并层结构**：`metadataOverrides` 四张 map——schemas（按数据集类型）/ profiles、workflows（按任务类型）/ extDefs（向导扩展类型聚合定义）。map 只整体替换、绝不原地修改（读侧持旧引用即持旧快照，无竞态）；测试结束必须 `setMetadataOverrides(nil,nil,nil,nil)` 清进程级全局态。
 - **锚行双语义（M4 沉淀）**：kind=workflow 行 payload=`{dataset_type, workflow}`，兼作向导注册类型的「锚行」。对 seed 类型 `enabled=false` 表示覆盖关闭（回退 seed）；对向导扩展类型它是**发布开关**——disabled = 整型草稿，装载器跳过（运行时不可见、建任务被拒）。同一列两种语义，改动前先分清身份（`customTaskType()` 是 source 徽标/回退按钮/启停权限的判定枢纽）。
 - **数据集类型所有权不变量**：一个数据集类型只能被一个任务类型占用；向导注册必须新建 ds_type 且不得与任何既有定义冲突。ds_type 是任务间衔接的身份键（筛选 SQL、向量集合、item_key 都派生于它），共写一个结果集会打穿闭环——此约束是 M4 现场定案的产品级红线。**M5 补注**：该不变量收敛于**模板层**（模板与任务类型的一一对应）；实例层的绑定不受类型约束——任务创建即绑定任意数据集（`Create(ctx, typ, title, datasetID)`），字段异构由数据集自身 schema 承接，写入门的类型匹配校验已删除。
-- **字段定义归属数据集实例（M5 核心反转）**：`datasets.schema`（JSONB）是字段定义的**唯一真相源**——任务绑定数据集后，分析提示词（`AnalyzeInput.SchemaJSON` → `profileWithInputSchema`）、写入校验（`datasetWritePlanFor` 从目标数据集行解析）、门内表格、查询过滤全部按数据集自身的 schema 执行；类型级注册（registry 的 schema 覆盖层）**降级为「数据集类型模板」**，仅在 `DatasetAdminService.CreateDataset` 新建数据集时带出初始定义（可自定义）。数据集字段受控编辑走 `dataset_admin.go`（形状校验 → CheckSchemaCompat → ❌/⚠️ → `UpdateDatasetSchema` 落库 + 审计 kind=dataset_schema key=数据集ID）——同类型的不同数据集从此可各自演进。
+- **V2 字段合同**：流程节点只引用不可变 `DatasetSchemaDefinition`；抽取合同通过 `ExtractionProfile.TargetSchemaID` 固化，分析合同通过 `AnalysisProfile.OutputSchema` 固化。不存在运行时覆盖 Schema 或按旧任务类型回退模板的分支。
 - **动态索引随 schema（M5）**：FTS（`FieldSpec.FTS` → 表达式 GIN `to_tsvector(cfg, fields->>'k')`）与筛选（`Filterable` → 表达式 btree）索引是数据集 schema 的**派生物、非迁移资产**——`DatasetIndexer.SyncIndexes` 在创建/受控编辑时 diff 建删、归档时 `DropIndexes` 回收、恢复时重建；索引带 `dataset_id` 部分谓词只覆盖本数据集，确定性命名（sha256 前 12 位）支撑按名 diff。**表达式必须与查询侧逐字一致才命中索引**（`planIndexes` 纯函数 + 单测钉住形状）；`fts.ts_config` 变更会重建 FTS 索引。条目字段袋已升级原生 JSONB（`fields->>'k'` 免 cast）。中文分词需 zhparser/pg_jieba 扩展（`fts.ts_config` 配置）。
 - **快照四件套（热编辑安全性的来源；M5 起 schema 载荷入列）**：① 任务创建时把工作流定义快照进 `tasks.workflow`（存量任务自描述，ParseWorkflow 只在快照缺失时回退注册表）；② 数据集创建时把字段定义**固化到 `datasets.schema`**（`schema_version` 记实例编辑计数）；③ agent 会话检查点带 `port.Context.TaskSchema`（Resume 重放按执行时 schema 组装 WriteSpec）；④ 写入策略声明随 `tasks.input` 持久化。因此受控编辑只影响后续写入；工作流兼容引擎也据此全 ✅/⚠️ 无 ❌ 硬拦截。
 - **StepKind 封闭集（决策二红线）**：parse/human/analyze/dataset 四种，执行器永远是有类型的 Go 代码。向导只能编排既有 kind（`logic.ValidateWorkflowShape` 白名单拒绝未知值）。「新增任务类型」的正确路径 = 向导注册定义 + 复用/新增 kind 执行器；禁止 `if type ==` 分叉。
@@ -358,7 +164,7 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
 - **幽灵场景**：seed/custom 身份是启动时的动态判定——若未来给某个曾是向导注册的类型补了 seed（代码演进撞名），身份自动翻转：版本基线切换成 seed.Version+rowVersion、Reset 按钮出现、锚行语义从发布开关变成覆盖开关。给既有类型写 seed 前先查库同名行。
 - **测试接入双轨**：单元 golden 用 `extraTaskTypes` 代码缝注册玩具类型（生产恒空）；真机/E2E 用向导 API 注册。
 
-### 3.5 V2 不变量（新增代码必须遵守）
+### 3.4 V2 不变量（新增代码必须遵守）
 
 #### Schema 和 Dataset
 
@@ -417,7 +223,7 @@ web/                 React 18 + AntD5 + ProLayout + TanStack Query + react-route
 | `assets/asset_sets/asset_set_members` | 原始文件及一次业务输入文件集合 |
 | `parsed_documents/document_blocks` | 按解析器版本缓存结构化文档，Block 是 provenance 的稳定引用点 |
 | `extraction_profiles` | 与 Schema 分离的抽取、归一化和业务校验配置 |
-| `record_draft_sets/extraction_units/record_drafts` | `llm.extract` 的 Manifest、稳定模型调用单元和带 Asset/Block/quote 来源的候选记录 |
+| `record_draft_sets/extraction_units/record_drafts` | `document.extract` 的 Manifest、稳定模型调用单元和带 Asset/Block/quote 来源的候选记录 |
 | `retrieval_profiles/snapshots/chunks` | 检索合同、覆盖位点、多 Chunk embedding、OpenSearch 文档身份和 Snapshot 构建状态 |
 | `pipeline_cursors` | 基础 Dataset → 查询 Dataset 增量消费位点 |
 | `artifacts` | Markdown/DOCX/PDF/Graph Manifest 等非 Dataset 产物 |
@@ -468,101 +274,11 @@ Create immutable Schema
   → 用户选择仅创建，或创建后显式 start
 ```
 
-**Legacy 需求导入主链路（已退出产品路由，仅供拆除对照）**：
-
-```
-前端 /tasks/new → POST /api/tasks {type:requirement_import,title} 创建任务（播种 4 步骤）
-  → POST /api/tasks/:id/parse (multipart) fire-and-forget：文件存 upload_dir；
-    触发时同步预置任务 running+步骤1（见 §3.3），步骤 goroutine（TaskManager.spawn，
-    独立可取消 ctx）内调 ParseService.Run：
-    txt/md 直读；docx=zip 内 word/document.xml 逐 <w:p> 拼接 <w:t>（标准库）；
-    pdf=MinerU 四步：申请预签名链接→PUT 裸字节（不带 Content-Type！）→轮询(5s/10min，
-      进度→步骤 detail 落库+Broker 扇出)→下载 zip 取 full.md
-    解析成功 → input.parsed_text 落库 → 步骤1 succeeded → 步骤2 awaiting → 任务 awaiting
-    （上传暂存文件随即清理；暂停/失败可重试——原文件路径在 input 中）
-→ 前端订阅 POST /api/tasks/:id/events（SSE：先订阅再快照回放 + 实时 step/task/items 事件；
-  断线 3s 自动重连重收快照）
-  → 详情页工作区进入「确认解析」面板：预览/编辑全文 + 额外要求 → 保存（PATCH）→ 开始分析
-→ POST /api/tasks/:id/analyze fire-and-forget（触发同步预置 running+步骤3）
-  app/analyze 按 TaskType 解析 AnalyzeProfile（指令头/产出 schema/写入绑定/单发示例）：
-  【agent 模式（llm.agent_mode，主路径）】
-  → SystemPrompt 动态装配 = profile 指令头（{field_spec} ← schema 渲染）+ 额外要求
-    + 工具指南（DocumentedTool 同源）；首轮 user 消息 = 文档清单（文件名/行数/字数 +
-    「必须先调 read_document」首步指引），原文不进上下文
-  → agent.Loop（迭代上限 llm.agent_max_iterations，默认 32）：模型经 read_document
-    （行号分页+续读提示）/ search_document（正则/字面量）自主阅读原文；
-    write_work_items 分批产出草稿（WriteSpec 校验：schema 必填/枚举/数值，即时回执
-    accepted/updated/rejected，模型修正重交；同 key 覆盖可修订）；ask_human 经 DialogHub
-    阻塞问人（SSE dialog 事件 + HTTP 应答）
-  → 终稿契约：产出 = DraftSink 累积（不再是「末条消息是 JSON 数组」）；末条消息只需简短总结
-  → token 增量在 runner 内 150ms 节流合并后经 Broker 透传前端双区滚动（token 不落库——
-    瞬时流；工具轨迹在步骤 data 落库，重放走快照）
-  → sink 收束（sinkTail）：sink 空（含模型只聊天不写）→ 降级单发直调；loop 中断但已有
-    产出 → 保留部分结果 + 告警进度；成功 → DraftSink.Items() 即草稿明细
-  → 原文存档（demand_dir，SourcePath）→ 产出 AnalyzeOutcome（明细+会话 JSON+存档路径，
-    不落库——持久化移交 TaskManager）
-  → 步骤3 succeeded → 步骤4 awaiting → 任务 awaiting（生成数据集门）
-  → 暂停：取消 ctx → loop 返回已积累 Context → agent_context 落库（检查点）→ 任务 paused
-  → 继续：反序列化 Context → DraftSink.ReplayFrom 重放会话中全部写入调用重建草稿
-    （会话即事实源，确定性重放）→ 续跑 loop
-  → 分析失败：步骤3 failed → 任务回确认解析门（awaiting）可修正重试（清会话检查点）
-  【单发直调（默认模式，也是 agent 降级目标）】
-  → 一条 user 消息 = 指令头 + 单发输出契约（profile.Example 富示例或 schema 骨架）
-    + 额外要求 + 文档全文 → llm.Stream 流式（thinking/answer 两相位）
-  → 解析降级链: json.Unmarshal 标准解析 → logic.ExtractJSONArrayLenient（剥围栏→截取→修复
-    截断）→ 流彻底失败时 llm.Complete 非流式重调一次（同一 prompt）；流中断但已有部分输出时
-    优先宽松恢复部分结果
-  → logic.NormalizeDrafts 白名单归一化 → 同上收束
-→ 生成数据集门: 自动 POST /api/match/duplicates（语料 = 已有需求数据集，精确层 + 语义层）
-  → 行内查重徽标 → 编辑行（title/priority/type/hours/assignee）→ 保存草稿（POST /tasks/:id/items）
-  → 点生成: POST /api/tasks/:id/dataset {dataset_name} fire-and-forget：runner 创建 building 数据集
-    → DatasetWriter 分批向量化 → ReplaceDatasetItems 幂等写入（断点续跑/失败重试复用同一数据集）
-    → 数据集 ready + 任务 OutputDatasetID 回填 → 任务终态 succeeded
-  → 手动完成: POST /api/tasks/:id/complete（awaiting 态把当前门步骤标 succeeded → 终态）
-```
-
-**查重（两层，`app/match.go`，语料 = 需求数据集）**：
-1. **精确层**：`logic.NormalizeForExactMatch`（全角→半角、U+3000、小写、空白压缩）对全部需求数据集条目标题建索引，命中 score=1。理由：标题是「准标识符」，向量对稀有 token 不敏感；
-2. **语义层**：仅对未命中项，批量 embedding（50/批）→ `SearchSimilarDatasetItems`（pgvector `<=>` 余弦距离）→ `logic.DistanceToScore`（1-d/2）→ 阈值 0.75（`match.duplicate_threshold` 可配）。embedding 未配置时精确层照跑（降级）。语义层向量文档格式与 DatasetWriter 一致（`Title: …\nDescription: …`，描述截 500 字）。
-
-**数据集生成（`app/dataset.go` DatasetWriter）**：草稿 → 分批向量化（`embedding.batch_size`）→ `ReplaceDatasetItems` 事务重建（未发布数据集断点续跑 = 幂等重写）→ 数据集 ready。任务终态时 `output_dataset_id` 回填——**任务与任务通过数据集衔接**（bug 分析等后续任务以需求数据集为输入）。
-
 ### 4.3 API 速查
 
 V2 API 已挂在 `/api/v2`：Asset/Schema/Profile/Dataset/Batch、TaskDefinition/Task、Retrieval/Analysis/Artifact/Catalog/Archive 等产品能力均已开放。Handler 只调用对应 V2 app service，不回调 Legacy TaskManager，也不双写；完整合同以路由实现和 [V2 方案 §11](./DATA_PIPELINE_V2_PLAN.md#11-api-v2-合同) 为准。
 
-以下均为 Legacy `/api` 端点，只用于拆除和历史行为对照，当前产品页面不再调用：
-
-| 端点 | 类型 | 说明 |
-|------|------|------|
-| `/tasks` `/tasks/:id` | JSON | 创建 {type,title} / 详情 {task,steps,items}（task.Workflow = 工作流定义快照） |
-| `/tasks?status=&type=&limit=` | JSON | 列表 |
-| `/workflows` | JSON | 任务类型目录（工作流元数据：步骤链 + 每步依赖声明），创建入口展示用 |
-| `/tasks/:id` | JSON | PATCH 编辑 {title?,parsed_text?,special_requirements?}（awaiting/paused 可改） |
-| `/tasks/:id/items` | JSON | 批量保存门内草稿 {items:[{id?,fields:<字段袋>}]}（形状由任务类型产出 schema 驱动；items 回读时 Fields 为 JSON 文本） |
-| `/tasks/:id/parse` | multipart | fire-and-forget 上传解析（存 upload_dir，立即返回 {task_id}） |
-| `/tasks/:id/analyze` | JSON | fire-and-forget AI 分析（暂停恢复走 AgentContext 检查点） |
-| `/tasks/:id/dataset` | JSON | fire-and-forget 生成数据集 {mode: create\|merge\|upsert\|replace, dataset_id?, dataset_name?}（断点续跑幂等重建；预览走 /dataset/preview 分桶不落库） |
-| `/tasks/:id/dialog` | JSON | 人工回答 agent 的提问 {call_id, answer}（ask_human 阻塞等待的出口；无 pending 或 call_id 不匹配 409） |
-| `/tasks/:id/pause` `/resume` `/complete` | JSON | 生命周期：暂停（取消步骤 ctx）/ 继续（按暂停步骤重触发）/ 手动完成（awaiting→终态） |
-| `/tasks/:id/events` | SSE | **快照回放 + 实时**：snapshot（含 dialog pending 恢复）/ task / step / items / progress / token{delta,phase}（150ms 合并帧）/ tool_trace{phase,call_id,name,args?,details?,is_error?} / dialog{phase:ask\|close, call_id, question?, options?, reason?} / error + 5s ping 心跳；断开只退订，任务照跑 |
-| `/datasets` `/datasets/:id` | JSON | 数据集浏览（结果集 + 条目明细 + 来源任务追溯） |
-| `/match/duplicates` | JSON | {items:[字段袋]} → {results:[{index,match|null}]}（语料 = 需求数据集，标题按 schema 标题字段口径） |
-| `/metadata` `/metadata/task-types/:type` | JSON | 元数据目录：总览（任务类型 + 向导草稿组 + source/custom/draft）/ 聚合视图（`?include_draft=true` 可读草稿）——前端「元数据」tab 数据源 |
-| `/metadata/render/preview` | JSON | {task_type, special_requirements?} → 三段提示词实时渲染（与运行时装配同一函数） |
-| `/metadata/schemas/:type/check` | JSON | 兼容性 dry-run {schema} → 判定明细 + 存量数据集影响面（不落库） |
-| `/metadata/schemas/:type` `PUT`/`DELETE` | JSON | schema 受控保存 {schema, confirm_risky?, summary?}（❌ 拦截/⚠️ 需确认，409 携带判定明细）/ 回退到内置（版本历史保留） |
-| `/metadata/profiles/:type` `PUT`/`DELETE` | JSON | 指令头/示例编辑 {role, example, summary?} / 回退到内置 |
-| `/metadata/workflows/:type/check` `POST` · `/workflows/:type` `PUT`/`DELETE` | JSON | 工作流 dry-run / 受控保存（⚠️ confirm_risky，409 携带判定）/ 回退内置——热编辑仅影响新任务 |
-| `/metadata/workflows/:type/status` `PUT` | JSON | 启用/停用向导注册的任务类型 {enabled}（就地翻转锚行 enabled；内置类型拒绝） |
-| `/metadata/task-types` `POST` | JSON | 新任务类型向导注册：{type, dataset_type, workflow, schema, role, example?, summary?} 整体校验 → 三行落库（锚行 disabled=草稿）+ 即时提示词预览；重提同名草稿版本续链 |
-| `/metadata/history/:kind/:key` | JSON | 版本历史（新→旧，含载荷原文；kind = dataset_schema\|analyze_profile\|workflow） |
-| `/metadata/export` `/metadata/import` | JSON | effective 视图导出 / 导入（逐项同一守卫，单项失败不中断） |
-| `/overview` | JSON | 概览（datasets/datasetItems/tasks + recentTasks/recentDatasets） |
-| `/settings` `/settings/test-llm` | JSON | 脱敏视图/连通测试 |
-| `/health` | JSON | 存活 |
-
-SSE 事件负载的权威定义在 `infra/httpgin/handler_tasks.go` 与 `web/src/api/types.ts`——**两端同步改**；事件负载统一 `{"task_id","data":…}` 包装（含 snapshot，见 §3.3）。
+旧 `/api/tasks` 端点已删除；任务执行只通过 `/api/v2`。
 
 ### 4.4 密钥安全（四道防线，改安全逻辑必读）
 
@@ -670,7 +386,7 @@ GET  /datasets/:id/items?after_seq=&through_seq=
 目标流程：
 
 ```text
-AssetSet → source.parse → llm.extract → data.transform → data.validate
+AssetSet → source.parse → document.extract → data.transform → data.validate
 → human.review → data.publish → DatasetBatch
 ```
 
@@ -679,7 +395,8 @@ AssetSet → source.parse → llm.extract → data.transform → data.validate
 - `BlobStore` port + 本地文件实现，Asset 按 SHA-256 去重。
 - Parser port 返回 ParsedDocument/DocumentBlock，不再返回整篇 string。
 - 每个 Asset 独立状态和 checkpoint，单文件失败不拖垮整批。
-- 抽取工具参数由目标 JSON Schema 生成；候选记录必须带 Block 引用和原文证据。
+- 每个稳定 ExtractionUnit 运行独立 Agent loop；原文读取/检索、草稿增删改查、服务端校验和显式完成均通过受约束工具执行，非阻塞工具错误会回到模型继续纠正。
+- 草稿工具参数由目标 JSON Schema 生成；候选记录必须带 Block 引用和逐字原文证据。任务详情默认折叠的模型运行面板实时展示思考、输出、工具参数、状态和错误回执。
 - 单位、日期、枚举、布尔和 item_key 使用确定性代码处理，不让 LLM 决定最终编码。
 - 审核 UI 展示置信度、校验结果、重复/冲突和 provenance。
 - `data.publish` 直接调用现有 V2 DatasetService/Batch 仓储，不重写提交事务。
@@ -712,7 +429,7 @@ Batch、Dataset 汇总、Outbox 和 Cursor 推进。PostgreSQL + V2 Worker 集�
 2. [x] RetrievalProfile 校验和 RetrievalSnapshot 构建状态机。
 3. [x] OpenSearch BM25、pgvector Chunk、加权 RRF HybridSearchService 和可选 rerank。
 4. [x] `list_knowledge_sources/search_knowledge/get_knowledge_item` Agent 工具、KnowledgeScope 和审计。
-5. [x] `agent.analyze`、通用资源审核、`data.analysis_publish`、`artifact.render`、`graph.build`。
+5. [x] `knowledge.analyze`、通用资源审核、`data.analysis_publish`、`artifact.render`、`graph.build`。
 6. [x] 数据清洗入库、精准 + 语义索引、Bug 分析、产品方案生成、知识图谱构建五种无代码模板。
 7. [x] 纯 V2 前端路由、任务目录/详情、Definition、Dataset、元数据、检索、Artifact 和归档恢复。
 8. [x] 模板降级为可编辑 Definition 起点，并支持从空白手动组合 Executor、连接类型化数据端口和选择流程输出。
@@ -733,61 +450,6 @@ Batch、Dataset 汇总、Outbox 和 Cursor 推进。PostgreSQL + V2 Worker 集�
 - 上述验收固定了产品路径：`/definitions/new` 编排并发布 → `/tasks/new?definition_id=...` 绑定资源并派生 → `/tasks`/详情运行；不要再把三个动作合并回模板页。
 - 全仓 `make test`、V2 targeted tests 和 PostgreSQL integration tests 应保持全绿。
 
-### 5.7 Legacy 旧路线记录（只作业务背景，不按此继续开发）
-
-#### 第二波 Bug 链路任务化（旧方案）
-
-以下是 V2 决策前的实现拆分，只用于提取 Bug 字段、人工确认和定级等业务需求。**不得再将 `bug_import` 接入 Legacy TaskManager，也不得继续创建下列 Legacy 专用表。** 原设计存档在 `internal/app/bug/doc.go`，其业务闭环为：**消费需求数据集 → 产出 Bug 数据集**。旧拆分如下：
-
-1. **迁移** `0008_bug.up.sql`（0004-0007 已占用）：`bug_batches`(id,file_name,source_path,status,created_at) / `bug_rows`(id,batch_id,raw_jsonb,编号,标题,描述,复现步骤等归一化字段,analyzed_priority(priority p0-p3),priority_rationale,status) / `bug_matches`(id,bug_row_id,candidate_work_item_id,score,match_type,rank(1-3),human_decision)
-2. **port**：`BugRepo` 接口 + DTO
-3. **infra/repository**：实现（照抄 task_repo.go 模式：row 结构进 repo.go + 转换器）
-4. **app/bug 用例**：`ImportBatch`（`parser.ParseXLSXRows` 已就绪，表头→行映射，去空白/空行跳过/重名列去重已处理）/ `MatchBatch`（**以需求数据集为关联底料**：有编号→`NormalizeForExactMatch` 后与数据集条目标题精确匹配；无编号→复用两层匹配取 **top3**；`task.input_dataset_id` 指定消费哪个需求数据集，缺省查全部） / `ConfirmMatch`（人工确认/否决）/ `Prioritize`（批量 LLM 定级 P0-P3）/ `GenerateDataset`（复用 DatasetWriter 产出 Bug 数据集，关联需求以「关联需求: {标题}」写入字段）。**定级优先复用现有 analyze 步骤的 agent 模式**：注册 BugSchema（字段含 priority/rationale）+ bug 任务的 AnalyzeProfile（指令头换成定级语境，语料 = bug 行集渲染成文本），read/search/write/ask 四工具与提示词装配全部白拿；prompt 要点落在 schema 的 FieldSpec.Prompt（给出理由 rationale、P3 判定保守），不再手写输出契约
-5. **任务接入**：`TaskManager` 增加 `bug_import` 任务类型——注册表播种步骤链（Excel 导入→匹配确认门→AI 定级→生成 Bug 数据集）+ 步骤 goroutine 包装（runner.go 同构，StepKind 复用 analyze/dataset/human）；上传/确认/重试语义对齐 requirement_import（失败回门可重试、暂停可续跑、逐条幂等）
-6. **前端**：替换 `web/src/pages/Bugs.tsx` 占位 → 任务详情页新增工作区面板（上传→匹配确认表格（top3 候选单选/否决/标无效）→定级面板（可改档）→生成数据集），复用 TaskDetail 步骤时间线 + panels 模式
-7. **顺手可做**：embedding 密钥池（多 key 轮询、429 冷却按 Retry-After、401 摘除——只在 `infra/embedding` 内改）；LLM refine 微调会话（分析会话已随任务落库，追加消息重放即得 refine，进程内 map 按任务前缀缓存即可）
-
-#### Agent 工具化演进记录
-
-**红线（产品级，不可松动）**：读操作工具可自主调用；写持久存储（数据集生成 / 条目写入）不得成为 loop 的自主工具——生成数据集仍由人工在任务门内点击触发（PRODUCT §4 决策四）。write_work_items 写的是内存 DraftSink（草稿），落库仍走人工确认，红线未破。
-
-**当前工具集**（四件套的行为细节见 §3.2 代码地图与 §4.2 流程图）：read_document / search_document / write_work_items（+ DraftSink）/ ask_human，按任务类型 profile 经 `tools.BuildForRun` 注入（WriteSpec 绑定产出 schema）；每个工具实现 `agent.DocumentedTool`，提示词自动进系统提示。
-
-**真机验收持续项**（agent 模式已上线，`llm.agent_mode: true` + 真实 api_key）：
-- 长文档（50k+ 字）完整跑通——`llm.agent_max_iterations` 默认 32 是否充足，不同模型对续读提示的跟随度
-- write_work_items 回执被拒条目是否被稳定修正重交；ask_human 的提问频率是否克制（滥问 = 指令头/guidelines 需调）
-- DeepSeek 等推理模型的 reasoning_content 以 thinking 相位展示；工具调用期间前端有明确进度感
-
-**工具化演进方向**（扩展工具前先读 `tools/read.go` 与 `tools/write.go`）：
-- 新工具要点：实现 `agent.DocumentedTool`（提示词自动进系统提示）；参数 Schema 保持极简且**内嵌真实限制常量**（描述与行为同源）；Output 优先纯文本（省 token），结构化回执才用紧凑 JSON；Details 返回人读摘要（前端工具轨迹）；所有截断附「怎么继续」的可行动提示（pi 模式）
-- pi 的并行工具执行与 beforeToolCall 审批钩子暂不移植，需要时按 pi 源码 `agent-loop.ts` 对应段落补（见 §4.6 不移植清单）
-
-#### Legacy 技术债清单
-
-> 元数据模块专项债（提示词措辞模板化 B4 / 查重策略泛化 B3 / 启用在途检查等）已单独立账：[DEBT.md](./DEBT.md)——本表只列平台级通用债，两处修一销一。
-
-
-| 项 | 影响 | 处置建议 |
-|----|------|---------|
-| 单发模式宽松恢复链单测偏薄 | agent 主路径已覆盖（全链路/降级/重放/问人往返），classic 的 lenient 恢复分支不全 | 补 classic 路径用例 |
-| repository 层无测试 | schema 回归风险 | testcontainers-go 或对本机 docker PG 跑薄集成测试 |
-| 查重阈值 0.75 固定 | 新需求被语义层误判「疑似重复」（实测 0.79 误报） | 按数据集类型/场景可配，或加「确认不是重复」负反馈 |
-| 向量固定 1024 维 | 换模型要重建库 | 文档已写死流程；如需多维度考虑按维度分表 |
-| refine 微调未做 | 分析结果只能重来 | Legacy 曾计划在 Bug 链路中顺手完成；V2 应改为 Executor checkpoint 上的明确会话续跑能力 |
-| 后端无热重载 | 开发改代码要重启 | 可引入 air，非必须 |
-| token 增量不落库 | 分析中途重连后思考/正文双区从空开始（工具轨迹从步骤 data 回放，结果以明细为准） | 刻意取舍：防会话膨胀；如确需重放全文再按轮次落库 |
-| 上传文件无清理 | 失败/暂停任务的 upload_dir 文件残留 | 终态清理 + 启动扫描兜底 |
-| classic 模式续跑重放 | 单发模式暂停后恢复会重放流式调用（同 prompt 重新生成，幂等但耗 token） | 暂停多在 agent 模式（检查点续跑不重放已确认轮次） |
-
-#### Legacy 多客户端上线补全
-
-单实例多客户端当前即支持（架构证据见 PRODUCT §4 决策五）；**上线前**按此顺序补，每项独立可交付：
-
-1. **认证授权**（硬门槛）：登录 + 会话（cookie/session），任务 / 数据集 / 触发端点全部校验；无认证时任何能访问端口的人可看全部任务与数据集、触发所有操作
-2. **LLM 并发限流**（稳定性）：信号量限制并发 LLM / embedding 调用 + 排队——多客户端同时触发多任务会并发打上游，上游限流表现为「卡住 / 超时」（已实测撞到过一次慢调用贴近超时上限）；顺带把 `llm.timeout_ms`（当前 300s）在真实网络下评估是否上调
-3. **草稿冲突**（质量）：`ReplaceTaskItems` 整批替换无版本控制，两个客户端同时编辑同一任务草稿后写覆盖前写——加版本号乐观锁，冲突显式报错
-4. **多实例扩展**（远期，不在当前范围）：Broker 进程内扇出 / running 登记表 / 上传文件本地盘都是单实例绑定——分别换 Redis pub-sub / 分布式锁 / 对象存储
-
 ## 6. 运维备忘
 
 - **DB**：`docker compose up -d`；Compose 卷名为 `reqflow_pgdata`；连接 `postgres://reqflow:reqflow@127.0.0.1:5432/reqflow`；本机无 `psql`，用 `docker compose exec -T postgres psql -U reqflow -d reqflow -c "…"`。
@@ -795,7 +457,7 @@ Batch、Dataset 汇总、Outbox 和 Cursor 推进。PostgreSQL + V2 Worker 集�
 - **V2 开发期重置**：当已在本地执行的 `0012_pipeline_v2_foundation` 发生破坏性修改时，先停服，然后删除**明确的 ReqFlow 开发数据库/数据卷**并重启全量迁移。不要只删 `schema_migrations` 某行后在半旧 Schema 上重放；当前无生产数据，不做回填和兼容。
 - **迁移压平**：V2 API、Worker 和首条清洗链路切流后，删除 Legacy 表及应用代码，将最终数据库形状重写为新 `0001_v2_init`；不向未上线的历史迁移支付兼容成本。
 - **索引现状**：Legacy `dataset_items.embedding` 和 PostgreSQL FTS 仍服务当前页面；V2 Retrieval 只有表和领域形状，OpenSearch 尚未加入 Compose，不存在可运维的混合索引。换 embedding 模型/维度前先补 Retrieval 重建作业和 Snapshot 双写切换。
-- **SSE 客户端**：每个 Legacy 任务详情页持有一条长连接；token 事件已节流（~7 帧/秒）。V2 要继续使用落库快照 + 通知的恢复模式。
+- **SSE 客户端**：任务详情通过落库 checkpoint 快照 + 通知恢复；`agent_runs` 是可重连的事实视图，流式 delta 只负责缩短可见延迟。
 - **日志**：stdout（text/json 可配）；启动告警集中在头几行；SSE 断开/重连可通过 HTTP events 请求的 `cost_ms` 观察。
 - **发布**：项目尚未上线。切流前只验证 `make build` 产物和干净数据库启动；不需要设计 Legacy 滚动升级或数据迁移通道。
 

@@ -46,7 +46,7 @@ func (c *Client) Available() bool {
 // Generate 批量向量化（内部按 batch_size 分批调用，容忍响应乱序按 index 归位）。
 func (c *Client) Generate(ctx context.Context, texts []string) ([][]float32, error) {
 	if !c.Available() {
-		return nil, fmt.Errorf("embedding 未配置（base_url/api_key/model）")
+		return nil, fmt.Errorf("embedding 未配置（base_url/api_key/model），请在平台配置中激活可用配置")
 	}
 	out := make([][]float32, len(texts))
 	for start := 0; start < len(texts); start += c.opt.BatchSize {

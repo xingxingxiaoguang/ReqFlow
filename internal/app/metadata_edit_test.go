@@ -397,55 +397,6 @@ func TestUpdateProfileEffectiveAndReset(t *testing.T) {
 	}
 }
 
-/* ---- 快照隔离 ---- */
-
-func TestProfileWithSnapshotIsolatesInflightTasks(t *testing.T) {
-	svc, _ := newEditSvc(t)
-	ctx := context.Background()
-
-	// 任务启动时的 schema（会话快照）
-	snap := requirementSeed(t)
-	snap.Fields[4].Enum = []string{"High", "Medium", "Low"}
-	cc := &port.Context{TaskSchema: marshalJSON(snap)}
-
-	// 任务进行中：元数据被编辑（priority 收窄 + prompt 改写——收窄本会被守卫拦截，
-	// 这里经假仓储直写模拟绕过守卫的场景，验证重放口径仍以快照为准）
-	narrowed := requirementSeed(t)
-	narrowed.Fields[4].Enum = []string{"High"}
-	narrowed.Fields[4].Prompt = "编辑后的说明"
-	if err := svc.repo.CreateEntry(ctx, &port.MetadataEntry{
-		Kind: "dataset_schema", Key: model.DatasetTypeRequirement, Version: 1,
-		Payload: marshalJSON(narrowed), Enabled: true,
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := svc.Reload(ctx); err != nil {
-		t.Fatal(err)
-	}
-
-	profile, err := profileFor(model.TaskTypeRequirementImport)
-	if err != nil {
-		t.Fatal(err)
-	}
-	isolated := profileWithSnapshot(cc, profile)
-	// 会话重放按快照口径：旧枚举仍合法
-	if got := isolated.Schema().Fields[4].Enum; len(got) != 3 {
-		t.Fatalf("重放应按快照枚举（3 值），得到 %v", got)
-	}
-	if isolated.Write.Schema.Fields[4].Prompt != snap.Fields[4].Prompt {
-		t.Fatal("写入绑定应按快照")
-	}
-	// 新任务（无快照）按 effective
-	if got := profile.Schema().Fields[4].Enum; len(got) != 1 {
-		t.Fatalf("新任务应按 effective（收窄后 1 值），得到 %v", got)
-	}
-	// 坏快照回退 effective
-	bad := profileWithSnapshot(&port.Context{TaskSchema: "{bad json"}, profile)
-	if bad.Schema().Fields[4].Prompt != "编辑后的说明" {
-		t.Fatal("坏快照应回退 effective")
-	}
-}
-
 /* ---- 导出 / 导入 / 历史 ---- */
 
 func TestExportReflectsEffective(t *testing.T) {

@@ -1,19 +1,20 @@
 import { useMemo, useState } from 'react'
 import {
-  Alert, App, Badge, Button, Card, Col, Descriptions, Divider, Empty, Result, Row,
-  Space, Spin, Steps, Table, Tag, Typography,
+  Alert, App, Badge, Button, Card, Col, Collapse, Descriptions, Divider, Empty, Result, Row,
+  Space, Spin, Steps, Table, Tag, Timeline, Typography,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
 import {
   ArrowLeftOutlined, PauseCircleOutlined, PlayCircleOutlined, ReloadOutlined,
-  RocketOutlined, InboxOutlined, DownloadOutlined,
+  RocketOutlined, InboxOutlined, DownloadOutlined, RobotOutlined, ToolOutlined,
 } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { v2TasksApi } from '../../api/v2/tasks'
 import { v2CatalogApi } from '../../api/v2/catalog'
 import type {
-  ApprovedRecordSet, RecordReviewDecision, V2Resource, V2StepRun, V2TaskSnapshot,
+  ApprovedRecordSet, RecordReviewDecision, V2AgentRun, V2AgentToolRun, V2Resource,
+  V2StepRun, V2TaskSnapshot,
 } from '../../api/v2/types'
 import { useV2TaskEvents } from '../../hooks/useV2TaskEvents'
 import ReviewWorkspace from './ReviewWorkspace'
@@ -177,6 +178,8 @@ export default function V2TaskDetail() {
         />
       </Card>
 
+      <AgentRunPanel steps={steps} />
+
       {task.status === 'awaiting' && validation && reviewStep ? (
         <ReviewWorkspace
           key={validation.id}
@@ -251,7 +254,7 @@ function StepRunTable({
       title: '进度 / 错误', width: 300,
       render: (_, step) => step.error_message
         ? <Text type="danger">{step.error_code && `[${step.error_code}] `}{step.error_message}</Text>
-        : <Text type="secondary">{step.progress && Object.keys(step.progress).length ? JSON.stringify(step.progress) : '—'}</Text>,
+        : <Text type="secondary">{formatStepProgress(step.progress)}</Text>,
     },
     {
       title: '产物', width: 150,
@@ -263,6 +266,131 @@ function StepRunTable({
     },
   ]
   return <Table<V2StepRun> rowKey="id" size="small" pagination={false} dataSource={steps} columns={columns} scroll={{ x: 1100 }} />
+}
+
+function AgentRunPanel({ steps }: { steps: V2StepRun[] }) {
+  const agentSteps = steps.filter((step) => step.agent_runs !== undefined || step.kind === 'document.extract' || step.kind === 'knowledge.analyze')
+  if (agentSteps.length === 0) return null
+  const runs = agentSteps.flatMap((step) => (step.agent_runs ?? []).map((run) => ({
+    ...run,
+    runKey: `${step.id}:${run.id}`,
+    stepName: step.name || step.step_id,
+  }))).sort((left, right) => left.ordinal - right.ordinal)
+  const latest = [...runs].sort((left, right) => right.updated_at - left.updated_at)[0]
+  const running = runs.filter((run) => run.status === 'running').length
+  const label = (
+    <Space wrap>
+      <RobotOutlined />
+      <Text strong>模型运行面板</Text>
+      <Tag>{runs.length} 个 Agent 运行</Tag>
+      {running > 0 && <Badge status="processing" text={`${running} 个运行中`} />}
+      <Text type="secondary">思考、输出与工具链实时更新</Text>
+    </Space>
+  )
+  return (
+    <Collapse
+      items={[{
+        key: 'agent-runs',
+        label,
+        children: runs.length === 0
+          ? <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="模型尚未开始运行" />
+          : <Collapse
+            size="small"
+            defaultActiveKey={latest ? [latest.runKey] : []}
+            items={runs.map((run) => ({
+              key: run.runKey,
+              label: <AgentRunLabel run={run} stepName={run.stepName} />,
+              children: <AgentRunDetail run={run} />,
+            }))}
+          />,
+      }]}
+    />
+  )
+}
+
+function AgentRunLabel({ run, stepName }: { run: V2AgentRun; stepName: string }) {
+  const color = run.status === 'succeeded' ? 'success' : run.status === 'failed' ? 'error' : 'processing'
+  return (
+    <Space wrap>
+      <Text strong>{run.label || `Agent 运行 ${run.ordinal + 1}`}</Text>
+      <Tag color={color}>{run.status === 'succeeded' ? '已完成' : run.status === 'failed' ? '失败' : '运行中'}</Tag>
+      <Text type="secondary">{stepName}</Text>
+      <Text type="secondary">{run.request_count} 轮 · {run.tools?.length ?? 0} 次工具{formatAgentStats(run.stats)}</Text>
+      {run.updated_at > 0 && <Text type="secondary">更新于 {new Date(run.updated_at).toLocaleTimeString()}</Text>}
+    </Space>
+  )
+}
+
+function formatAgentStats(stats?: Record<string, number>): string {
+  if (!stats) return ''
+  const labels: Record<string, string> = { drafts: '草稿', submitted: '已提交' }
+  const entries = Object.entries(stats)
+  if (entries.length === 0) return ''
+  return ` · ${entries.map(([key, value]) => `${value} ${labels[key] ?? key}`).join(' · ')}`
+}
+
+function AgentRunDetail({ run }: { run: V2AgentRun }) {
+  return (
+    <Space direction="vertical" size={16} style={{ width: '100%' }}>
+      <ModelTrace title="思考" value={run.thinking} />
+      <ModelTrace title="模型输出" value={run.output} />
+      <div>
+        <Space style={{ marginBottom: 10 }}><ToolOutlined /><Text strong>工具链调用</Text></Space>
+        {!run.tools?.length ? <Text type="secondary">尚无工具调用</Text> : (
+          <Timeline items={run.tools.map((tool) => ({
+            color: tool.status === 'error' ? 'red' : tool.status === 'done' ? 'green' : 'blue',
+            children: <ToolRunDetail tool={tool} />,
+          }))} />
+        )}
+      </div>
+    </Space>
+  )
+}
+
+function ModelTrace({ title, value }: { title: string; value?: string }) {
+  return (
+    <div>
+      <Text strong>{title}</Text>
+      {value ? (
+        <pre style={{ margin: '8px 0 0', maxHeight: 320, overflow: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: '#0f172a', color: '#e2e8f0', padding: 14, borderRadius: 8 }}>{value}</pre>
+      ) : <div><Text type="secondary">暂无{title}</Text></div>}
+    </div>
+  )
+}
+
+function ToolRunDetail({ tool }: { tool: V2AgentToolRun }) {
+  return (
+    <Space direction="vertical" size={5} style={{ width: '100%' }}>
+      <Space wrap>
+        <Text code>{tool.name}</Text>
+        <Tag color={tool.status === 'error' ? 'error' : tool.status === 'done' ? 'success' : 'processing'}>
+          {tool.status === 'error' ? '可纠正错误' : tool.status === 'done' ? '完成' : '运行中'}
+        </Tag>
+        {tool.details && <Text type={tool.status === 'error' ? 'danger' : 'secondary'}>{tool.details}</Text>}
+      </Space>
+      {(tool.args || tool.result) && (
+        <Collapse size="small" items={[{
+          key: 'payload',
+          label: '查看调用参数与错误回执',
+          children: <Space direction="vertical" style={{ width: '100%' }}>
+            {tool.args && <ModelTrace title="调用参数" value={prettyTrace(tool.args)} />}
+            {tool.result && <ModelTrace title="工具回执" value={prettyTrace(tool.result)} />}
+          </Space>,
+        }]} />
+      )}
+    </Space>
+  )
+}
+
+function prettyTrace(value: string): string {
+  try { return JSON.stringify(JSON.parse(value), null, 2) } catch { return value }
+}
+
+function formatStepProgress(progress?: Record<string, unknown>): string {
+  if (!progress || Object.keys(progress).length === 0) return '—'
+  const summary = { ...progress }
+  delete summary.agent_runs
+  return JSON.stringify(summary)
 }
 
 function ResourceCard({ title, resources }: { title: string; resources: V2Resource[] }) {

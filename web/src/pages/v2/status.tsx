@@ -47,14 +47,14 @@ export function ValidationStatusTag({ status }: { status: ValidationRecordStatus
 
 export const STEP_KIND_LABEL: Record<string, string> = {
   'source.parse': '文档解析',
-  'llm.extract': '结构化抽取',
+  'document.extract': '结构化抽取',
   'data.transform': '确定性转换',
   'data.validate': '数据校验',
   'human.review': '人工审核',
   'data.publish': '原子发布',
   'data.query_derive': 'Query Dataset 增量派生',
   'retrieval.build': '检索构建',
-  'agent.analyze': '智能分析',
+  'knowledge.analyze': '智能分析',
   'data.analysis_publish': '分析数据发布',
   'artifact.render': '产物渲染',
   'graph.build': '图谱构建',

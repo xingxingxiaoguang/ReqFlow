@@ -49,6 +49,11 @@ type DocumentedTool interface {
 type Config struct {
 	// MaxIterations 最大迭代轮数（一次迭代 = 一次 LLM 调用 + 其工具执行）。默认 8。
 	MaxIterations int
+	// RequireToolTermination 要求必须由 Terminate 工具显式收束。适用于结构化抽取等
+	// 不能把“模型没有调用工具”视为成功的场景；普通对话保持自然终止语义。
+	RequireToolTermination bool
+	// NoToolCallReminder 在模型提前输出普通文本时作为下一轮用户消息注入。
+	NoToolCallReminder string
 }
 
 // Event loop 对外事件（pi AgentEvent 子集，供 SSE 透传或日志）。
@@ -112,9 +117,23 @@ func (l *Loop) Run(
 			emit(Event{Type: "agent_end"})
 			return cc, err
 		}
+		if msg == nil {
+			emit(Event{Type: "turn_end"})
+			emit(Event{Type: "agent_end"})
+			return cc, fmt.Errorf("agent loop: LLM 返回了空消息")
+		}
 
 		calls := msg.ToolCalls()
 		if len(calls) == 0 {
+			if l.cfg.RequireToolTermination {
+				reminder := l.cfg.NoToolCallReminder
+				if reminder == "" {
+					reminder = "任务尚未通过完成工具校验。请根据当前状态继续调用工具，修正问题后显式提交完成。"
+				}
+				cc.Messages = append(cc.Messages, port.NewUserMessage(reminder))
+				emit(Event{Type: "turn_end", Message: msg})
+				continue
+			}
 			// 自然终止：回复不含工具调用
 			emit(Event{Type: "turn_end", Message: msg})
 			emit(Event{Type: "agent_end"})

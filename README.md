@@ -58,14 +58,14 @@ make build        # → bin/reqflow
 | server | port / log_level / log_format | HTTP 端口、日志级别（debug~error）、日志格式（text/json） |
 | database | dsn / auto_migrate / retry_* | PG 连接串；启动自动迁移 |
 | worker | concurrency / lease_seconds / poll_interval_ms / recovery_interval_ms / reconcile_limit | 持久化流程任务协程池；单实例默认并发 6，可由 `REQFLOW_WORKER_*` 覆盖 |
-| llm | base_url / api_key / model / temperature / max_tokens / timeout_ms / **agent_mode** / agent_max_iterations | OpenAI 兼容协议（DeepSeek/GLM/Qwen/Kimi 适用）；`agent_mode: true` 时需求分析启用 agent loop（read_document / search_document / write_work_items / ask_human 四工具，见 HANDOVER §5.2）；agent_max_iterations 迭代上限默认 32 |
+| llm | base_url / api_key / model / temperature / max_tokens / timeout_ms / agent_max_iterations | OpenAI 兼容协议（DeepSeek/GLM/Qwen/Kimi 适用）；流程中的模型节点统一运行 Agent loop，agent_max_iterations 是每个 Agent 运行的迭代安全阀 |
 | embedding | base_url / api_key / model / dimensions / batch_size / rerank_* | 语义向量与 SiliconFlow rerank 共用供应商凭证；默认 bge-m3 1024 维 + bge-reranker-v2-m3 |
 | opensearch | base_url / username / password / index_prefix / timeout_ms | BM25 索引与检索；Hybrid 模式的词法检索后端 |
 | match | duplicate_threshold / project_top_n | 查重阈值（默认 0.75）与项目推荐数 |
 | fts | ts_config | PG 全文检索分词配置（默认 simple；中文全文检索需安装 zhparser/pg_jieba 扩展后改配置） |
 | parser | max_file_mb / mineru.* | 上传上限与 MinerU 云端 PDF 解析 |
 | security | encryption_key | 第二波敏感字段入库加密密钥（64 hex） |
-| workspace | name / upload_dir / demand_dir / blob_dir | 工作区名、Legacy 暂存目录与 V2 内容寻址 Blob 根目录 |
+| workspace | name / blob_dir | 工作区名与内容寻址 Blob 根目录 |
 
 ## HTTP API
 
@@ -90,7 +90,7 @@ make build        # → bin/reqflow
 - `POST /api/v2/tasks/:id/steps/:step_id/retry|approve`
 - `GET /api/v2/tasks/:id`、`GET /api/v2/tasks/:id/events`
 
-V2 Schema/Profile 不提供 PUT/PATCH；结构或抽取合同变化必须创建新资源。`source.parse` 将内容寻址 Asset 解析为带逐文件状态的 `ParsedDocumentSet`；`llm.extract` 按稳定 Block 分块生成 `RecordDraftSet`；`data.transform` 和 `data.validate` 完成确定性转换、业务规则与冲突校验。人工审核端点只接受对 ValidationResult 的逐条 approve/edit/exclude 决定，服务端生成不可变 `ApprovedRecordSet`，不接受客户端提供资源 UUID；`data.publish` 只消费该审核资源，并通过带 attempt fencing 的 Dataset Batch 事务原子发布。前后端业务入口已全部切换到 V2。
+V2 Schema/Profile 不提供 PUT/PATCH；结构或抽取合同变化必须创建新资源。`source.parse` 将内容寻址 Asset 解析为带逐文件状态的 `ParsedDocumentSet`；`document.extract` 和 `knowledge.analyze` 都通过 `internal/app/agent` 的统一运行壳执行，领域包只提供工具和领域状态。结构化结果必须通过完成工具校验后显式提交，工具或 Schema 错误会作为可纠正反馈返回模型。任务详情的“模型运行面板”读取通用 `agent_runs`，通过 SSE 实时展示思考、输出和工具链，默认折叠。`data.transform` 和 `data.validate` 完成确定性转换、业务规则与冲突校验。人工审核端点只接受对 ValidationResult 的逐条 approve/edit/exclude 决定，服务端生成不可变 `ApprovedRecordSet`，不接受客户端提供资源 UUID；`data.publish` 只消费该审核资源，并通过带 attempt fencing 的 Dataset Batch 事务原子发布。
 Task 输入绑定接受具体 `resource_id`；Dataset 也可传 `resource_alias`，创建时会解析为具体 Dataset，并为 `dataset_boundary` 固化当时的 `through_seq`。
 
 ## V2 前端操作模型
@@ -114,35 +114,12 @@ Task 输入绑定接受具体 `resource_id`；Dataset 也可传 `resource_alias`
 
 `TaskDefinition` 定义“怎么执行”，`Task` 表示“一次具体执行”。Task 只能从 `active` Definition 派生；创建时冻结完整 Definition Snapshot、资源绑定和 Dataset/Retrieval 读取边界，后续复制、修改或归档流程定义不会改变已经创建的任务。归档流程会转为 `retired`，可从归档管理恢复后继续派生新任务。
 
-## Legacy API（已退出产品路由，仅供拆除期间参考）
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/api/tasks/:id/parse` | multipart 上传 → fire-and-forget 解析步骤（进度走 SSE） |
-| POST | `/api/tasks/:id/analyze` | fire-and-forget AI 分析步骤（agent 模式：读取/检索/草稿写入/问人四工具） |
-| POST | `/api/tasks/:id/dialog` | 人工回答 agent 的提问（`{call_id, answer}`；ask_human 的出口） |
-| POST | `/api/tasks/:id/dataset` | fire-and-forget 写入数据集：`{mode: merge\|upsert\|replace, dataset_id?}`（目标缺省 = 创建任务时绑定的数据集） |
-| POST | `/api/tasks/:id/dataset/preview` | 写入预览：新增/更新/无变化/非法 分桶（不落库） |
-| POST | `/api/tasks` | 创建任务 `{type, title, dataset_id}`——**创建即绑定目标数据集**，字段元数据随数据集自动带出 |
-| GET/POST/PATCH | `/api/tasks`（`/:id`、`/:id/items`、`/:id/pause`、`/:id/resume`、`/:id/complete`、`/:id/events`） | 任务生命周期 + 门内草稿 + SSE 事件流（详情含生效字段定义 `schema`） |
-| POST | `/api/datasets` | 新建数据集 `{name, type, description?, tags?, schema?}`——字段定义缺省从类型模板带出，可整体自定义 |
-| POST/PUT | `/api/datasets/:id/schema/check` · `/api/datasets/:id/schema` | 数据集字段定义 dry-run / 受控保存（兼容守卫 + 审计 + 动态索引同步） |
-| POST | `/api/datasets/:id/search` | 字段全文检索 `{q, top_n?}`（PG 表达式 tsvector，FTS 索引随 schema 动态建删） |
-| DELETE | `/api/tasks/:id` · `/api/datasets/:id` | 归档（移入独立归档表，可恢复，退出主业务循环） |
-| GET | `/api/archives?kind=task\|dataset&type=` | 归档列表（任务含明细快照；数据集含条目与向量） |
-| POST | `/api/archives/:kind/:id/restore` | 归档恢复到主表（数据集恢复后查重/检索语料随之生效） |
-| GET | `/api/metadata` · `/api/metadata/task-types/:type` | 元数据目录：任务类型聚合定义（workflow + schema + profile + 工具清单 + source），前端「元数据」tab 数据源 |
-| POST | `/api/metadata/render/preview` | 提示词预览：`{task_type, special_requirements?}` → 三段提示词实时渲染（与运行时装配同一函数） |
-| POST | `/api/metadata/schemas/:type/check` | schema 兼容性 dry-run：规则表判定（✅/⚠️/❌）+ 存量数据集影响面 |
-| PUT/DELETE | `/api/metadata/schemas/:type` · `/api/metadata/profiles/:type` | 受控编辑（❌ 拦截 / ⚠️ confirm_risky + 版本递增 + 审计）/ 回退内置 |
-| PUT | `/api/metadata/workflows/:type`（`check` `POST` / `DELETE` 回退） | 工作流受控编辑（M4）：⚠️ 确认流 + 审计；热编辑仅影响新任务（存量按 tasks.workflow 快照） |
-| POST | `/api/metadata/task-types` | 新任务类型向导：编排既有 kind + 字段合同 + 指令头 → 产物 disabled 入库（草稿，`status` 端点人工启用） |
-| GET/POST | `/api/metadata/history/:kind/:key` · `/api/metadata/export` · `/api/metadata/import` | 版本历史（kind 含 workflow）/ effective 视图导出 / 导入（新类型按向导注册为草稿） |
+旧 `/api/tasks` 运行时、`AnalyzeService` 单发/降级路径及其前端入口已删除；TaskDefinition + StepRun 是唯一任务执行模型。
 | POST | `/api/match/duplicates` | 同项目查重（标题精确 / 语义阈值） |
 | GET | `/api/datasets` `/api/datasets/:id` | 数据集与条目浏览 |
 | GET | `/api/datasets/schemas` | 数据集类型模板目录（新建数据集时带出字段定义） |
 | GET | `/api/datasets/:id/items` | 条目查询：`q=` 语义检索 + `f[字段]=值`（`|` 分隔为 in）筛选叠加 |
-| GET/POST | `/api/settings` `/api/settings/test-llm` | 脱敏配置与连通性测试 |
+| GET/POST/PUT/DELETE | `/api/platform-configs/...` | LLM、向量化、重排序、MinerU 多配置管理与单配置激活；`config.yaml` 作为只读兜底 |
 
 ## Legacy 通用数据集（已退出 V2 产品模型）
 
@@ -179,11 +156,3 @@ make build          # 前端构建 + embed 单二进制
 | 4. 启动自检 | 后端启动时若发现 `config.example.yaml` 被填入真实密钥会 ERROR 告警并提示轮换；日志只打印已加载密钥的**名称**，绝不打印值 |
 
 检测规则与白名单（环境变量名引用、代码标识符、占位符、用户名=密码的本地 DSN）见 `scripts/secret-check.sh`。**一旦密钥已提交**：立即在对应平台轮换密钥，再用 `git filter-repo` 清理历史。
-
-## Legacy 第二波路线图（停止执行，仅供历史参考）
-
-本节方案已被 V2 TaskDefinition、Dataset Batch、Retrieval Snapshot 和通用 Executor 取代，不得按此继续开发或恢复外部平台同步。
-
-- **✅ agent 模式已交付**（`llm.agent_mode`）：分析从单发提取升级为 pi 式工具驱动——`read_document` 分批阅读（行号分页 + 续读提示）/ `search_document` 正则检索 / `write_work_items` 分批产出草稿（同 key 覆盖可修订，逐条校验回执）/ `ask_human` 关键决策点人工交互（SSE 弹窗 + HTTP 应答）；分析会话（Context）随记录落库，暂停续跑时草稿从会话重放；系统提示词的工具指南从实际工具集组装，不漂移；前端分析页展示工具轨迹与人工交互弹窗
-- **Bug 处理链路**：Excel 导入（xlsx 行级解析已就绪）→ 编号/语义双层匹配需求（top3 人工确认）→ P0~P3 批量 LLM 定级 → 确认后同步缺陷到平台（关联关系写入描述；PingCode 6.13.5 暂无关联 API）
-- PingCode OAuth 用户授权（TokenSource 扩展点）、多协作平台（PlatformClient 接口）、refine 微调会话（AgentContext 载体已落库）、自定义属性映射

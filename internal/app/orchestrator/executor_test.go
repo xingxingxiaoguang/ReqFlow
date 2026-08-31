@@ -10,7 +10,7 @@ import (
 )
 
 func TestRegistryRejectsDuplicateAndHumanExecutors(t *testing.T) {
-	_, err := NewRegistry(testExecutor{kind: model.StepKindLLMExtract}, testExecutor{kind: model.StepKindLLMExtract})
+	_, err := NewRegistry(testExecutor{kind: model.StepKindDocumentExtract}, testExecutor{kind: model.StepKindDocumentExtract})
 	if err == nil {
 		t.Fatal("重复 Kind 必须拒绝")
 	}
@@ -21,14 +21,14 @@ func TestRegistryRejectsDuplicateAndHumanExecutors(t *testing.T) {
 }
 
 func TestRegistryValidatesEveryRepeatedKindStep(t *testing.T) {
-	executor := &validatingExecutor{kind: model.StepKindLLMExtract, rejectStep: "refine"}
+	executor := &validatingExecutor{kind: model.StepKindDocumentExtract, rejectStep: "refine"}
 	registry, err := NewRegistry(executor)
 	if err != nil {
 		t.Fatal(err)
 	}
 	definition := model.TaskDefinition{Steps: []model.StepDefinition{
-		{ID: "extract", Kind: model.StepKindLLMExtract},
-		{ID: "refine", Kind: model.StepKindLLMExtract},
+		{ID: "extract", Kind: model.StepKindDocumentExtract},
+		{ID: "refine", Kind: model.StepKindDocumentExtract},
 		{ID: "review", Kind: model.StepKindHumanReview},
 	}}
 	err = registry.ValidateDefinition(context.Background(), definition)

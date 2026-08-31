@@ -6,17 +6,18 @@ import (
 	"reqflow/internal/app"
 	appanalysis "reqflow/internal/app/analysis"
 	appcatalog "reqflow/internal/app/catalog"
+	appextraction "reqflow/internal/app/extraction"
 	apporchestrator "reqflow/internal/app/orchestrator"
 	apppipeline "reqflow/internal/app/pipeline"
 	appplatformagent "reqflow/internal/app/platformagent"
+	appplatformconfig "reqflow/internal/app/platformconfig"
 	appretrieval "reqflow/internal/app/retrieval"
 )
 
 // Services 组装点注入的全部业务用例（cmd 负责构造）。
 type Services struct {
-	Tasks           *app.TaskManager
 	Match           *app.MatchService
-	Settings        *app.SettingsService
+	PlatformConfigs *appplatformconfig.Service
 	Overview        *app.OverviewService
 	DatasetQuery    *app.DatasetQueryService
 	DatasetAdmin    *app.DatasetAdminService
@@ -29,7 +30,7 @@ type Services struct {
 	V2Datasets      *apppipeline.DatasetService
 	V2QueryDatasets *apppipeline.QueryDatasetService
 	V2Assets        *apppipeline.AssetService
-	V2Extractions   *apppipeline.ExtractionService
+	V2Extractions   *appextraction.Service
 	V2Cleaning      *apppipeline.CleaningService
 	V2Review        *apppipeline.ReviewService
 	V2Retrieval     *appretrieval.Service
@@ -38,8 +39,7 @@ type Services struct {
 	V2Catalog       *appcatalog.Service
 	V2Agent         *appplatformagent.Service
 
-	UploadDir string // 上传暂存目录（cmd 从配置注入）
-	MaxFileMB int64  // 上传大小上限
+	MaxFileMB int64 // 上传大小上限
 }
 
 // New 构造 HTTP 路由。
@@ -54,28 +54,7 @@ func New(svc Services) *gin.Engine {
 		api.GET("/health", h.health)
 		api.GET("/overview", h.overview)
 
-		api.POST("/tasks", h.createTask)
-		api.GET("/tasks", h.listTasks)
-		api.GET("/tasks/:id", h.getTask)
-		api.PATCH("/tasks/:id", h.patchTask)
-		api.DELETE("/tasks/:id", h.archiveTask)   // 归档（可恢复，退出主业务循环）
-		api.POST("/tasks/:id/items", h.taskItems) // 门内草稿批量保存
-		api.POST("/tasks/:id/parse", h.taskParse) // fire-and-forget 步骤触发
-		api.POST("/tasks/:id/analyze", h.taskAnalyze)
-		api.POST("/tasks/:id/dataset", h.taskGenerateDataset)
-		api.POST("/tasks/:id/dataset/preview", h.taskDatasetPreview) // 写入预览（冲突分桶）
-		api.POST("/tasks/:id/pause", h.pauseTask)
-		api.POST("/tasks/:id/resume", h.resumeTask)
-		api.POST("/tasks/:id/complete", h.completeTask)
-		api.POST("/tasks/:id/dialog", h.answerDialog) // 人工回答 agent 的提问（ask_human）
-		api.POST("/tasks/:id/events", h.taskEvents)   // SSE：快照回放 + 实时
-
-		api.GET("/workflows", h.listWorkflows)             // 任务类型目录（工作流元数据）
-		api.GET("/datasets", h.listDatasets)               // 数据集浏览（任务产出的结果集）
-		api.GET("/datasets/schemas", h.listDatasetSchemas) // 数据集类型模板目录（新建数据集带出）
-		api.POST("/datasets", h.createDataset)             // 新建数据集（字段定义从模板带出或自定义）
-		api.GET("/datasets/:id", h.getDataset)
-		api.GET("/datasets/:id/items", h.queryDatasetItems)          // 条目筛选 + 语义检索
+		api.POST("/datasets", h.createDataset)                       // 新建数据集（字段定义从模板带出或自定义）
 		api.POST("/datasets/:id/search", h.searchDatasetFTS)         // 字段全文检索（FTS 动态索引）
 		api.POST("/datasets/:id/schema/check", h.datasetSchemaCheck) // 字段定义 dry-run
 		api.PUT("/datasets/:id/schema", h.datasetSchemaUpdate)       // 字段定义受控保存
@@ -105,8 +84,13 @@ func New(svc Services) *gin.Engine {
 
 		api.POST("/match/duplicates", h.checkDuplicates)
 
-		api.GET("/settings", h.viewSettings)
-		api.POST("/settings/test-llm", h.testLLM)
+		if svc.PlatformConfigs != nil {
+			api.GET("/platform-configs", h.listPlatformConfigs)
+			api.POST("/platform-configs/:kind", h.createPlatformConfig)
+			api.PUT("/platform-configs/:kind/:id", h.updatePlatformConfig)
+			api.DELETE("/platform-configs/:kind/:id", h.deletePlatformConfig)
+			api.POST("/platform-configs/:kind/:id/activate", h.activatePlatformConfig)
+		}
 	}
 	v2 := api.Group("/v2")
 	if svc.V2Agent != nil {

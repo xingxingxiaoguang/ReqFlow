@@ -15,29 +15,29 @@ import (
 	"reqflow/internal/domain/model"
 )
 
-type AnalyzeExecutor struct{ service *Service }
+type KnowledgeAnalyzeExecutor struct{ service *Service }
 
-func NewAnalyzeExecutor(service *Service) (*AnalyzeExecutor, error) {
+func NewKnowledgeAnalyzeExecutor(service *Service) (*KnowledgeAnalyzeExecutor, error) {
 	if service == nil {
-		return nil, fmt.Errorf("agent.analyze: service is required")
+		return nil, fmt.Errorf("knowledge.analyze: service is required")
 	}
-	return &AnalyzeExecutor{service: service}, nil
+	return &KnowledgeAnalyzeExecutor{service: service}, nil
 }
 
-func (*AnalyzeExecutor) Kind() model.StepKind { return model.StepKindAgentAnalyze }
+func (*KnowledgeAnalyzeExecutor) Kind() model.StepKind { return model.StepKindKnowledgeAnalyze }
 
-type AnalyzeConfig struct {
+type KnowledgeAnalyzeConfig struct {
 	AnalysisProfileID string                          `json:"analysis_profile_id"`
 	KnowledgeSources  map[string]KnowledgeSourceInput `json:"knowledge_sources"`
 }
 
-func (e *AnalyzeExecutor) ValidateDefinition(ctx context.Context, step model.StepDefinition) error {
-	config, err := decodeAnalyzeConfig(step.Config)
+func (e *KnowledgeAnalyzeExecutor) ValidateDefinition(ctx context.Context, step model.StepDefinition) error {
+	config, err := decodeKnowledgeAnalyzeConfig(step.Config)
 	if err != nil {
 		return err
 	}
 	if len(step.Inputs) == 0 || len(step.Inputs) != len(config.KnowledgeSources) {
-		return fmt.Errorf("agent.analyze 的每个输入都必须声明为 knowledge_sources")
+		return fmt.Errorf("knowledge.analyze 的每个输入都必须声明为 knowledge_sources")
 	}
 	for portName := range step.Inputs {
 		if _, ok := config.KnowledgeSources[portName]; !ok {
@@ -45,7 +45,7 @@ func (e *AnalyzeExecutor) ValidateDefinition(ctx context.Context, step model.Ste
 		}
 	}
 	if len(step.Outputs) != 1 || step.Outputs["analysis"] != model.ResourceAnalysisResult {
-		return fmt.Errorf("agent.analyze 必须且只能输出 analysis: analysis_result")
+		return fmt.Errorf("knowledge.analyze 必须且只能输出 analysis: analysis_result")
 	}
 	if _, err := e.service.GetProfile(ctx, config.AnalysisProfileID); err != nil {
 		return fmt.Errorf("AnalysisProfile 不存在: %w", err)
@@ -53,18 +53,18 @@ func (e *AnalyzeExecutor) ValidateDefinition(ctx context.Context, step model.Ste
 	return nil
 }
 
-func (e *AnalyzeExecutor) Execute(ctx context.Context, run orchestrator.StepRunContext) (orchestrator.StepResult, error) {
+func (e *KnowledgeAnalyzeExecutor) Execute(ctx context.Context, run orchestrator.StepRunContext) (orchestrator.StepResult, error) {
 	return e.run(ctx, run, nil)
 }
 
-func (e *AnalyzeExecutor) Resume(ctx context.Context, run orchestrator.StepRunContext,
+func (e *KnowledgeAnalyzeExecutor) Resume(ctx context.Context, run orchestrator.StepRunContext,
 	checkpoint json.RawMessage) (orchestrator.StepResult, error) {
 	return e.run(ctx, run, checkpoint)
 }
 
-func (e *AnalyzeExecutor) run(ctx context.Context, run orchestrator.StepRunContext,
+func (e *KnowledgeAnalyzeExecutor) run(ctx context.Context, run orchestrator.StepRunContext,
 	checkpoint json.RawMessage) (orchestrator.StepResult, error) {
-	config, err := decodeAnalyzeConfig(run.Config)
+	config, err := decodeKnowledgeAnalyzeConfig(run.Config)
 	if err != nil {
 		return orchestrator.StepResult{}, err
 	}
@@ -96,19 +96,19 @@ func (e *AnalyzeExecutor) run(ctx context.Context, run orchestrator.StepRunConte
 		"cache_write_tokens": result.CacheWriteTokens}}, nil
 }
 
-func decodeAnalyzeConfig(raw json.RawMessage) (AnalyzeConfig, error) {
-	var config AnalyzeConfig
+func decodeKnowledgeAnalyzeConfig(raw json.RawMessage) (KnowledgeAnalyzeConfig, error) {
+	var config KnowledgeAnalyzeConfig
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
 	if len(bytes.TrimSpace(raw)) == 0 {
-		return config, fmt.Errorf("agent.analyze config 不能为空")
+		return config, fmt.Errorf("knowledge.analyze config 不能为空")
 	}
 	if err := decoder.Decode(&config); err != nil {
-		return config, fmt.Errorf("agent.analyze config 非法: %w", err)
+		return config, fmt.Errorf("knowledge.analyze config 非法: %w", err)
 	}
 	var trailing any
 	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return config, fmt.Errorf("agent.analyze config 只能包含一个 JSON object")
+		return config, fmt.Errorf("knowledge.analyze config 只能包含一个 JSON object")
 	}
 	config.AnalysisProfileID = strings.TrimSpace(config.AnalysisProfileID)
 	if _, err := uuid.Parse(config.AnalysisProfileID); err != nil {

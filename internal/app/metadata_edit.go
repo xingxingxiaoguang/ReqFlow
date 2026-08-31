@@ -126,7 +126,7 @@ func buildExtensionTypes(workflows map[string]model.Workflow, wfPayloads map[str
 			Workflow:    workflows[typ],
 			DatasetType: payload.DatasetType,
 			Schema:      func() model.DatasetSchema { return sc },
-			Profile: AnalyzeProfile{
+			Profile: MetadataAgentProfile{
 				Role:    p.Role,
 				Example: p.Example,
 				Schema:  func() model.DatasetSchema { return sc },

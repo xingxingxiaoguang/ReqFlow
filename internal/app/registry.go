@@ -9,9 +9,7 @@ import (
 
 // 任务类型聚合注册表：一个任务类型的全部定义构件收敛为一处声明——
 // 工作流（步骤链）+ 产出数据集类型 + 产出 schema + agent 装配描述。
-// 新增任务类型 = 在 taskTypeDefinitions 加一条（必要时配套新增 StepKind 执行器）；
-// 旧查找入口（WorkflowOf / AnalyzeProfileOf / datasetWritePlanFor）均委托于此，
-// 元数据目录（metadata.go）与 /api/metadata 以本注册表为唯一事实源。
+// 该注册表只服务尚存的元数据目录，不参与 V2 TaskDefinition/StepRun 调度。
 //
 // 分层真相源（METADATA §4.1）：taskTypeDefinitions 是 code seed；M3 起 DB 覆盖
 // （metadata_registry）由 MetadataService 装载进本包的 override 层，TaskTypeOf /
@@ -24,7 +22,7 @@ type TaskTypeDefinition struct {
 	Workflow    model.Workflow             // 步骤链 + 依赖声明（创建任务时快照进 tasks.workflow）
 	DatasetType string                     // 产出数据集类型（task↔dataset 接缝映射）
 	Schema      func() model.DatasetSchema // 产出字段合同（提示词渲染/写入校验/条目身份的单一事实源）
-	Profile     AnalyzeProfile             // agent 装配描述（指令头/示例/写入绑定）
+	Profile     MetadataAgentProfile       // 元数据预览装配描述
 }
 
 // extraTaskTypes 测试注入的扩展任务类型（生产恒空）。金标准用例经此注册玩具

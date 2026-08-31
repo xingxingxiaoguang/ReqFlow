@@ -116,7 +116,7 @@ func TestWizardLifecycleDraftToEnabled(t *testing.T) {
 	if v := d.Schema(); v.Version != 1 || v.Label != "评审记录" {
 		t.Fatalf("启用后 schema 生效: %+v", v)
 	}
-	if p, err := profileFor("test_review"); err != nil || p.Write.Schema.Type != "review" {
+	if p, err := metadataAgentProfileFor("test_review"); err != nil || p.Write.Schema.Type != "review" {
 		t.Fatalf("启用后 profile/写入绑定生效: %v %+v", err, p)
 	}
 	if sc, ok := effectiveSchemaOf("review"); !ok || sc.Type != "review" {
@@ -329,7 +329,7 @@ func TestUpdateWorkflowSeededOverrideAndSnapshotIsolation(t *testing.T) {
 		t.Fatalf("存量任务应按快照（4 步）: %d", len(w.Steps))
 	}
 	// 新任务走 effective：Create 的取数入口（WorkflowOf）已验证为 3 步覆盖链
-	// （TaskManager.Create 用 MarshalWorkflow(WorkflowOf(...)) 快照，行为由既有测试覆盖）
+	// 元数据目录的 WorkflowOf 查找仍应只暴露已启用定义。
 	audits := mustAudits(t, repo, port.MetadataKindWorkflow, model.TaskTypeRequirementImport)
 	if len(audits) != 1 || audits[0].Action != "update_workflow" || audits[0].FromVersion != 0 || audits[0].ToVersion != 1 {
 		t.Fatalf("update_workflow 审计应对: %+v", audits)

@@ -34,8 +34,8 @@ func TestIntegrationFreshMigration(t *testing.T) {
 	if err := target.Raw(`SELECT max(version) FROM schema_migrations`).Scan(&version).Error; err != nil {
 		t.Fatal(err)
 	}
-	if version != 21 {
-		t.Fatalf("latest migration=%d want=21", version)
+	if version != 22 {
+		t.Fatalf("latest migration=%d want=22", version)
 	}
 	var tables int64
 	if err := target.Raw(`SELECT count(*) FROM information_schema.tables
@@ -73,6 +73,14 @@ func TestIntegrationFreshMigration(t *testing.T) {
 	}
 	if agentTables != 2 {
 		t.Fatalf("agent config tables=%d want=2", agentTables)
+	}
+	var platformConfigTables int64
+	if err := target.Raw(`SELECT count(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name = 'platform_configs'`).Scan(&platformConfigTables).Error; err != nil {
+		t.Fatal(err)
+	}
+	if platformConfigTables != 1 {
+		t.Fatalf("platform config tables=%d want=1", platformConfigTables)
 	}
 	if sqlDB, err := target.DB(); err == nil {
 		_ = sqlDB.Close()

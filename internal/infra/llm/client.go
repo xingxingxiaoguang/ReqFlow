@@ -47,7 +47,7 @@ func New(opt Options) port.LLMClient {
 
 func checkAvailable(opt Options) error {
 	if opt.APIKey == "" || opt.BaseURL == "" || opt.Model == "" {
-		return fmt.Errorf("LLM 未配置（base_url/api_key/model），请在 config.yaml 填写后重启")
+		return fmt.Errorf("LLM 未配置（base_url/api_key/model），请在平台配置中激活可用配置")
 	}
 	return nil
 }

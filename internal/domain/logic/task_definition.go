@@ -18,12 +18,12 @@ const (
 )
 
 var validV2StepKinds = map[model.StepKind]bool{
-	model.StepKindSourceParse: true, model.StepKindLLMExtract: true,
+	model.StepKindSourceParse: true, model.StepKindDocumentExtract: true,
 	model.StepKindDataTransform: true, model.StepKindDataValidate: true,
 	model.StepKindDataPublish: true, model.StepKindDataQueryDerive: true,
-	model.StepKindAnalysisPublish: true,
-	model.StepKindRetrievalBuild:  true,
-	model.StepKindAgentAnalyze:    true, model.StepKindArtifactRender: true,
+	model.StepKindAnalysisPublish:  true,
+	model.StepKindRetrievalBuild:   true,
+	model.StepKindKnowledgeAnalyze: true, model.StepKindArtifactRender: true,
 	model.StepKindGraphBuild: true, model.StepKindHumanReview: true,
 }
 

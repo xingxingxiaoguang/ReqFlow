@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	appextraction "reqflow/internal/app/extraction"
 	apporchestrator "reqflow/internal/app/orchestrator"
 	apppipeline "reqflow/internal/app/pipeline"
 	"reqflow/internal/domain/model"
@@ -21,7 +22,7 @@ import (
 	"reqflow/internal/port"
 )
 
-func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
+func TestIntegrationV2SourceParseAndDocumentExtract(t *testing.T) {
 	db, err := database.Connect(testDSN(), 3, 500)
 	if err != nil {
 		t.Skipf("本地 PG 不可用，跳过集成测试: %v", err)
@@ -40,13 +41,13 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 		t.Fatal(err)
 	}
 	llm := &extractionIntegrationLLM{failCall: 2}
-	extractions, err := apppipeline.NewExtractionService(repo, llm,
-		"integration-model", apppipeline.ExtractionOptions{MaxUnitRunes: 10})
+	extractions, err := appextraction.NewService(repo, llm,
+		"integration-model", appextraction.Options{MaxUnitRunes: 10})
 	if err != nil {
 		t.Fatal(err)
 	}
 	parseExecutor, _ := apppipeline.NewSourceParseExecutor(assets)
-	extractExecutor, _ := apppipeline.NewLLMExtractExecutor(extractions)
+	extractExecutor, _ := appextraction.NewExecutor(extractions)
 	cleaning, err := apppipeline.NewCleaningService(repo)
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +125,7 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 			map[string]any{"id": "parse", "name": "解析", "kind": "source.parse",
 				"inputs":  map[string]any{"assets": "$task.source"},
 				"outputs": map[string]any{"documents": "parsed_documents"}},
-			map[string]any{"id": "extract", "name": "抽取", "kind": "llm.extract",
+			map[string]any{"id": "extract", "name": "抽取", "kind": "document.extract",
 				"depends_on": []string{"parse"}, "inputs": map[string]any{"documents": "$step.parse.documents"},
 				"outputs": map[string]any{"drafts": "record_drafts"},
 				"config":  map[string]any{"extraction_profile_id": profileID}},
@@ -179,8 +180,8 @@ func TestIntegrationV2SourceParseAndLLMExtract(t *testing.T) {
 	if err := worker.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if llm.calls != firstAttemptCalls+1 {
-		t.Fatalf("retry must call LLM only for the failed unit: first=%d total=%d", firstAttemptCalls, llm.calls)
+	if llm.calls != firstAttemptCalls+4 {
+		t.Fatalf("retry must resume the failed unit after its completed list turn: first=%d total=%d", firstAttemptCalls, llm.calls)
 	}
 	if err := worker.RunOnce(context.Background()); err != nil {
 		t.Fatal(err)
@@ -358,33 +359,40 @@ type extractionIntegrationLLM struct {
 }
 
 func (client *extractionIntegrationLLM) Complete(_ context.Context, c *port.Context) (*port.Message, error) {
-	var request struct {
-		Blocks []struct {
-			BlockID string `json:"block_id"`
-			Text    string `json:"text"`
-		} `json:"blocks"`
-	}
-	if len(c.Messages) == 0 || json.Unmarshal([]byte(c.Messages[0].Text()), &request) != nil || len(request.Blocks) == 0 {
-		return nil, fmt.Errorf("invalid extraction prompt")
-	}
-	block := request.Blocks[0]
 	client.calls++
 	if client.calls == client.failCall {
-		call := port.ToolCall{ID: "call-invalid", Name: "emit_records",
-			Arguments: json.RawMessage(`{"records":[{"fields":{"sku":"bad"},"source_refs":[{"block_id":"outside","quote":"fabricated"}]}]}`)}
-		return &port.Message{Role: port.RoleAssistant, StopReason: port.StopReasonToolUse,
-			Usage:   port.Usage{Input: 10, Output: 2},
-			Content: []port.Block{{Type: port.BlockToolCall, ToolCall: &call}}}, nil
+		return &port.Message{Role: port.RoleAssistant, StopReason: port.StopReasonError,
+				Usage: port.Usage{Input: 10, Output: 2}, ErrorMessage: "transient provider failure"},
+			fmt.Errorf("transient provider failure")
 	}
-	arguments, _ := json.Marshal(map[string]any{"records": []any{map[string]any{
-		"fields":           map[string]any{"sku": "A-100", "name": "产品 A"},
-		"field_confidence": map[string]any{"sku": 0.99, "name": 0.95},
-		"source_refs":      []any{map[string]any{"block_id": block.BlockID, "quote": block.Text}},
-	}}})
-	call := port.ToolCall{ID: "call-1", Name: "emit_records", Arguments: arguments}
+	toolName, arguments := "list_source_blocks", json.RawMessage(`{}`)
+	if extractionContextHasToolResult(c, "list_source_blocks") {
+		toolName, arguments = "read_source_blocks", json.RawMessage(`{"offset":0,"limit":20}`)
+	}
+	if extractionContextHasToolResult(c, "read_source_blocks") {
+		blockID, quote, err := extractionReadSource(c)
+		if err != nil {
+			return nil, err
+		}
+		arguments, _ = json.Marshal(map[string]any{"records": []any{map[string]any{
+			"draft_key":        "sku:A-100",
+			"fields":           map[string]any{"sku": "A-100", "name": "产品 A"},
+			"field_confidence": map[string]any{"sku": 0.99, "name": 0.95},
+			"source_refs":      []any{map[string]any{"block_id": blockID, "quote": quote}},
+		}}})
+		toolName = "upsert_record_drafts"
+	}
+	if extractionContextHasSuccessfulToolResult(c, "upsert_record_drafts") {
+		toolName, arguments = "validate_record_drafts", json.RawMessage(`{}`)
+	}
+	if extractionContextHasSuccessfulToolResult(c, "validate_record_drafts") {
+		toolName, arguments = "finish_extraction_unit", json.RawMessage(`{"outcome":"records"}`)
+	}
+	call := port.ToolCall{ID: fmt.Sprintf("call-%d", client.calls), Name: toolName, Arguments: arguments}
 	return &port.Message{Role: port.RoleAssistant, StopReason: port.StopReasonToolUse,
-		Usage:   port.Usage{Input: 10, Output: 2},
-		Content: []port.Block{{Type: port.BlockToolCall, ToolCall: &call}}}, nil
+		Usage: port.Usage{Input: 10, Output: 2},
+		Content: []port.Block{{Type: port.BlockThinking, Thinking: "follow extraction tool protocol"},
+			{Type: port.BlockToolCall, ToolCall: &call}}}, nil
 }
 
 func (client *extractionIntegrationLLM) Stream(ctx context.Context, c *port.Context, _ func(port.AssistantEvent)) (*port.Message, error) {
@@ -392,3 +400,40 @@ func (client *extractionIntegrationLLM) Stream(ctx context.Context, c *port.Cont
 }
 
 func (*extractionIntegrationLLM) Ping(context.Context) error { return nil }
+
+func extractionContextHasToolResult(c *port.Context, name string) bool {
+	for _, message := range c.Messages {
+		if message.Role == port.RoleToolResult && message.ToolName == name {
+			return true
+		}
+	}
+	return false
+}
+
+func extractionContextHasSuccessfulToolResult(c *port.Context, name string) bool {
+	for _, message := range c.Messages {
+		if message.Role == port.RoleToolResult && message.ToolName == name && !message.IsError {
+			return true
+		}
+	}
+	return false
+}
+
+func extractionReadSource(c *port.Context) (string, string, error) {
+	for index := len(c.Messages) - 1; index >= 0; index-- {
+		message := c.Messages[index]
+		if message.Role != port.RoleToolResult || message.ToolName != "read_source_blocks" || message.IsError {
+			continue
+		}
+		var result struct {
+			Blocks []struct {
+				BlockID string `json:"block_id"`
+				Text    string `json:"text"`
+			} `json:"blocks"`
+		}
+		if err := json.Unmarshal([]byte(message.Result), &result); err == nil && len(result.Blocks) > 0 && result.Blocks[0].Text != "" {
+			return result.Blocks[0].BlockID, result.Blocks[0].Text, nil
+		}
+	}
+	return "", "", fmt.Errorf("read_source_blocks result missing")
+}

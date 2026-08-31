@@ -148,6 +148,7 @@ type StepRunView struct {
 	InputHash    string          `json:"input_hash,omitempty"`
 	ConfigHash   string          `json:"config_hash,omitempty"`
 	Progress     json.RawMessage `json:"progress,omitempty"`
+	AgentRuns    json.RawMessage `json:"agent_runs,omitempty"`
 	ErrorCode    string          `json:"error_code,omitempty"`
 	ErrorMessage string          `json:"error_message,omitempty"`
 	LeaseUntil   time.Time       `json:"lease_until,omitempty"`
@@ -276,6 +277,7 @@ func snapshotView(execution *model.TaskExecution) *TaskSnapshot {
 			Ordinal: run.Ordinal, Kind: string(run.Kind), Config: definition.Config,
 			Status: run.Status, Attempt: run.Attempt, InputHash: run.InputHash,
 			ConfigHash: run.ConfigHash, Progress: run.Progress,
+			AgentRuns: agentRunsFromCheckpoint(run.Checkpoint),
 			ErrorCode: run.ErrorCode, ErrorMessage: run.ErrorMessage,
 			LeaseUntil: run.LeaseUntil, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt})
 	}
@@ -285,6 +287,23 @@ func snapshotView(execution *model.TaskExecution) *TaskSnapshot {
 			ResourceType: string(binding.ResourceType), ResourceID: binding.ResourceID, Boundary: binding.Boundary})
 	}
 	return view
+}
+
+func agentRunsFromCheckpoint(checkpoint json.RawMessage) json.RawMessage {
+	if len(checkpoint) == 0 {
+		return nil
+	}
+	var envelope struct {
+		AgentRuns json.RawMessage `json:"agent_runs"`
+	}
+	if err := json.Unmarshal(checkpoint, &envelope); err != nil || len(envelope.AgentRuns) == 0 {
+		return nil
+	}
+	var runs []json.RawMessage
+	if err := json.Unmarshal(envelope.AgentRuns, &runs); err != nil || len(runs) == 0 {
+		return nil
+	}
+	return append(json.RawMessage(nil), envelope.AgentRuns...)
 }
 
 func taskView(task model.Task) TaskView {

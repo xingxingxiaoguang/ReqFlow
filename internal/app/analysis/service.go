@@ -22,8 +22,9 @@ const (
 )
 
 type Options struct {
-	Model         string
-	MaxIterations int
+	Model          string
+	MaxIterations  int
+	ConfigResolver port.PlatformConfigResolver
 }
 
 type Service struct {
@@ -31,6 +32,7 @@ type Service struct {
 	retrieval *appretrieval.Service
 	llm       port.LLMClient
 	model     string
+	resolver  port.PlatformConfigResolver
 	maxTurns  int
 }
 
@@ -43,7 +45,8 @@ func NewService(repo port.AnalysisRepo, retrieval *appretrieval.Service, llm por
 		options.MaxIterations = 32
 	}
 	return &Service{repo: repo, retrieval: retrieval, llm: llm,
-		model: strings.TrimSpace(options.Model), maxTurns: options.MaxIterations}, nil
+		model: strings.TrimSpace(options.Model), resolver: options.ConfigResolver,
+		maxTurns: options.MaxIterations}, nil
 }
 
 type CreateProfileInput struct {
@@ -126,6 +129,13 @@ type RunInput struct {
 	ReportProgress    func(map[string]any) error
 }
 
+type analysisCheckpoint struct {
+	agent.TraceEnvelope
+	AnalysisResultID string         `json:"analysis_result_id"`
+	Run              agent.RunState `json:"run"`
+	Result           resultState    `json:"result"`
+}
+
 func (s *Service) Analyze(ctx context.Context, input RunInput) (result *model.AnalysisResult, err error) {
 	profile, err := s.GetProfile(ctx, input.AnalysisProfileID)
 	if err != nil {
@@ -147,6 +157,18 @@ func (s *Service) Analyze(ctx context.Context, input RunInput) (result *model.An
 	if result.Status == model.AnalysisResultSucceeded {
 		return result, nil
 	}
+	modelName, err := s.resolveModel(ctx)
+	if err != nil {
+		return nil, err
+	}
+	checkpoint, err := decodeAnalysisCheckpoint(input.Checkpoint)
+	if err != nil {
+		return nil, err
+	}
+	if checkpoint.AnalysisResultID != "" && checkpoint.AnalysisResultID != result.ID {
+		return nil, fmt.Errorf("knowledge.analyze checkpoint 属于不同 AnalysisResult")
+	}
+	checkpoint.AnalysisResultID = result.ID
 	defer func() {
 		if err != nil {
 			_ = s.repo.FailAnalysisResult(context.WithoutCancel(ctx), result.ID, input.StepRunID,
@@ -154,161 +176,129 @@ func (s *Service) Analyze(ctx context.Context, input RunInput) (result *model.An
 		}
 	}()
 
-	scopeSources := make(map[string]appretrieval.KnowledgeSource, len(input.Knowledge))
-	for portName, sourceInput := range input.Knowledge {
-		resource, ok := input.Inputs[portName]
-		if !ok || resource.ResourceType != model.ResourceRetrievalSnapshot {
-			return nil, fmt.Errorf("知识源端口 %s 必须绑定 RetrievalSnapshot", portName)
+	if !checkpoint.Result.Submitted {
+		scopeSources := make(map[string]appretrieval.KnowledgeSource, len(input.Knowledge))
+		for portName, sourceInput := range input.Knowledge {
+			resource, ok := input.Inputs[portName]
+			if !ok || resource.ResourceType != model.ResourceRetrievalSnapshot {
+				return nil, fmt.Errorf("知识源端口 %s 必须绑定 RetrievalSnapshot", portName)
+			}
+			name := strings.TrimSpace(sourceInput.Name)
+			if name == "" {
+				name = portName
+			}
+			scopeSources[name] = appretrieval.KnowledgeSource{Name: name,
+				Description: strings.TrimSpace(sourceInput.Description), SnapshotID: resource.ResourceID}
 		}
-		name := strings.TrimSpace(sourceInput.Name)
-		if name == "" {
-			name = portName
+		tools, buildErr := s.retrieval.BuildKnowledgeTools(ctx, appretrieval.KnowledgeScope{
+			ID: input.StepRunID, WorkspaceID: input.WorkspaceID, Sources: scopeSources,
+		})
+		if buildErr != nil {
+			return nil, buildErr
 		}
-		scopeSources[name] = appretrieval.KnowledgeSource{Name: name,
-			Description: strings.TrimSpace(sourceInput.Description), SnapshotID: resource.ResourceID}
-	}
-	tools, err := s.retrieval.BuildKnowledgeTools(ctx, appretrieval.KnowledgeScope{
-		ID: input.StepRunID, WorkspaceID: input.WorkspaceID, Sources: scopeSources,
-	})
-	if err != nil {
-		return nil, err
-	}
-
-	agentContext, err := analysisContext(input.Checkpoint, profile, input.Knowledge, tools)
-	if err != nil {
-		return nil, err
-	}
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	var callbackErr error
-	saveContext := func() {
-		if callbackErr != nil || input.SaveCheckpoint == nil {
-			return
+		tools = append(tools, &submitResultTool{schema: profile.OutputSchema, state: &checkpoint.Result})
+		if strings.TrimSpace(checkpoint.Run.Context.SystemPrompt) == "" {
+			checkpoint.Run.Context = analysisContext(profile, input.Knowledge, tools)
 		}
-		raw, marshalErr := json.Marshal(agentContext)
-		if marshalErr == nil {
-			marshalErr = input.SaveCheckpoint(raw)
-		}
-		if marshalErr != nil {
-			callbackErr = marshalErr
-			cancel()
-		}
-	}
-	report := func(payload map[string]any) {
-		if callbackErr != nil || input.ReportProgress == nil {
-			return
-		}
-		if reportErr := input.ReportProgress(payload); reportErr != nil {
-			callbackErr = reportErr
-			cancel()
+		runErr := agent.Execute(ctx, s.llm, tools, &checkpoint.Run, &checkpoint.TraceEnvelope, agent.RunOptions{
+			ID: input.StepRunID, Label: "知识分析", Ordinal: 0,
+			Loop: agent.Config{MaxIterations: s.maxTurns, RequireToolTermination: true,
+				NoToolCallReminder: "分析尚未提交。请继续使用知识工具核对事实，并通过 submit_analysis_result 提交符合 Schema 的最终结果。"},
+			Stats: func() map[string]int {
+				if checkpoint.Result.Submitted {
+					return map[string]int{"submitted": 1}
+				}
+				return nil
+			},
+			OnFlush: func(trace agent.RunTrace) error {
+				if input.SaveCheckpoint != nil {
+					raw, marshalErr := json.Marshal(&checkpoint)
+					if marshalErr != nil {
+						return marshalErr
+					}
+					if saveErr := input.SaveCheckpoint(raw); saveErr != nil {
+						return saveErr
+					}
+				}
+				if input.ReportProgress != nil {
+					return input.ReportProgress(map[string]any{"phase": "agent", "status": trace.Status,
+						"agent_run_id": trace.ID, "analysis_result_id": result.ID,
+						"request_count": trace.RequestCount, "tool_count": len(trace.Tools)})
+				}
+				return nil
+			},
+		})
+		if runErr != nil {
+			return nil, runErr
 		}
 	}
-	report(map[string]any{"phase": "analyzing", "analysis_result_id": result.ID})
-	loop := agent.New(s.llm, tools, agent.Config{MaxIterations: s.maxTurns})
-	finalContext, runErr := loop.Run(runCtx, agentContext, nil, func(event agent.Event) {
-		switch event.Type {
-		case "message_end":
-			saveContext()
-		case "tool_execution_end":
-			report(map[string]any{"phase": "tool", "tool": event.ToolName,
-				"analysis_result_id": result.ID, "is_error": event.Output.IsError})
-		}
-	})
-	if callbackErr != nil {
-		return nil, callbackErr
+	if !checkpoint.Result.Submitted || len(checkpoint.Result.Output) == 0 {
+		return nil, fmt.Errorf("分析 Agent 未调用 submit_analysis_result")
 	}
-	if runErr != nil {
-		return nil, runErr
-	}
-	output, err := finalStructuredOutput(finalContext, profile.OutputSchema)
-	if err != nil {
-		return nil, err
-	}
-	contextJSON, _ := json.Marshal(finalContext)
-	usage := contextUsage(finalContext)
+	contextJSON, _ := json.Marshal(&checkpoint.Run.Context)
+	usage := agent.ContextUsage(&checkpoint.Run.Context)
 	result.Status, result.Output, result.AgentContext, result.Model =
-		model.AnalysisResultSucceeded, output, contextJSON, s.model
-	result.InputTokens, result.OutputTokens = usage.Input, usage.Output
-	result.CacheReadTokens, result.CacheWriteTokens = usage.CacheRead, usage.CacheWrite
+		model.AnalysisResultSucceeded, checkpoint.Result.Output, contextJSON, modelName
+	result.InputTokens, result.OutputTokens = usage.InputTokens, usage.OutputTokens
+	result.CacheReadTokens, result.CacheWriteTokens = usage.CacheReadTokens, usage.CacheWriteTokens
 	if err = s.repo.CompleteAnalysisResult(ctx, result, input.ProducerAttempt); err != nil {
 		return nil, err
 	}
 	result.FinishedAt = time.Now()
-	report(map[string]any{"phase": "succeeded", "analysis_result_id": result.ID,
-		"input_tokens": result.InputTokens, "output_tokens": result.OutputTokens})
 	return result, nil
 }
 
-func analysisContext(checkpoint json.RawMessage, profile *model.AnalysisProfile,
-	sources map[string]KnowledgeSourceInput, tools []agent.Tool) (*port.Context, error) {
-	if len(strings.TrimSpace(string(checkpoint))) > 0 && string(checkpoint) != "{}" {
-		var restored port.Context
-		if err := json.Unmarshal(checkpoint, &restored); err != nil {
-			return nil, fmt.Errorf("analysis checkpoint 非法: %w", err)
+func (s *Service) resolveModel(ctx context.Context) (string, error) {
+	if s.resolver != nil {
+		config, err := s.resolver.ResolveLLM(ctx)
+		if err != nil {
+			return "", fmt.Errorf("读取当前 LLM 配置: %w", err)
 		}
-		if strings.TrimSpace(restored.SystemPrompt) == "" || len(restored.Messages) == 0 {
-			return nil, fmt.Errorf("analysis checkpoint 缺少会话")
+		if modelName := strings.TrimSpace(config.Model); modelName != "" {
+			return modelName, nil
 		}
-		return &restored, nil
 	}
+	if modelName := strings.TrimSpace(s.model); modelName != "" {
+		return modelName, nil
+	}
+	return "", fmt.Errorf("当前 LLM 配置缺少 model")
+}
+
+func analysisContext(profile *model.AnalysisProfile,
+	sources map[string]KnowledgeSourceInput, tools []agent.Tool) port.Context {
 	toolGuides := make([]string, 0, len(tools))
+	var guidelines []string
 	for _, tool := range tools {
 		if documented, ok := tool.(agent.DocumentedTool); ok {
 			toolGuides = append(toolGuides, documented.PromptSnippet())
+			guidelines = append(guidelines, documented.PromptGuidelines()...)
 		}
 	}
 	schema := string(profile.OutputSchema)
 	system := "你是 ReqFlow V2 的结构化分析 Agent。只能使用已授权知识工具获取事实，不得猜测资源 ID。" +
 		"所有结论必须在输出中保留可验证的 dataset_item_id/provenance 引用。\n\n业务指令：\n" +
 		profile.Instruction + "\n\n可用工具：\n- " + strings.Join(toolGuides, "\n- ") +
-		"\n\n最终回复必须只包含一个 JSON object，不得使用 Markdown 代码围栏或附加解释，并严格符合此 JSON Schema：\n" + schema
+		"\n\n工具规则：\n- " + strings.Join(guidelines, "\n- ") +
+		"\n\n不得用普通文本作为最终结果；submit_analysis_result 是唯一完成出口，其参数必须严格符合此 JSON Schema：\n" + schema
 	manifest, _ := json.Marshal(map[string]any{"knowledge_sources": sources, "output_schema": json.RawMessage(schema)})
-	return &port.Context{SystemPrompt: system,
+	return port.Context{SystemPrompt: system,
 		Messages:   []port.Message{port.NewUserMessage("请执行配置的分析任务。运行合同：" + string(manifest))},
-		TaskSchema: schema}, nil
+		TaskSchema: schema}
 }
 
-func finalStructuredOutput(ctx *port.Context, schema json.RawMessage) (json.RawMessage, error) {
-	if ctx == nil {
-		return nil, fmt.Errorf("Agent 未返回上下文")
+func decodeAnalysisCheckpoint(raw json.RawMessage) (analysisCheckpoint, error) {
+	var checkpoint analysisCheckpoint
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" || trimmed == "{}" || trimmed == "null" {
+		return checkpoint, nil
 	}
-	text := ""
-	for i := len(ctx.Messages) - 1; i >= 0; i-- {
-		if ctx.Messages[i].Role == port.RoleAssistant && len(ctx.Messages[i].ToolCalls()) == 0 {
-			text = strings.TrimSpace(ctx.Messages[i].Text())
-			break
-		}
+	if err := json.Unmarshal(raw, &checkpoint); err != nil {
+		return checkpoint, fmt.Errorf("knowledge.analyze checkpoint 非法: %w", err)
 	}
-	start, end := strings.Index(text, "{"), strings.LastIndex(text, "}")
-	if start < 0 || end < start {
-		return nil, fmt.Errorf("Agent 最终输出不是 JSON object")
+	if strings.TrimSpace(checkpoint.Run.Context.SystemPrompt) == "" || len(checkpoint.Run.Context.Messages) == 0 {
+		return checkpoint, fmt.Errorf("knowledge.analyze checkpoint 缺少 Agent 会话")
 	}
-	var object map[string]any
-	decoder := json.NewDecoder(strings.NewReader(text[start : end+1]))
-	decoder.UseNumber()
-	if err := decoder.Decode(&object); err != nil {
-		return nil, fmt.Errorf("解析 Agent 最终 JSON: %w", err)
-	}
-	raw, _ := json.Marshal(object)
-	normalized, err := logic.NormalizeDatasetItem(schema, raw)
-	if err != nil {
-		return nil, fmt.Errorf("Agent 输出不符合 AnalysisProfile Schema: %w", err)
-	}
-	return normalized, nil
-}
-
-func contextUsage(ctx *port.Context) port.Usage {
-	var total port.Usage
-	if ctx == nil {
-		return total
-	}
-	for _, message := range ctx.Messages {
-		total.Input += message.Usage.Input
-		total.Output += message.Usage.Output
-		total.CacheRead += message.Usage.CacheRead
-		total.CacheWrite += message.Usage.CacheWrite
-	}
-	return total
+	return checkpoint, nil
 }
 
 func truncate(value string, limit int) string {

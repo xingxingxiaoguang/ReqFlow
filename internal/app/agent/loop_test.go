@@ -221,6 +221,34 @@ func TestLoopTerminateToolStops(t *testing.T) {
 	}
 }
 
+func TestLoopCanRequireExplicitTerminateTool(t *testing.T) {
+	client := &scriptedClient{responses: []*port.Message{
+		assistantText("我认为已经完成"),
+		assistantToolCalls(port.StopReasonToolUse,
+			port.ToolCall{ID: "c1", Name: "done", Arguments: json.RawMessage(`{}`)}),
+	}}
+	done := &doneTool{echoTool{name: "done"}}
+	final, _, err := runLoop(t, client, []Tool{done}, Config{
+		MaxIterations: 3, RequireToolTermination: true,
+		NoToolCallReminder: "必须调用 done",
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	if client.calls != 2 || done.fired != 1 {
+		t.Fatalf("calls=%d done=%d", client.calls, done.fired)
+	}
+	foundReminder := false
+	for _, message := range final.Messages {
+		if message.Role == port.RoleUser && message.Text() == "必须调用 done" {
+			foundReminder = true
+		}
+	}
+	if !foundReminder {
+		t.Fatal("缺少显式完成提醒")
+	}
+}
+
 func TestContextSerializableRoundTrip(t *testing.T) {
 	// Context 即会话：序列化/反序列化必须无损（refine 与落库的前提）
 	call := port.ToolCall{ID: "c1", Name: "search", Arguments: json.RawMessage(`{"q":"x"}`)}

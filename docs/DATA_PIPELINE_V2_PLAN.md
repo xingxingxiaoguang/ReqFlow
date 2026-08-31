@@ -26,7 +26,7 @@
 - [x] Reader-based 结构化 Parser、ParsedDocument/DocumentBlock 持久化和分页读取 API。
 - [x] `source.parse` Executor、逐文件失败 Manifest、成功缓存、checkpoint/progress 和 attempt fencing。
 - [x] 不可变 ExtractionProfile、目标 Schema/工作区校验和稳定 ProfileHash。
-- [x] `llm.extract` Executor、Schema 驱动工具参数、严格 JSON、原文 quote 校验和候选 RecordDraft 资源。
+- [x] `document.extract` Executor、ExtractionUnit Agent loop、Schema 驱动草稿工具、原文 quote 校验、自纠错和候选 RecordDraft 资源。
 - [x] 稳定 ExtractionUnit、逐单元状态、partial Manifest、成功单元复用、跨 attempt token 聚合和 producer attempt fencing。
 - [x] 受控归一化/校验 DSL：类型、单位、枚举、日期/布尔、数组拆分、派生字段及业务规则，不接受脚本或任意表达式。
 - [x] `data.transform` Executor、不可变 TransformedRecordSet、逐记录恢复、字段修改 Diff、问题明细和 producer attempt fencing。
@@ -34,7 +34,7 @@
 - [x] `human.review` 审核用例：全量决定覆盖、服务端生成不可变 ApprovedRecordSet、编辑重校验、审核重试幂等和 provenance 固化。
 - [x] `data.publish` Executor：只消费 ApprovedRecordSet，按 StepRun 幂等创建 Batch，提交前 attempt fencing，并复用 Dataset/Item/Outbox 原子事务。
 - [x] V2 Task 目录与通用 Task Detail：独立于 Legacy 查询，按定义快照展示步骤名称/Executor、资源端口、生命周期操作和 GET SSE 快照收敛。
-- [x] 不可变 AnalysisProfile、AnalysisResult、Artifact，以及 `agent.analyze`、`data.analysis_publish`、`artifact.render`、`graph.build` 四种通用 Executor。
+- [x] 不可变 AnalysisProfile、AnalysisResult、Artifact，以及 `knowledge.analyze`、`data.analysis_publish`、`artifact.render`、`graph.build` 四种通用 Executor。
 - [x] 数据清洗入库、精准 + 语义索引、Bug 分析、产品方案生成、知识图谱构建五种可编辑流程模板，同时支持从空白手动组合已注册 Executor；业务差异仅由资源绑定、Profile 和 TaskDefinition 表达。
 - [x] 纯 V2 前端信息架构：流程定义、从流程创建任务、任务运行、数据集、元数据、混合检索、制品和归档均只调用 `/api/v2`；旧内置任务入口已从路由和导航移除。
 - [x] Definition/Task 边界：发布流程只创建可复用 Definition，Task 只能从 active Definition 派生并冻结快照与资源边界；模板不再隐式创建任务。
@@ -409,7 +409,7 @@ Artifact
     },
     {
       "id": "extract_records",
-      "kind": "llm.extract",
+      "kind": "document.extract",
       "depends_on": ["parse_documents"],
       "inputs": {"documents": "$step.parse_documents.documents"},
       "outputs": {"drafts": "record_drafts"},
@@ -551,19 +551,19 @@ type StepResult struct {
 }
 ```
 
-Executor 注册表使用 `map[StepKind]StepExecutor`。Runner 按 `step_id` 调度，因此同一个 `llm.extract` 可以在一个流程中出现多次。
+Executor 注册表使用 `map[StepKind]StepExecutor`。Runner 按 `step_id` 调度，因此同一个 `document.extract` 可以在一个流程中出现多次。
 
 首批 Kind：
 
 | Kind | 职责 |
 |---|---|
 | `source.parse` | Asset → ParsedDocument/Block |
-| `llm.extract` | 结构化抽取候选记录 |
+| `document.extract` | 结构化抽取候选记录 |
 | `data.transform` | 确定性归一化和派生字段 |
 | `data.validate` | Schema、跨字段和业务规则校验 |
 | `data.publish` | 原子提交 DatasetBatch |
 | `retrieval.build` | 增量构建 BM25 和向量快照 |
-| `agent.analyze` | 使用知识工具完成分析任务 |
+| `knowledge.analyze` | 使用知识工具完成分析任务 |
 | `artifact.render` | 生成 Markdown/DOCX/PDF 等产物 |
 | `graph.build` | 生成节点、边和 Graph Manifest |
 | `human.review` | 可编辑、可驳回、可继续的人工 Gate |
@@ -607,10 +607,14 @@ task_id + step_id + input_hash + config_hash + attempt
 ### 6.2 LLM 抽取
 
 - 按 DocumentBlock 分段，不把所有文档一次性塞入上下文。
-- 抽取工具的参数 Schema 由目标 DatasetSchema 动态生成。
+- 每个稳定 ExtractionUnit 运行独立、可续跑的 Agent loop，不再存在单发抽取请求路径。
+- Agent 工具包括 `list_source_blocks`、`read_source_blocks`、`search_source_blocks`、`upsert_record_drafts`、`list_record_drafts`、`delete_record_drafts`、`validate_record_drafts` 和 `finish_extraction_unit`。
+- 草稿写入工具的参数 Schema 由目标 DatasetSchema 动态生成；参数、字段、记录上限和逐字 quote 由服务端再次校验。
 - 每批输出进入 `RecordDraft`，不直接写 Dataset。
 - RecordDraft 必须包含字段值、字段置信度、来源 Block 和短原文证据。
-- 模型输出无法通过结构校验时允许有限次数修复，超过上限进入人工异常区。
+- 工具或校验的非阻塞错误以结构化回执返回模型继续修复；只有 `finish_extraction_unit` 校验成功才能结束单元，达到迭代上限才失败。
+- StepRun checkpoint 保存未完成单元的完整 Agent 上下文和草稿状态；对外 Task Snapshot 只暴露统一 `agent_runs`，前端通过 SSE 实时展示。
+- `document.extract` 与 `knowledge.analyze` 共用 `internal/app/agent/run.go` 的 RunState、trace、checkpoint、用量与终止协议；领域包只实现自己的工具和状态。
 
 ### 6.3 确定性归一化
 
@@ -980,7 +984,7 @@ Agent 无权通过参数传入任意 Dataset ID，也不能绕过 Snapshot 直�
 
 ```text
 输入：Bug Asset/Dataset + Product RetrievalSnapshot
-步骤：parse/import bugs → agent.analyze → human.review → publish analysis batch → render report
+步骤：parse/import bugs → knowledge.analyze → human.review → publish analysis batch → render report
 输出：BugAnalysis DatasetBatch + Report Artifact
 ```
 
@@ -1189,7 +1193,7 @@ internal/infra/
   httpgin/
 ```
 
-不要求第一批提交就完成所有目录迁移，但新增 V2 代码必须进入目标边界，避免继续扩展旧 `TaskManager`。
+旧 `TaskManager` 执行链已经删除；TaskDefinition + StepRun 是唯一流程执行模型。
 
 ## 14. 数据库重建策略
 
@@ -1407,7 +1411,7 @@ retrieval_snapshot_id
 - [x] `ParsedDocumentSet` Manifest：逐文件状态、部分成功、缓存恢复和 attempt fencing。
 - [x] `source.parse` 注册到 V2 Worker。
 - [x] ExtractionProfile。
-- [x] LLM 候选抽取、严格结构化响应、Block 原文证据和逐单元恢复。
+- [x] LLM 候选抽取 Agent、自纠错工具链、Block 原文证据、逐轮 checkpoint 和实时运行面板。
 - [x] 确定性归一化、Schema/业务规则校验和冲突处理。
 - [x] 不可变 ApprovedRecordSet、全量人工决定和编辑重校验。
 - [x] Dataset Batch 幂等原子发布与发布 attempt fencing。
@@ -1464,7 +1468,7 @@ retrieval_snapshot_id
 范围：
 
 - [x] `AnalysisProfile` / `AnalysisResult` 领域模型、Repository、Service 与 V2 API。
-- [x] `agent.analyze`：以 RetrievalSnapshot + AnalysisProfile 运行受 KnowledgeScope 限制的通用 Agent，并固化模型与 ProfileHash 边界。
+- [x] `knowledge.analyze`：以 RetrievalSnapshot + AnalysisProfile 运行受 KnowledgeScope 限制的通用 Agent，并固化模型与 ProfileHash 边界。
 - [x] 通用资源人工 Gate：审核端只决定是否放行既有 Step 输出，不能提交或伪造资源 ID。
 - [x] `data.analysis_publish`：把通过审核的结构化分析结果按目标 Dataset 当前边界原子发布为 DatasetBatch。
 - [x] `artifact.render`：从 AnalysisResult 的固定 JSON 路径生成内容寻址 Markdown/JSON Artifact。
@@ -1477,9 +1481,9 @@ retrieval_snapshot_id
 
 验收：
 
-- [x] 产品方案真实浏览器端到端完成 `agent.analyze → human.review → artifact.render`，下载内容 SHA-256 与 Artifact Boundary 一致。
-- [x] Bug 分析通过真实 UI 创建 `agent.analyze → human.review → data.analysis_publish + artifact.render` 四步 DAG。
-- [x] 知识图谱通过真实 UI 创建 `agent.analyze → human.review → publish_nodes + publish_edges → graph.build` 五步 DAG，并固化两个目标 Dataset 边界。
+- [x] 产品方案真实浏览器端到端完成 `knowledge.analyze → human.review → artifact.render`，下载内容 SHA-256 与 Artifact Boundary 一致。
+- [x] Bug 分析通过真实 UI 创建 `knowledge.analyze → human.review → data.analysis_publish + artifact.render` 四步 DAG。
+- [x] 知识图谱通过真实 UI 创建 `knowledge.analyze → human.review → publish_nodes + publish_edges → graph.build` 五步 DAG，并固化两个目标 Dataset 边界。
 - [x] 五种模板均可作为流程编辑器起点，也可从空白自由编排；通用 Task Detail 按 Definition Snapshot 展示和驱动操作。
 - [x] Task 归档、归档目录展示和恢复通过真实浏览器验收。
 - [x] 自由编排检索真实验收：Definition `20d9d641-de77-4229-af95-c38efa33bfda` → Task `1236c6e2-ceb7-4a10-80dd-94e4916d4c5b` → Retrieval Snapshot `63aae631-0884-44dc-8d2f-8b5f037f08ec`，任务终态成功，浏览器 console 0 error / 0 warning。

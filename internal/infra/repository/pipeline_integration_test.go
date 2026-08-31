@@ -125,7 +125,7 @@ func TestIntegrationTaskDefinitionAndResourceBindings(t *testing.T) {
 
 	repo := NewPipelineRepo(db)
 	registry, registryErr := appOrchestrator.NewRegistry(
-		integrationExecutor{kind: model.StepKindLLMExtract},
+		integrationExecutor{kind: model.StepKindDocumentExtract},
 		integrationExecutor{kind: model.StepKindDataPublish},
 	)
 	if registryErr != nil {
@@ -141,7 +141,7 @@ func TestIntegrationTaskDefinitionAndResourceBindings(t *testing.T) {
 		OutputPorts:    map[string]model.PortDefinition{"batch": {ResourceType: model.ResourceDatasetBatch}},
 		OutputBindings: map[string]string{"batch": "$step.publish.batch"},
 		Steps: []model.StepDefinition{
-			{ID: "extract", Name: "抽取", Kind: model.StepKindLLMExtract,
+			{ID: "extract", Name: "抽取", Kind: model.StepKindDocumentExtract,
 				Inputs:  map[string]string{"documents": "$task.documents"},
 				Outputs: map[string]model.ResourceType{"drafts": model.ResourceRecordDrafts}},
 			{ID: "review", Name: "审核", Kind: model.StepKindHumanReview, DependsOn: []string{"extract"},
@@ -201,7 +201,7 @@ func TestIntegrationCreateTaskExecutionsPersistsBatchIsolation(t *testing.T) {
 	}
 
 	repo := NewPipelineRepo(db)
-	registry, err := appOrchestrator.NewRegistry(integrationExecutor{kind: model.StepKindLLMExtract})
+	registry, err := appOrchestrator.NewRegistry(integrationExecutor{kind: model.StepKindDocumentExtract})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +214,7 @@ func TestIntegrationCreateTaskExecutionsPersistsBatchIsolation(t *testing.T) {
 		},
 		OutputPorts:    map[string]model.PortDefinition{"drafts": {ResourceType: model.ResourceRecordDrafts}},
 		OutputBindings: map[string]string{"drafts": "$step.extract.drafts"},
-		Steps: []model.StepDefinition{{ID: "extract", Name: "抽取", Kind: model.StepKindLLMExtract,
+		Steps: []model.StepDefinition{{ID: "extract", Name: "抽取", Kind: model.StepKindDocumentExtract,
 			Inputs:  map[string]string{"documents": "$task.documents"},
 			Outputs: map[string]model.ResourceType{"drafts": model.ResourceRecordDrafts}}},
 	})
@@ -261,7 +261,7 @@ func TestIntegrationCreateTaskExecutionsPersistsBatchIsolation(t *testing.T) {
 				ResourceType: model.ResourceAssetSet, ResourceID: assetSets[i].ID,
 			}},
 			Steps: []model.StepRun{{
-				StepID: "extract", Ordinal: 1, Kind: model.StepKindLLMExtract, Status: model.StepRunPending,
+				StepID: "extract", Ordinal: 1, Kind: model.StepKindDocumentExtract, Status: model.StepRunPending,
 			}},
 		}
 	}
@@ -328,7 +328,7 @@ func TestIntegrationOrchestratorWorkerHumanGateAndLeaseFencing(t *testing.T) {
 	}
 	repo := NewPipelineRepo(db)
 	registry, err := appOrchestrator.NewRegistry(
-		flowExecutor{kind: model.StepKindLLMExtract},
+		flowExecutor{kind: model.StepKindDocumentExtract},
 		flowExecutor{kind: model.StepKindDataPublish},
 	)
 	if err != nil {
@@ -347,10 +347,10 @@ func TestIntegrationOrchestratorWorkerHumanGateAndLeaseFencing(t *testing.T) {
 		},
 		OutputBindings: map[string]string{"batch": "$step.publish.batch", "report": "$step.publish.report"},
 		Steps: []model.StepDefinition{
-			{ID: "extract", Name: "初次抽取", Kind: model.StepKindLLMExtract,
+			{ID: "extract", Name: "初次抽取", Kind: model.StepKindDocumentExtract,
 				Inputs:  map[string]string{"documents": "$task.documents"},
 				Outputs: map[string]model.ResourceType{"drafts": model.ResourceRecordDrafts}},
-			{ID: "refine", Name: "二次抽取", Kind: model.StepKindLLMExtract, DependsOn: []string{"extract"},
+			{ID: "refine", Name: "二次抽取", Kind: model.StepKindDocumentExtract, DependsOn: []string{"extract"},
 				Inputs:  map[string]string{"drafts": "$step.extract.drafts"},
 				Outputs: map[string]model.ResourceType{"drafts": model.ResourceRecordDrafts}},
 			{ID: "review", Name: "任意位置审核", Kind: model.StepKindHumanReview, DependsOn: []string{"refine"},

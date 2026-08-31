@@ -19,7 +19,7 @@ func TestWorkerPoolHonorsConcurrencyLimit(t *testing.T) {
 	const concurrency = 3
 	repo := newPoolWorkerRepo(t, 4, false)
 	executor := &blockingPoolExecutor{
-		kind: model.StepKindLLMExtract, started: make(chan string, 4), release: make(chan struct{}),
+		kind: model.StepKindDocumentExtract, started: make(chan string, 4), release: make(chan struct{}),
 	}
 	registry, err := NewRegistry(executor)
 	if err != nil {
@@ -63,7 +63,7 @@ func TestWorkerPoolHonorsConcurrencyLimit(t *testing.T) {
 func TestWorkerPoolCancelTaskStopsAllActiveSteps(t *testing.T) {
 	repo := newPoolWorkerRepo(t, 2, true)
 	executor := &blockingPoolExecutor{
-		kind: model.StepKindLLMExtract, started: make(chan string, 2), release: make(chan struct{}),
+		kind: model.StepKindDocumentExtract, started: make(chan string, 2), release: make(chan struct{}),
 	}
 	registry, err := NewRegistry(executor)
 	if err != nil {
@@ -150,7 +150,7 @@ func newPoolWorkerRepo(t *testing.T, count int, sharedTask bool) *poolWorkerRepo
 			stepID := fmt.Sprintf("extract_%d", i+1)
 			steps[i] = poolStepDefinition(stepID)
 			runs[i] = model.StepRun{ID: fmt.Sprintf("run-%d", i+1), TaskID: "task-shared", StepID: stepID,
-				Ordinal: i + 1, Kind: model.StepKindLLMExtract, Status: model.StepRunRunning}
+				Ordinal: i + 1, Kind: model.StepKindDocumentExtract, Status: model.StepRunRunning}
 		}
 		repo.claims = append(repo.claims, runs...)
 		repo.executions["task-shared"] = poolTaskExecution(t, "task-shared", steps, runs)
@@ -159,7 +159,7 @@ func newPoolWorkerRepo(t *testing.T, count int, sharedTask bool) *poolWorkerRepo
 	for i := 0; i < count; i++ {
 		taskID := fmt.Sprintf("task-%d", i+1)
 		run := model.StepRun{ID: fmt.Sprintf("run-%d", i+1), TaskID: taskID, StepID: "extract",
-			Ordinal: 1, Kind: model.StepKindLLMExtract, Status: model.StepRunRunning}
+			Ordinal: 1, Kind: model.StepKindDocumentExtract, Status: model.StepRunRunning}
 		repo.claims = append(repo.claims, run)
 		repo.executions[taskID] = poolTaskExecution(t, taskID, []model.StepDefinition{poolStepDefinition("extract")}, []model.StepRun{run})
 	}
@@ -167,7 +167,7 @@ func newPoolWorkerRepo(t *testing.T, count int, sharedTask bool) *poolWorkerRepo
 }
 
 func poolStepDefinition(stepID string) model.StepDefinition {
-	return model.StepDefinition{ID: stepID, Name: stepID, Kind: model.StepKindLLMExtract,
+	return model.StepDefinition{ID: stepID, Name: stepID, Kind: model.StepKindDocumentExtract,
 		Inputs:  map[string]string{"source": "$task.source"},
 		Outputs: map[string]model.ResourceType{"batch": model.ResourceDatasetBatch}}
 }

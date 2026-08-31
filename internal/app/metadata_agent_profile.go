@@ -7,17 +7,16 @@ import (
 	"reqflow/internal/domain/model"
 )
 
-// AnalyzeProfile 一类任务的 agent 装配描述（聚合注册表的 agent 侧构件）。
+// MetadataAgentProfile 是旧元数据目录使用的提示词预览装配描述；它不参与 V2
+// knowledge.analyze 执行，真正的不可变分析合同是 model.AnalysisProfile。
 //
 // 系统提示词由此动态装配（无固定模板）：
 //
 //	profile.Role（{field_spec} 占位 → 产出 schema 渲染）+ 额外要求（用户输入）
 //	+ 工具指南（agent.DocumentedTool 同源组装）
 //
-// 单发降级路径同理由 profile 装配：输出契约 + 示例（profile.Example 覆盖，
-// 缺省按 schema 生成骨架）。新增任务类型 = 在聚合注册表（registry.go）加一条
-// 聚合定义（工作流 + schema + 本 profile），执行骨架与提示词装配零改动。
-type AnalyzeProfile struct {
+// 该结构仅支撑旧元数据目录的声明和预览，不承载任何 LLM 执行或恢复状态。
+type MetadataAgentProfile struct {
 	// Role 指令头：角色 + 任务 + 分析要点。模式中立（不预设输出形态）；
 	// {field_spec} 占位符由产出 schema 渲染替换，{current_time} 渲染时填充。
 	Role string
@@ -25,35 +24,32 @@ type AnalyzeProfile struct {
 	Schema func() model.DatasetSchema
 	// Write 写入工具绑定（工具名/校验 schema/草稿归一化；会话重放共用）。
 	Write tools.WriteSpec
-	// Example 单发降级的输出示例（含 {current_time} 占位；空则按 schema 生成骨架）。
+	// Example 元数据目录中展示的示例片段。
 	Example string
 }
 
-// AnalyzeProfileOf 按任务类型取 agent 装配描述；未注册返回 false（委托聚合注册表）。
-func AnalyzeProfileOf(taskType string) (AnalyzeProfile, bool) {
+// MetadataAgentProfileOf 按任务类型取 agent 装配描述；未注册返回 false（委托聚合注册表）。
+func MetadataAgentProfileOf(taskType string) (MetadataAgentProfile, bool) {
 	d, ok := TaskTypeOf(taskType)
 	if !ok {
-		return AnalyzeProfile{}, false
+		return MetadataAgentProfile{}, false
 	}
 	return d.Profile, true
 }
 
-// profileFor 运行期解析：空类型（旧会话/测试）回退 requirement；未注册类型报错。
-func profileFor(taskType string) (AnalyzeProfile, error) {
-	if taskType == "" {
-		return requirementProfile(), nil
-	}
-	p, ok := AnalyzeProfileOf(taskType)
+// metadataAgentProfileFor 解析已注册的元数据 Agent Profile。
+func metadataAgentProfileFor(taskType string) (MetadataAgentProfile, error) {
+	p, ok := MetadataAgentProfileOf(taskType)
 	if !ok {
-		return p, fmt.Errorf("任务类型 %s 未注册 agent 装配描述（AnalyzeProfileOf）", taskType)
+		return p, fmt.Errorf("任务类型 %s 未注册 agent 装配描述（MetadataAgentProfileOf）", taskType)
 	}
 	return p, nil
 }
 
 /* ---- requirement_import ---- */
 
-func requirementProfile() AnalyzeProfile {
-	return AnalyzeProfile{
+func requirementProfile() MetadataAgentProfile {
+	return MetadataAgentProfile{
 		Role:    requirementRole,
 		Schema:  model.RequirementSchema,
 		Write:   tools.DefaultWriteSpec(),
@@ -79,8 +75,7 @@ const requirementRole = `你是一位专业的项目管理助手和技术顾问�
 6. 状态识别：仅提取文档明确写出的状态
 7. 解决方案：专业、具体、可执行`
 
-// requirementExample 单发降级的输出示例（富示例保质量；新任务类型可省略，
-// 缺省由 schema 生成骨架）。
+// requirementExample 是元数据目录展示的示例片段。
 const requirementExample = `[
   {
     "project_name": "用户中心",

@@ -31,6 +31,28 @@ export interface V2Resource {
   boundary?: Record<string, unknown>
 }
 
+export interface V2AgentToolRun {
+  id: string
+  name: string
+  args?: string
+  status: 'running' | 'done' | 'error'
+  details?: string
+  result?: string
+}
+
+export interface V2AgentRun {
+  id: string
+  label: string
+  ordinal: number
+  status: 'running' | 'succeeded' | 'failed'
+  thinking?: string
+  output?: string
+  tools?: V2AgentToolRun[]
+  request_count: number
+  stats?: Record<string, number>
+  updated_at: number
+}
+
 export interface V2StepRun {
   id: string
   step_id: string
@@ -43,6 +65,7 @@ export interface V2StepRun {
   input_hash?: string
   config_hash?: string
   progress?: Record<string, unknown>
+  agent_runs?: V2AgentRun[]
   error_code?: string
   error_message?: string
   lease_until?: string

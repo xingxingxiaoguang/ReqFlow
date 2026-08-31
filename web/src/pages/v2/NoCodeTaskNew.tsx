@@ -437,7 +437,7 @@ function inferTargetDatasetSchemas(
     const schemaIds = new Set<string>()
     for (const validator of validators) {
       for (const ancestor of upstreamSteps(validator, stepById)) {
-        if (ancestor.kind !== 'llm.extract') continue
+        if (ancestor.kind !== 'document.extract') continue
         const profileId = ancestor.config?.extraction_profile_id
         if (typeof profileId !== 'string') continue
         const schemaId = profileById.get(profileId)?.target_schema_id

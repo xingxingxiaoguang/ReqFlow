@@ -99,7 +99,8 @@ type Config struct {
 	} `yaml:"parser"`
 
 	Security struct {
-		EncryptionKey string `yaml:"encryption_key" env:"REQFLOW_SECURITY_ENCRYPTION_KEY"`
+		EncryptionKey     string `yaml:"encryption_key"      env:"REQFLOW_SECURITY_ENCRYPTION_KEY"`
+		EncryptionKeyFile string `yaml:"encryption_key_file" env:"REQFLOW_SECURITY_ENCRYPTION_KEY_FILE"`
 	} `yaml:"security"`
 
 	Workspace struct {
@@ -220,6 +221,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.OpenSearch.IndexPrefix == "" {
 		cfg.OpenSearch.IndexPrefix = "reqflow"
+	}
+	if cfg.Security.EncryptionKeyFile == "" {
+		cfg.Security.EncryptionKeyFile = "./data/.platform-config.key"
 	}
 }
 

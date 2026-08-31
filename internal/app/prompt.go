@@ -10,20 +10,18 @@ import (
 	"reqflow/internal/domain/model"
 )
 
-// 分析 Prompt 全部动态装配，无固定模板（提示词与 schema/工具同源，不漂移）：
+// Agent Prompt 全部动态装配，无固定模板（提示词与 schema/工具同源，不漂移）：
 //   - 指令头：profile.Role 的 {field_spec} 占位由产出 schema 渲染（字段增删改
 //     自动跟随），{current_time} 渲染时填充
-//   - 单发降级的输出契约：通用契约文本 + 示例（profile.Example 覆盖保质量，
-//     缺省按 schema 生成骨架——新任务类型零配置可用）
 //   - agent 工具指南：从实际注入的工具集组装（agent.DocumentedTool）
 //   - 额外要求段：用户补充，空则整体不出现
-//   - 文档节：单发模式拼进 user 消息；agent 模式替换为文档清单（原文经工具阅读）
+//   - 文档清单：原文经工具按需阅读
 //
 // 占位符以字面量 {var} 形式注入（避免与 JSON 大括号冲突的模板引擎）。
 
-// renderAnalyzeHead 渲染共享指令头（单发/agent 两模式共用）：
+// renderAnalyzeHead 渲染 Agent 指令头：
 // Role 的 {field_spec} 替换为 schema 渲染段，{current_time} 填充。
-func renderAnalyzeHead(now time.Time, profile AnalyzeProfile) string {
+func renderAnalyzeHead(now time.Time, profile MetadataAgentProfile) string {
 	head := strings.ReplaceAll(profile.Role, "{field_spec}", renderFieldSpecSection(profile.Schema()))
 	return strings.ReplaceAll(head, "{current_time}", now.Format(time.RFC3339))
 }
@@ -65,50 +63,6 @@ func promptTypeName(f model.FieldSpec) string {
 	return typ
 }
 
-// renderClassicOutputFormat 单发直调的输出契约（agent 模式不使用——产出走写入工具）。
-func renderClassicOutputFormat(now time.Time, profile AnalyzeProfile) string {
-	example := profile.Example
-	if strings.TrimSpace(example) == "" {
-		example = renderExampleSkeleton(profile.Schema())
-	}
-	out := "## 输出格式\n只输出 JSON 数组，不要包含任何其他文字、解释或 markdown 代码块标记。\n\n示例输出：\n" + example
-	return strings.ReplaceAll(out, "{current_time}", now.Format(time.RFC3339))
-}
-
-// renderExampleSkeleton 按 schema 生成示例骨架：必填字段给类型占位值，选填省略
-// （零配置兜底；对质量有要求的任务类型在 profile.Example 提供富示例）。
-func renderExampleSkeleton(schema model.DatasetSchema) string {
-	var parts []string
-	for _, f := range schema.Fields {
-		if !f.Required {
-			continue
-		}
-		switch f.Type {
-		case model.FieldNumber:
-			parts = append(parts, fmt.Sprintf("  \"%s\": 1", f.Key))
-		case model.FieldEnum:
-			v := ""
-			if len(f.Enum) > 0 {
-				v = f.Enum[0]
-			}
-			parts = append(parts, fmt.Sprintf("  \"%s\": %q", f.Key, v))
-		case model.FieldDate:
-			parts = append(parts, fmt.Sprintf("  \"%s\": \"{current_time}\"", f.Key))
-		default:
-			parts = append(parts, fmt.Sprintf("  \"%s\": \"（%s）\"", f.Key, f.Label))
-		}
-	}
-	return "[\n  {\n" + strings.Join(parts, ",\n") + "\n  }\n]"
-}
-
-const analyzeDocSection = `---
-
-## 需求文档内容
-
-{text}
-
----`
-
 // buildSpecialSection 组装「## 额外要求」章节；用户未填写时整体不出现。
 func buildSpecialSection(special string) string {
 	if special == "" {
@@ -117,21 +71,10 @@ func buildSpecialSection(special string) string {
 	return "## 额外要求\n以下为用户针对本次分析补充的要求，优先级高于前述默认约定，需严格遵循：\n" + special
 }
 
-// renderAnalyzePrompt 单发模式：指令头 + 输出格式 + 额外要求 + 文档节拼为完整 prompt
-// （一条 user 消息）。
-func renderAnalyzePrompt(text string, now time.Time, special string, profile AnalyzeProfile) string {
-	return strings.Join([]string{
-		renderAnalyzeHead(now, profile),
-		renderClassicOutputFormat(now, profile),
-		buildSpecialSection(special),
-		strings.ReplaceAll(analyzeDocSection, "{text}", text),
-	}, "\n\n")
-}
-
-// renderAgentSystem agent 模式 SystemPrompt：指令头 + 额外要求 + 工具使用指南。
+// renderAgentSystem 组装 SystemPrompt：指令头 + 额外要求 + 工具使用指南。
 // 指南从实际注入的工具集组装（agent.DocumentedTool 的 snippet/guidelines）——
 // 工具增删提示词自动跟随，杜绝引用已下线工具的漂移。
-func renderAgentSystem(now time.Time, special string, toolset []agent.Tool, profile AnalyzeProfile) string {
+func renderAgentSystem(now time.Time, special string, toolset []agent.Tool, profile MetadataAgentProfile) string {
 	var sb strings.Builder
 	sb.WriteString(renderAnalyzeHead(now, profile))
 	if sp := buildSpecialSection(special); sp != "" {

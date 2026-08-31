@@ -170,7 +170,7 @@ AI 驱动的任务是长程的，必然被打断（开会、下班、服务重�
 
 ## 6. 能力现状
 
-**数据清洗入库**（✅）：AssetSet → 解析 → Schema 驱动抽取 → 确定性转换/校验 → 人工审核 → Dataset Batch 原子发布。
+**数据清洗入库**（✅）：AssetSet → 解析 → Schema 驱动抽取 Agent（可自纠错、可实时观察工具链）→ 确定性转换/校验 → 人工审核 → Dataset Batch 原子发布。
 
 **精准 + 语义索引**（✅）：Base Dataset 增量派生 Query Dataset，构建覆盖相同数据边界的 BM25 + Vector Retrieval Snapshot。
 

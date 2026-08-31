@@ -97,7 +97,7 @@ func (e *AnalysisPublishExecutor) Execute(ctx context.Context, run orchestrator.
 			}
 		}
 		provenance.Model = result.Model
-		provenance.QualityStatus = "agent_analyzed"
+		provenance.QualityStatus = "knowledge_analyzed"
 		inputs[i] = pipeline.BatchItemInput{Fields: fields, Provenance: provenance}
 	}
 	batch, err := e.datasets.GetOrCreateBatch(ctx, pipeline.CreateBatchInput{DatasetID: target.DatasetID,

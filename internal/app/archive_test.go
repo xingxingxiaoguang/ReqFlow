@@ -245,14 +245,15 @@ func TestArchiveDatasetGuard(t *testing.T) {
 // CreateAwaitingTask 造一个停在确认门（awaiting）的任务（归档测试的常规起点）。
 func CreateAwaitingTask(t *testing.T, repo *memTasks) (*model.Task, error) {
 	t.Helper()
-	datasets := newMemDatasets()
-	mgr := newTestManager(repo, &fakeParse{text: testDoc}, nil, datasets, nil)
-	ds := newTestDataset(t, datasets)
-	task, err := mgr.Create(context.Background(), model.TaskTypeRequirementImport, "需求.docx", ds.ID)
-	if err != nil {
-		return task, err
+	task := &model.Task{Type: model.TaskTypeRequirementImport, Title: "需求.docx",
+		Status: model.TaskStatusAwaiting, OutputDatasetID: "dataset-1"}
+	if err := repo.CreateTask(context.Background(), task); err != nil {
+		return nil, err
 	}
-	_ = mgr.TriggerParse(context.Background(), task.ID, "/tmp/x.docx")
-	waitTask(t, repo, task.ID, func(t *model.Task) bool { return t.Status == model.TaskStatusAwaiting })
-	return mustTask(t, repo, task.ID), nil
+	if err := repo.CreateTaskSteps(context.Background(), task.ID, []model.TaskStep{{
+		Seq: 1, Name: "人工确认", Status: model.StepStatusAwaiting,
+	}}); err != nil {
+		return nil, err
+	}
+	return repo.GetTask(context.Background(), task.ID)
 }

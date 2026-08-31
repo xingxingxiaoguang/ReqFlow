@@ -19,12 +19,15 @@ import (
 	"reqflow/internal/app"
 	appanalysis "reqflow/internal/app/analysis"
 	appcatalog "reqflow/internal/app/catalog"
+	appextraction "reqflow/internal/app/extraction"
 	apporchestrator "reqflow/internal/app/orchestrator"
 	apppipeline "reqflow/internal/app/pipeline"
 	appplatformagent "reqflow/internal/app/platformagent"
+	appplatformconfig "reqflow/internal/app/platformconfig"
 	appretrieval "reqflow/internal/app/retrieval"
 	"reqflow/internal/infra/blobstore"
 	"reqflow/internal/infra/config"
+	secretcrypto "reqflow/internal/infra/crypto"
 	"reqflow/internal/infra/database"
 	"reqflow/internal/infra/embedding"
 	"reqflow/internal/infra/httpgin"
@@ -32,6 +35,7 @@ import (
 	"reqflow/internal/infra/opensearch"
 	"reqflow/internal/infra/parser"
 	"reqflow/internal/infra/repository"
+	"reqflow/internal/port"
 )
 
 func main() {
@@ -93,43 +97,39 @@ func main() {
 	}
 
 	/* ---- infra 实现 ---- */
-	llmClient := llm.New(llm.Options{
-		Provider:    cfg.LLM.Provider,
-		BaseURL:     cfg.LLM.BaseURL,
-		APIKey:      cfg.LLM.APIKey,
-		Model:       cfg.LLM.Model,
-		Temperature: cfg.LLM.Temperature,
-		MaxTokens:   cfg.LLM.MaxTokens,
-		Timeout:     time.Duration(cfg.LLM.TimeoutMs) * time.Millisecond,
+	platformConfigRepo := repository.NewPlatformConfigRepo(db)
+	secretCipher, err := secretcrypto.NewOrCreate(cfg.Security.EncryptionKey, cfg.Security.EncryptionKeyFile)
+	if err != nil {
+		logger.Error("平台配置密钥初始化失败", "err", err)
+		os.Exit(1)
+	}
+	platformConfigs, err := appplatformconfig.NewService(platformConfigRepo, secretCipher, appplatformconfig.Fallbacks{
+		WorkspaceName: cfg.Workspace.Name,
+		LLM: port.LLMRuntimeConfig{Provider: cfg.LLM.Provider, BaseURL: cfg.LLM.BaseURL,
+			APIKey: cfg.LLM.APIKey, Model: cfg.LLM.Model, Temperature: cfg.LLM.Temperature,
+			MaxTokens: cfg.LLM.MaxTokens, TimeoutMs: cfg.LLM.TimeoutMs},
+		Embedding: port.EmbeddingRuntimeConfig{BaseURL: cfg.Embedding.BaseURL, APIKey: cfg.Embedding.APIKey,
+			Model: cfg.Embedding.Model, Dimensions: cfg.Embedding.Dimensions,
+			BatchSize: cfg.Embedding.BatchSize, TimeoutMs: cfg.Embedding.TimeoutMs},
+		Rerank: port.RerankRuntimeConfig{BaseURL: cfg.Embedding.BaseURL, APIKey: cfg.Embedding.APIKey,
+			Model: cfg.Embedding.RerankModel, TimeoutMs: cfg.Embedding.RerankTimeoutMs},
+		MinerU: port.MinerURuntimeConfig{Enabled: cfg.Parser.MinerU.Enabled, APIURL: cfg.Parser.MinerU.APIURL,
+			APIToken: cfg.Parser.MinerU.APIToken, ModelVersion: cfg.Parser.MinerU.ModelVersion,
+			TimeoutMs: cfg.Parser.MinerU.TimeoutMs, PollIntervalMs: cfg.Parser.MinerU.PollIntervalMs},
 	})
-	embedClient := embedding.New(embedding.Options{
-		BaseURL:   cfg.Embedding.BaseURL,
-		APIKey:    cfg.Embedding.APIKey,
-		Model:     cfg.Embedding.Model,
-		BatchSize: cfg.Embedding.BatchSize,
-		Timeout:   time.Duration(cfg.Embedding.TimeoutMs) * time.Millisecond,
-	})
-	rerankClient := embedding.NewReranker(embedding.RerankerOptions{
-		BaseURL: cfg.Embedding.BaseURL, APIKey: cfg.Embedding.APIKey,
-		Model:   cfg.Embedding.RerankModel,
-		Timeout: time.Duration(cfg.Embedding.RerankTimeoutMs) * time.Millisecond,
-	})
+	if err != nil {
+		logger.Error("平台配置服务初始化失败", "err", err)
+		os.Exit(1)
+	}
+	llmClient := llm.NewDynamic(platformConfigs)
+	embedClient := embedding.NewDynamic(platformConfigs)
+	rerankClient := embedding.NewDynamicReranker(platformConfigs)
 	lexicalClient := opensearch.New(opensearch.Options{
 		BaseURL: cfg.OpenSearch.BaseURL, Username: cfg.OpenSearch.Username,
 		Password: cfg.OpenSearch.Password, IndexPrefix: cfg.OpenSearch.IndexPrefix,
 		Timeout: time.Duration(cfg.OpenSearch.TimeoutMs) * time.Millisecond,
 	})
-	docParser := parser.New(parser.Options{
-		MaxFileMB: cfg.Parser.MaxFileMB,
-		MinerU: parser.MinerUOptions{
-			Enabled:      cfg.Parser.MinerU.Enabled,
-			APIURL:       cfg.Parser.MinerU.APIURL,
-			APIToken:     cfg.Parser.MinerU.APIToken,
-			ModelVersion: cfg.Parser.MinerU.ModelVersion,
-			Timeout:      time.Duration(cfg.Parser.MinerU.TimeoutMs) * time.Millisecond,
-			PollInterval: time.Duration(cfg.Parser.MinerU.PollIntervalMs) * time.Millisecond,
-		},
-	})
+	docParser := parser.NewDynamic(cfg.Parser.MaxFileMB, platformConfigs)
 	localBlobs, err := blobstore.NewLocal(cfg.Workspace.BlobDir)
 	if err != nil {
 		logger.Error("V2 BlobStore 初始化失败", "err", err)
@@ -147,16 +147,7 @@ func main() {
 	datasetIndexer := repository.NewDatasetIndexer(db, cfg.FTS.TSConfig)
 
 	/* ---- app 用例 ---- */
-	parseSvc := app.NewParseService(docParser)
-	analyzeSvc := app.NewAnalyzeService(llmClient, cfg.Workspace.DemandDir)
-	if cfg.LLM.AgentMode {
-		// agent 模式：工具按运行构造（read/search 文档工具 + write 草稿工具 + ask 人工交互），
-		// 分析升级为「自主阅读 → 分批产出草稿 → 必要时问人」；草稿落库仍走人工确认的任务步骤
-		analyzeSvc.EnableAgentMode(cfg.LLM.AgentMaxIterations)
-		logger.Info("agent 模式已启用", "tools", "read_document/search_document/write_work_items/ask_human")
-	}
 	matchSvc := app.NewMatchService(datasetRepo, embedClient, cfg.Match.DuplicateThreshold)
-	datasetWriter := app.NewDatasetWriter(embedClient, datasetRepo, cfg.Embedding.BatchSize)
 	datasetQuery := app.NewDatasetQueryService(datasetRepo, embedClient)
 	datasetAdmin := app.NewDatasetAdminService(datasetRepo, datasetIndexer, metadataRepo)
 	archiveSvc := app.NewArchiveService(taskRepo, datasetRepo, archiveRepo, datasetIndexer)
@@ -167,12 +158,6 @@ func main() {
 		logger.Error("元数据覆盖层装载失败", "err", err)
 		os.Exit(1)
 	}
-	taskMgr := app.NewTaskManager(taskRepo, parseSvc, analyzeSvc, datasetRepo, datasetWriter)
-	// 服务重启恢复：把中断在 running 的任务/步骤标为 paused（用户手动继续）
-	if err := taskMgr.Recover(context.Background()); err != nil {
-		logger.Warn("任务恢复失败", "err", err)
-	}
-
 	v2Assets, err := apppipeline.NewAssetService(pipelineRepo, localBlobs, docParser,
 		int64(cfg.Parser.MaxFileMB)<<20)
 	if err != nil {
@@ -184,15 +169,16 @@ func main() {
 		logger.Error("source.parse Executor 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	v2Extractions, err := apppipeline.NewExtractionService(pipelineRepo, llmClient,
-		cfg.LLM.Model, apppipeline.ExtractionOptions{})
+	v2Extractions, err := appextraction.NewService(pipelineRepo, llmClient,
+		cfg.LLM.Model, appextraction.Options{MaxIterations: cfg.LLM.AgentMaxIterations,
+			ConfigResolver: platformConfigs})
 	if err != nil {
 		logger.Error("V2 Extraction Pipeline 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	llmExtractExecutor, err := apppipeline.NewLLMExtractExecutor(v2Extractions)
+	documentExtractExecutor, err := appextraction.NewExecutor(v2Extractions)
 	if err != nil {
-		logger.Error("llm.extract Executor 初始化失败", "err", err)
+		logger.Error("document.extract Executor 初始化失败", "err", err)
 		os.Exit(1)
 	}
 	v2Cleaning, err := apppipeline.NewCleaningService(pipelineRepo)
@@ -222,7 +208,8 @@ func main() {
 		os.Exit(1)
 	}
 	v2Retrieval, err := appretrieval.NewService(pipelineRepo, lexicalClient, embedClient, rerankClient,
-		appretrieval.Options{EmbeddingModel: cfg.Embedding.Model, PageSize: cfg.Embedding.BatchSize})
+		appretrieval.Options{EmbeddingModel: cfg.Embedding.Model, PageSize: cfg.Embedding.BatchSize,
+			ConfigResolver: platformConfigs})
 	if err != nil {
 		logger.Error("V2 Retrieval 初始化失败", "err", err)
 		os.Exit(1)
@@ -233,14 +220,15 @@ func main() {
 		os.Exit(1)
 	}
 	v2Analysis, err := appanalysis.NewService(pipelineRepo, v2Retrieval, llmClient,
-		appanalysis.Options{Model: cfg.LLM.Model, MaxIterations: cfg.LLM.AgentMaxIterations})
+		appanalysis.Options{Model: cfg.LLM.Model, MaxIterations: cfg.LLM.AgentMaxIterations,
+			ConfigResolver: platformConfigs})
 	if err != nil {
 		logger.Error("V2 Analysis 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	analyzeExecutor, err := appanalysis.NewAnalyzeExecutor(v2Analysis)
+	knowledgeAnalyzeExecutor, err := appanalysis.NewKnowledgeAnalyzeExecutor(v2Analysis)
 	if err != nil {
-		logger.Error("agent.analyze Executor 初始化失败", "err", err)
+		logger.Error("knowledge.analyze Executor 初始化失败", "err", err)
 		os.Exit(1)
 	}
 	v2Artifacts, err := appanalysis.NewArtifactService(pipelineRepo, localBlobs)
@@ -274,9 +262,9 @@ func main() {
 		os.Exit(1)
 	}
 	// V2 Registry 只注册已经具备真实资源持久化与恢复语义的 Executor。
-	v2Registry, err := apporchestrator.NewRegistry(sourceParseExecutor, llmExtractExecutor,
+	v2Registry, err := apporchestrator.NewRegistry(sourceParseExecutor, documentExtractExecutor,
 		dataTransformExecutor, dataValidateExecutor, dataPublishExecutor, queryDatasetExecutor,
-		retrievalBuildExecutor, analyzeExecutor, analysisPublishExecutor, artifactRenderExecutor,
+		retrievalBuildExecutor, knowledgeAnalyzeExecutor, analysisPublishExecutor, artifactRenderExecutor,
 		graphBuildExecutor)
 	if err != nil {
 		logger.Error("V2 Executor Registry 初始化失败", "err", err)
@@ -341,17 +329,9 @@ func main() {
 		}
 	}()
 
-	var settingsView app.SettingsView
-	settingsView.WorkspaceName = cfg.Workspace.Name
-	settingsView.LLM.BaseURL, settingsView.LLM.Model, settingsView.LLM.Configured = cfg.LLM.BaseURL, cfg.LLM.Model, cfg.LLMReady()
-	settingsView.LLM.AgentMode = cfg.LLM.AgentMode
-	settingsView.Embedding.BaseURL, settingsView.Embedding.Model, settingsView.Embedding.Configured = cfg.Embedding.BaseURL, cfg.Embedding.Model, cfg.EmbeddingReady()
-	settingsView.MinerU.Enabled, settingsView.MinerU.Configured = cfg.Parser.MinerU.Enabled, cfg.MinerUReady()
-	settingsSvc := app.NewSettingsService(settingsView, llmClient)
-
 	/* ---- HTTP ---- */
 	engine := httpgin.New(httpgin.Services{
-		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
+		Match: matchSvc, PlatformConfigs: platformConfigs, Overview: overviewSvc,
 		DatasetQuery: datasetQuery, DatasetAdmin: datasetAdmin, Archive: archiveSvc, Metadata: metadataSvc,
 		V2Definitions: v2Definitions, V2TaskBatches: v2TaskBatches,
 		V2Runtime: v2Runtime, V2TaskQueries: v2TaskQueries,
@@ -359,7 +339,7 @@ func main() {
 		V2Assets: v2Assets, V2Extractions: v2Extractions, V2Cleaning: v2Cleaning, V2Review: v2Review,
 		V2Retrieval: v2Retrieval, V2Analysis: v2Analysis, V2Artifacts: v2Artifacts,
 		V2Catalog: v2Catalog, V2Agent: v2Agent,
-		UploadDir: cfg.Workspace.UploadDir, MaxFileMB: int64(cfg.Parser.MaxFileMB),
+		MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})
 	mountStatic(engine)
 

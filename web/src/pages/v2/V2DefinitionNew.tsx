@@ -174,9 +174,9 @@ function collectDefinitionIssues(draft: DefinitionInput): DefinitionIssue[] {
         issues.push({ stepId: step.id, message: `步骤「${step.name}」的“${port.label}”来源不存在、类型不匹配或位于当前步骤之后` })
       }
     }
-    if (step.kind === 'llm.extract' && !step.config?.extraction_profile_id) issues.push({ stepId: step.id, message: `步骤「${step.name}」尚未选择抽取规则` })
+    if (step.kind === 'document.extract' && !step.config?.extraction_profile_id) issues.push({ stepId: step.id, message: `步骤「${step.name}」尚未选择抽取规则` })
     if (step.kind === 'retrieval.build' && !step.config?.retrieval_profile_id) issues.push({ stepId: step.id, message: `步骤「${step.name}」尚未选择检索策略` })
-    if (step.kind === 'agent.analyze' && !step.config?.analysis_profile_id) issues.push({ stepId: step.id, message: `步骤「${step.name}」尚未选择分析规则` })
+    if (step.kind === 'knowledge.analyze' && !step.config?.analysis_profile_id) issues.push({ stepId: step.id, message: `步骤「${step.name}」尚未选择分析规则` })
     if (step.kind === 'data.query_derive' && (
       !step.config?.pipeline_key || !step.config?.title_field ||
       !(step.config?.definition_fields as string[] | undefined)?.length
@@ -915,9 +915,9 @@ function StepConfigEditor({
   onCreate: (kind: Extract<EmbeddedResourceKind, 'analysis' | 'extraction' | 'retrieval'>) => void
 }) {
   const config = step.config ?? {}
-  if (step.kind === 'llm.extract') return <ConfigResourcePicker label="抽取规则" value={config.extraction_profile_id as string} options={extractionOptions} onChange={(value) => onChange('extraction_profile_id', value)} onCreate={() => onCreate('extraction')} />
+  if (step.kind === 'document.extract') return <ConfigResourcePicker label="抽取规则" value={config.extraction_profile_id as string} options={extractionOptions} onChange={(value) => onChange('extraction_profile_id', value)} onCreate={() => onCreate('extraction')} />
   if (step.kind === 'retrieval.build') return <ConfigResourcePicker label="索引规则" value={config.retrieval_profile_id as string} options={retrievalOptions} onChange={(value) => onChange('retrieval_profile_id', value)} onCreate={() => onCreate('retrieval')} />
-  if (step.kind === 'agent.analyze') return <ConfigResourcePicker label="分析规则" value={config.analysis_profile_id as string} options={analysisOptions} onChange={(value) => onChange('analysis_profile_id', value)} onCreate={() => onCreate('analysis')} />
+  if (step.kind === 'knowledge.analyze') return <ConfigResourcePicker label="分析规则" value={config.analysis_profile_id as string} options={analysisOptions} onChange={(value) => onChange('analysis_profile_id', value)} onCreate={() => onCreate('analysis')} />
   if (step.kind === 'data.analysis_publish') return <ConfigRow label="记录所在字段"><Input value={config.records_path as string} onChange={(event) => onChange('records_path', event.target.value)} placeholder="例如 records 或 nodes" /></ConfigRow>
   if (step.kind === 'artifact.render') return <Row gutter={12} style={{ marginTop: 14 }}>
     <Col span={8}><ConfigField label="制品名称"><Input value={config.name as string} onChange={(event) => onChange('name', event.target.value)} /></ConfigField></Col>

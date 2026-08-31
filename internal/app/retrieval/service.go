@@ -31,12 +31,14 @@ type Service struct {
 	embedder       port.Embedder
 	reranker       port.Reranker
 	embeddingModel string
+	resolver       port.PlatformConfigResolver
 	pageSize       int
 }
 
 type Options struct {
 	EmbeddingModel string
 	PageSize       int
+	ConfigResolver port.PlatformConfigResolver
 }
 
 func NewService(repo port.RetrievalRepo, lexical port.LexicalBackend, embedder port.Embedder,
@@ -49,7 +51,8 @@ func NewService(repo port.RetrievalRepo, lexical port.LexicalBackend, embedder p
 		options.PageSize = defaultPageSize
 	}
 	return &Service{repo: repo, lexical: lexical, embedder: embedder, reranker: reranker,
-		embeddingModel: options.EmbeddingModel, pageSize: options.PageSize}, nil
+		embeddingModel: options.EmbeddingModel, resolver: options.ConfigResolver,
+		pageSize: options.PageSize}, nil
 }
 
 type CreateProfileInput struct {
@@ -131,7 +134,7 @@ func (s *Service) BuildSnapshot(ctx context.Context, input BuildInput,
 	if !s.embedder.Available() {
 		return nil, fmt.Errorf("embedding 后端未配置")
 	}
-	resolvedModel, err := s.resolveEmbeddingModel(profile.Vector.EmbeddingModel)
+	resolvedModel, err := s.resolveEmbeddingModel(ctx, profile.Vector.EmbeddingModel)
 	if err != nil {
 		return nil, err
 	}
@@ -276,16 +279,24 @@ func (s *Service) validateBuildInput(ctx context.Context, input BuildInput) (*mo
 	return dataset, profile, nil
 }
 
-func (s *Service) resolveEmbeddingModel(configured string) (string, error) {
+func (s *Service) resolveEmbeddingModel(ctx context.Context, configured string) (string, error) {
+	platformModel := strings.TrimSpace(s.embeddingModel)
+	if s.resolver != nil {
+		config, err := s.resolver.ResolveEmbedding(ctx)
+		if err != nil {
+			return "", fmt.Errorf("读取当前 Embedding 配置: %w", err)
+		}
+		platformModel = strings.TrimSpace(config.Model)
+	}
 	configured = strings.TrimSpace(configured)
 	if configured == "" || configured == "platform_default" {
-		if s.embeddingModel == "" {
+		if platformModel == "" {
 			return "", fmt.Errorf("平台默认 embedding model 未配置")
 		}
-		return s.embeddingModel, nil
+		return platformModel, nil
 	}
-	if s.embeddingModel == "" || configured != s.embeddingModel {
-		return "", fmt.Errorf("RetrievalProfile 要求 embedding model %q，当前平台配置为 %q", configured, s.embeddingModel)
+	if platformModel == "" || configured != platformModel {
+		return "", fmt.Errorf("RetrievalProfile 要求 embedding model %q，当前平台配置为 %q", configured, platformModel)
 	}
 	return configured, nil
 }

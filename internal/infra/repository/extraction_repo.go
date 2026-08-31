@@ -190,9 +190,6 @@ func (r *PipelineRepo) StartExtractionUnit(ctx context.Context, setID string, pr
 		return tx.Model(&extractionUnitRow{}).Where("id = ?", unit.ID).Updates(map[string]any{
 			"status": model.ExtractionUnitRunning, "error_message": "",
 			"response_hash": "", "finished_at": nil,
-			"request_count": gorm.Expr(`request_count + CASE
-				WHEN last_request_attempt < ? THEN 1 ELSE 0 END`, producerAttempt),
-			"last_request_attempt": gorm.Expr("GREATEST(last_request_attempt, ?)", producerAttempt),
 		}).Error
 	})
 }
@@ -282,6 +279,9 @@ func (r *PipelineRepo) FailExtractionUnit(ctx context.Context, setID string, pro
 
 func extractionUnitUsageUpdates(producerAttempt int, usage model.LLMUsage) map[string]any {
 	return map[string]any{
+		"request_count": gorm.Expr(`request_count + CASE
+			WHEN last_request_attempt < ? THEN ? ELSE 0 END`, producerAttempt, usage.RequestCount),
+		"last_request_attempt": gorm.Expr("GREATEST(last_request_attempt, ?)", producerAttempt),
 		"input_tokens": gorm.Expr(`input_tokens + CASE
 			WHEN last_usage_attempt < ? THEN ? ELSE 0 END`, producerAttempt, usage.InputTokens),
 		"output_tokens": gorm.Expr(`output_tokens + CASE

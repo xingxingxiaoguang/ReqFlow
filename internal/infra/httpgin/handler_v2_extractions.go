@@ -5,11 +5,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 
-	apppipeline "reqflow/internal/app/pipeline"
+	appextraction "reqflow/internal/app/extraction"
 )
 
 func (h *handlers) v2CreateExtractionProfile(c *gin.Context) {
-	var request apppipeline.CreateExtractionProfileRequest
+	var request appextraction.CreateExtractionProfileRequest
 	if err := c.ShouldBindJSON(&request); err != nil {
 		fail(c, http.StatusBadRequest, "ExtractionProfile JSON 非法")
 		return

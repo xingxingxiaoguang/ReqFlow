@@ -18,7 +18,7 @@ func TestWorkerResumesCheckpointAndPersistsTypedOutputs(t *testing.T) {
 		InputPorts:     map[string]model.PortDefinition{"source": {ResourceType: model.ResourceAssetSet, Required: true}},
 		OutputPorts:    map[string]model.PortDefinition{"batch": {ResourceType: model.ResourceDatasetBatch}},
 		OutputBindings: map[string]string{"batch": "$step.extract.batch"},
-		Steps: []model.StepDefinition{{ID: "extract", Name: "抽取", Kind: model.StepKindLLMExtract,
+		Steps: []model.StepDefinition{{ID: "extract", Name: "抽取", Kind: model.StepKindDocumentExtract,
 			Inputs:  map[string]string{"source": "$task.source"},
 			Outputs: map[string]model.ResourceType{"batch": model.ResourceDatasetBatch}}},
 	}
@@ -27,7 +27,7 @@ func TestWorkerResumesCheckpointAndPersistsTypedOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	checkpoint := json.RawMessage(`{"offset":4}`)
-	claimed := model.StepRun{ID: "run-1", TaskID: "task-1", StepID: "extract", Kind: model.StepKindLLMExtract,
+	claimed := model.StepRun{ID: "run-1", TaskID: "task-1", StepID: "extract", Kind: model.StepKindDocumentExtract,
 		Status: model.StepRunRunning, Attempt: 2, Checkpoint: checkpoint}
 	repo := &workerMemoryRepo{claimed: claimed, execution: model.TaskExecution{
 		Task: model.Task{ID: "task-1", Status: model.TaskStatusRunning, DefinitionSnapshot: string(snapshot)},
@@ -35,7 +35,7 @@ func TestWorkerResumesCheckpointAndPersistsTypedOutputs(t *testing.T) {
 			ResourceType: model.ResourceAssetSet, ResourceID: "asset-set-1"}},
 		Steps: []model.StepRun{claimed},
 	}}
-	executor := &resumeRecordingExecutor{kind: model.StepKindLLMExtract}
+	executor := &resumeRecordingExecutor{kind: model.StepKindDocumentExtract}
 	registry, err := NewRegistry(executor)
 	if err != nil {
 		t.Fatal(err)

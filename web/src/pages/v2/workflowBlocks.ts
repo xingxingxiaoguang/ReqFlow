@@ -55,7 +55,7 @@ export const WORKFLOW_BLOCKS: WorkflowBlock[] = [
     outputs: [input('documents', '解析后的文档', 'parsed_documents')], defaultConfig: {},
   },
   {
-    id: 'llm_extract', kind: 'llm.extract', label: '结构化抽取', suggestedId: 'extract',
+    id: 'document_extract', kind: 'document.extract', label: '结构化抽取', suggestedId: 'extract',
     description: '按照抽取规则把文档转换成结构化记录草稿。',
     inputs: [input('documents', '解析后的文档', 'parsed_documents')],
     outputs: [input('drafts', '结构化草稿', 'record_drafts')], defaultConfig: { extraction_profile_id: '' },
@@ -98,7 +98,7 @@ export const WORKFLOW_BLOCKS: WorkflowBlock[] = [
     outputs: [input('snapshot', '检索快照', 'retrieval_snapshot')], defaultConfig: { retrieval_profile_id: '' },
   },
   {
-    id: 'agent_analyze', kind: 'agent.analyze', label: '智能检索分析', suggestedId: 'analyze',
+    id: 'knowledge_analyze', kind: 'knowledge.analyze', label: '智能检索分析', suggestedId: 'analyze',
     description: '检索权威知识并按照分析规则生成结构化结果。',
     inputs: [input('knowledge', '知识检索快照', 'retrieval_snapshot')],
     outputs: [input('analysis', '分析结果', 'analysis_result')],

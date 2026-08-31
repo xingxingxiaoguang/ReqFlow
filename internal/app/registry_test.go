@@ -6,8 +6,7 @@ import (
 	"reqflow/internal/domain/model"
 )
 
-// 聚合注册表与旧查找入口的一致性：薄委托不得漂移（M1 验收项——
-// WorkflowOf / AnalyzeProfileOf 委托注册表后，存量调用方行为不变）。
+// 聚合注册表与元数据目录查找入口必须保持一致。
 func TestRegistryDelegationConsistency(t *testing.T) {
 	defs := TaskTypes()
 	if len(defs) == 0 {
@@ -21,9 +20,9 @@ func TestRegistryDelegationConsistency(t *testing.T) {
 		if !ok || w.Type != d.Workflow.Type || len(w.Steps) != len(d.Workflow.Steps) {
 			t.Fatalf("WorkflowOf(%s) 与注册表不一致", d.Type)
 		}
-		p, ok := AnalyzeProfileOf(d.Type)
+		p, ok := MetadataAgentProfileOf(d.Type)
 		if !ok || p.Role != d.Profile.Role || p.Example != d.Profile.Example {
-			t.Fatalf("AnalyzeProfileOf(%s) 与注册表不一致", d.Type)
+			t.Fatalf("MetadataAgentProfileOf(%s) 与注册表不一致", d.Type)
 		}
 		// 聚合声明的产出数据集类型与域层映射互相钉住（两处来源不漂移）
 		dt, ok := model.DatasetTypeOfTask(d.Type)

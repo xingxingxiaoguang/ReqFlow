@@ -20,10 +20,10 @@ func TestSchedulerUsesStepIdentityForRepeatedKindsAndFinalOutputs(t *testing.T) 
 		},
 		OutputBindings: map[string]string{"batch": "$step.refine.batch"},
 		Steps: []model.StepDefinition{
-			{ID: "extract", Name: "抽取", Kind: model.StepKindLLMExtract,
+			{ID: "extract", Name: "抽取", Kind: model.StepKindDocumentExtract,
 				Inputs:  map[string]string{"source": "$task.source"},
 				Outputs: map[string]model.ResourceType{"drafts": model.ResourceRecordDrafts}},
-			{ID: "refine", Name: "修订", Kind: model.StepKindLLMExtract, DependsOn: []string{"extract"},
+			{ID: "refine", Name: "修订", Kind: model.StepKindDocumentExtract, DependsOn: []string{"extract"},
 				Inputs:  map[string]string{"drafts": "$step.extract.drafts"},
 				Outputs: map[string]model.ResourceType{"batch": model.ResourceDatasetBatch}},
 		},
@@ -37,8 +37,8 @@ func TestSchedulerUsesStepIdentityForRepeatedKindsAndFinalOutputs(t *testing.T) 
 		Inputs: []model.TaskResourceBinding{{PortName: "source", Direction: model.ResourceInput,
 			ResourceType: model.ResourceAssetSet, ResourceID: "asset-set-1"}},
 		Steps: []model.StepRun{
-			{ID: "run-extract", TaskID: "task-1", StepID: "extract", Kind: model.StepKindLLMExtract, Status: model.StepRunPending},
-			{ID: "run-refine", TaskID: "task-1", StepID: "refine", Kind: model.StepKindLLMExtract, Status: model.StepRunPending},
+			{ID: "run-extract", TaskID: "task-1", StepID: "extract", Kind: model.StepKindDocumentExtract, Status: model.StepRunPending},
+			{ID: "run-refine", TaskID: "task-1", StepID: "refine", Kind: model.StepKindDocumentExtract, Status: model.StepRunPending},
 		},
 	}}
 	scheduler := NewScheduler(repo)

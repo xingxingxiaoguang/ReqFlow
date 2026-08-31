@@ -40,7 +40,7 @@ func TestDefinitionServiceCreatesTaskSnapshotAndStepRuns(t *testing.T) {
 	if len(repo.steps) != 3 || repo.steps[0].StepID != "extract" || repo.steps[1].StepID != "refine" || repo.steps[2].StepID != "publish" {
 		t.Fatalf("StepRun 未按 step_id 创建: %+v", repo.steps)
 	}
-	if repo.steps[0].Kind != model.StepKindLLMExtract || repo.steps[1].Kind != model.StepKindLLMExtract {
+	if repo.steps[0].Kind != model.StepKindDocumentExtract || repo.steps[1].Kind != model.StepKindDocumentExtract {
 		t.Fatalf("同 Kind 步骤应同时存在: %+v", repo.steps)
 	}
 	if repo.steps[0].ConfigHash == "" || repo.steps[0].ConfigHash != repo.steps[1].ConfigHash {
@@ -98,7 +98,7 @@ func TestDefinitionServiceArchivesAndRestoresDefinition(t *testing.T) {
 func definitionTestRegistry(t *testing.T) *Registry {
 	t.Helper()
 	registry, err := NewRegistry(
-		testExecutor{kind: model.StepKindLLMExtract},
+		testExecutor{kind: model.StepKindDocumentExtract},
 		testExecutor{kind: model.StepKindDataPublish},
 	)
 	if err != nil {
@@ -130,11 +130,11 @@ func activeDefinition() model.TaskDefinition {
 		},
 		OutputBindings: map[string]string{"batch": "$step.publish.batch"},
 		Steps: []model.StepDefinition{
-			{ID: "extract", Name: "初次抽取", Kind: model.StepKindLLMExtract,
+			{ID: "extract", Name: "初次抽取", Kind: model.StepKindDocumentExtract,
 				Inputs:  map[string]string{"documents": "$task.documents"},
 				Outputs: map[string]model.ResourceType{"drafts": model.ResourceRecordDrafts},
 				Config:  json.RawMessage(`{"profile":"p1"}`)},
-			{ID: "refine", Name: "二次抽取", Kind: model.StepKindLLMExtract, DependsOn: []string{"extract"},
+			{ID: "refine", Name: "二次抽取", Kind: model.StepKindDocumentExtract, DependsOn: []string{"extract"},
 				Inputs:  map[string]string{"drafts": "$step.extract.drafts"},
 				Outputs: map[string]model.ResourceType{"approved": model.ResourceApprovedRecords},
 				Config:  json.RawMessage(`{ "profile": "p1" }`)},
