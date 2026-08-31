@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"time"
 
 	"reqflow/internal/domain/model"
@@ -63,6 +64,34 @@ func (s *DefinitionService) Register(ctx context.Context, input CreateDefinition
 	return &view, nil
 }
 
+func (s *DefinitionService) GetView(ctx context.Context, id string) (*DefinitionView, error) {
+	definition, err := s.repo.GetTaskDefinition(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	view := definitionView(*definition)
+	return &view, nil
+}
+
+// ArchiveDefinition 只让流程退出活跃目录；已经创建的任务继续使用各自冻结的定义快照。
+func (s *DefinitionService) ArchiveDefinition(ctx context.Context, id string) error {
+	return s.repo.SetTaskDefinitionStatus(ctx, id, model.TaskDefinitionActive, model.TaskDefinitionRetired)
+}
+
+func (s *DefinitionService) RestoreDefinition(ctx context.Context, id string) error {
+	definition, err := s.repo.GetTaskDefinition(ctx, id)
+	if err != nil {
+		return err
+	}
+	if definition.Status != model.TaskDefinitionRetired {
+		return fmt.Errorf("流程当前状态 %s 不可恢复", definition.Status)
+	}
+	if err := s.registry.ValidateDefinition(ctx, *definition); err != nil {
+		return fmt.Errorf("流程已无法通过当前执行器校验: %w", err)
+	}
+	return s.repo.SetTaskDefinitionStatus(ctx, id, model.TaskDefinitionRetired, model.TaskDefinitionActive)
+}
+
 type ResourceBindingInput struct {
 	PortName      string          `json:"port_name"`
 	ResourceType  string          `json:"resource_type"`
@@ -78,6 +107,15 @@ type CreateExecutionInput struct {
 }
 
 func (s *DefinitionService) CreateExecution(ctx context.Context, input CreateExecutionInput) (*TaskView, error) {
+	task, err := s.CreateTask(ctx, createTaskInput(input))
+	if err != nil {
+		return nil, err
+	}
+	view := taskView(*task)
+	return &view, nil
+}
+
+func createTaskInput(input CreateExecutionInput) CreateTaskInput {
 	bindings := make([]model.TaskResourceBinding, len(input.Bindings))
 	aliases := make(map[string]string)
 	for i, binding := range input.Bindings {
@@ -88,12 +126,7 @@ func (s *DefinitionService) CreateExecution(ctx context.Context, input CreateExe
 			aliases[binding.PortName] = binding.ResourceAlias
 		}
 	}
-	task, err := s.CreateTask(ctx, CreateTaskInput{DefinitionID: input.DefinitionID, Title: input.Title, Bindings: bindings, Aliases: aliases})
-	if err != nil {
-		return nil, err
-	}
-	view := taskView(*task)
-	return &view, nil
+	return CreateTaskInput{DefinitionID: input.DefinitionID, Title: input.Title, Bindings: bindings, Aliases: aliases}
 }
 
 type ResourceView struct {
@@ -123,18 +156,23 @@ type StepRunView struct {
 }
 
 type TaskView struct {
-	ID           string    `json:"id"`
-	WorkspaceID  string    `json:"workspace_id"`
-	DefinitionID string    `json:"definition_id"`
-	Type         string    `json:"type"`
-	Title        string    `json:"title"`
-	Status       string    `json:"status"`
-	CurrentStep  int       `json:"current_step"`
-	ErrorMessage string    `json:"error_message,omitempty"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	StartedAt    time.Time `json:"started_at,omitempty"`
-	FinishedAt   time.Time `json:"finished_at,omitempty"`
+	ID             string    `json:"id"`
+	WorkspaceID    string    `json:"workspace_id"`
+	DefinitionID   string    `json:"definition_id"`
+	Type           string    `json:"type"`
+	Title          string    `json:"title"`
+	BatchID        string    `json:"batch_id,omitempty"`
+	BatchOrdinal   int       `json:"batch_ordinal,omitempty"`
+	BatchSize      int       `json:"batch_size,omitempty"`
+	SourceAssetID  string    `json:"source_asset_id,omitempty"`
+	SourceFilename string    `json:"source_filename,omitempty"`
+	Status         string    `json:"status"`
+	CurrentStep    int       `json:"current_step"`
+	ErrorMessage   string    `json:"error_message,omitempty"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
+	StartedAt      time.Time `json:"started_at,omitempty"`
+	FinishedAt     time.Time `json:"finished_at,omitempty"`
 }
 
 type TaskSnapshot struct {
@@ -251,7 +289,9 @@ func snapshotView(execution *model.TaskExecution) *TaskSnapshot {
 
 func taskView(task model.Task) TaskView {
 	return TaskView{ID: task.ID, WorkspaceID: task.WorkspaceID, DefinitionID: task.DefinitionID,
-		Type: task.Type, Title: task.Title, Status: task.Status, CurrentStep: task.CurrentStep,
+		Type: task.Type, Title: task.Title, BatchID: task.BatchID, BatchOrdinal: task.BatchOrdinal,
+		BatchSize: task.BatchSize, SourceAssetID: task.SourceAssetID, SourceFilename: task.SourceFilename,
+		Status: task.Status, CurrentStep: task.CurrentStep,
 		ErrorMessage: task.ErrorMessage, CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt,
 		StartedAt: task.StartedAt, FinishedAt: task.FinishedAt}
 }

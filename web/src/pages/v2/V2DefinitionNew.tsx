@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import {
   Alert, App, Button, Card, Checkbox, Col, Divider, Empty, Form, Input,
   Modal, Popconfirm, Row, Select, Space, Tag, Tooltip, Typography,
@@ -10,7 +10,7 @@ import {
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { v2CatalogApi, type DefinitionInput } from '../../api/v2/catalog'
-import type { V2StepDefinition } from '../../api/v2/types'
+import type { V2StepDefinition, V2TaskDefinition } from '../../api/v2/types'
 import { createDefinition, NO_CODE_TEMPLATES, type NoCodeTemplateId } from './taskTemplates'
 import {
   canBindTaskInput, createWorkflowStep, producerBlocks, referencedStepIds,
@@ -74,6 +74,20 @@ function blankDefinition(): DefinitionInput {
     output_bindings: {},
     steps: [],
   }
+}
+
+function editableCopy(source: V2TaskDefinition): DefinitionInput {
+  return structuredClone({
+    workspace_id: source.workspace_id,
+    key: `${source.key}_copy_${Date.now().toString(36)}`,
+    name: `${source.name}（副本）`,
+    description: source.description ?? '',
+    status: 'draft' as const,
+    input_ports: source.input_ports,
+    output_ports: source.output_ports ?? {},
+    output_bindings: source.output_bindings ?? {},
+    steps: source.steps,
+  })
 }
 
 function cloneDefinition(value: DefinitionInput): DefinitionInput {
@@ -191,6 +205,8 @@ export default function V2DefinitionNew() {
     const id = searchParams.get('draft')
     return id ? getLocalWorkflowDraft(id) : undefined
   })
+  const [copySourceID] = useState(() => searchParams.get('copy') ?? undefined)
+  const copyInitialized = useRef(false)
   const [draft, setDraft] = useState<DefinitionInput | undefined>(() => initialLocalDraft?.definition)
   const [draftId, setDraftId] = useState<string | undefined>(() => initialLocalDraft?.id)
   const [draftCreatedAt, setDraftCreatedAt] = useState<string | undefined>(() => initialLocalDraft?.created_at)
@@ -208,7 +224,25 @@ export default function V2DefinitionNew() {
   const extractionProfiles = useQuery({ queryKey: ['v2-extraction-profiles'], queryFn: v2CatalogApi.listExtractionProfiles })
   const retrievalProfiles = useQuery({ queryKey: ['v2-retrieval-profiles'], queryFn: v2CatalogApi.listRetrievalProfiles })
   const analysisProfiles = useQuery({ queryKey: ['v2-analysis-profiles'], queryFn: v2CatalogApi.listAnalysisProfiles })
+  const copySource = useQuery({
+    queryKey: ['v2-definition', copySourceID],
+    queryFn: () => v2CatalogApi.getDefinition(copySourceID!),
+    enabled: Boolean(copySourceID && !initialLocalDraft),
+  })
   const issues = useMemo(() => draft ? collectDefinitionIssues(draft) : [], [draft])
+
+  useEffect(() => {
+    const source = copySource.data?.definition
+    if (!source || initialLocalDraft || copyInitialized.current) return
+    copyInitialized.current = true
+    const now = new Date().toISOString()
+    setDraft(editableCopy(source))
+    setDraftId(newDraftID())
+    setDraftCreatedAt(now)
+    setSavedAt(undefined)
+    setDirty(true)
+    message.success(`已复制「${source.name}」，修改后会发布为独立流程`)
+  }, [copySource.data, initialLocalDraft, message])
 
   useEffect(() => {
     const beforeUnload = (event: BeforeUnloadEvent) => {
@@ -463,6 +497,14 @@ export default function V2DefinitionNew() {
     message.success('已删除本机暂存')
   }
 
+  if (copySourceID && !initialLocalDraft && !draft) {
+    return <Card loading={copySource.isLoading}>
+      {copySource.isError && <Empty description="复制来源流程不存在或已不可访问">
+        <Button onClick={() => navigate('/definitions')}>返回流程管理</Button>
+      </Empty>}
+    </Card>
+  }
+
   if (!draft) {
     return (
       <Space direction="vertical" size={18} style={{ width: '100%' }}>
@@ -531,6 +573,7 @@ export default function V2DefinitionNew() {
             <div>
               <Space wrap>
                 <Title level={3} style={{ margin: 0 }}>流程编排器</Title>
+                {copySource.data?.definition && <Tag color="purple">复制自：{copySource.data.definition.name}</Tag>}
                 {dirty ? <Tag color="orange">有未暂存修改</Tag> : savedAt ? <Tag color="green">已暂存 {new Date(savedAt).toLocaleTimeString('zh-CN')}</Tag> : null}
               </Space>
               <Paragraph type="secondary" style={{ marginBottom: 0 }}>步骤的数据连接自动生成依赖；任务会在创建时冻结这份流程快照。</Paragraph>

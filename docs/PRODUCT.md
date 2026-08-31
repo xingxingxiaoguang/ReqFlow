@@ -156,9 +156,9 @@ AI 驱动的任务是长程的，必然被打断（开会、下班、服务重�
 
 | 底座 | 内容 |
 |------|------|
-| 流程定义管理 | 从空白或可编辑模板起点创建端口化 DAG；发布只创建 `TaskDefinition`，步骤依赖由类型匹配的数据连接推导，输出端口显式绑定 |
+| 流程定义管理 | 从空白、可编辑模板或现有流程副本创建端口化 DAG；副本作为独立草稿继续编辑；发布只创建 `TaskDefinition`，步骤依赖由类型匹配的数据连接推导，输出端口显式绑定；流程可归档并恢复 |
 | Task 生命周期管理 | 从 active Definition 派生执行实例，创建时冻结定义快照、资源绑定和读取边界；支持启动、暂停、继续、人工审核、失败重试和终态回放 |
-| 持久化 Orchestrator | Executor Registry + ready-set Scheduler + PostgreSQL Worker/lease/checkpoint/fencing；StepRun 是执行事实源，SSE 只负责通知 UI |
+| 持久化 Orchestrator | Executor Registry + ready-set Scheduler + 可配置固定协程池 + PostgreSQL Worker/lease/checkpoint/fencing；单实例默认同时执行 6 个 StepRun，StepRun 是执行事实源，SSE 只负责通知 UI |
 | AI agent loop 引擎 | pi 式极简 loop：自然终止、迭代安全阀、length 截断整批拒绝；双协议适配器（OpenAI 兼容 + Anthropic）；会话全量可序列化 = 暂停检查点与换模型续跑的统一载体 |
 | ReqFlow 数字大脑 | 默认首页的持久化 Agent 会话；SSE 增量、停止/续聊、Markdown 回答与工具轨迹；8 个可配置平台工具，以及可由斜杠命令激活的纯文本 Skill |
 | 任务专属工具与提示词装配 | 过程工具四件套（分批读取 / 正则检索 / 草稿写入 / 问人）按任务类型 profile 注入；Output / Details 拆分；人工交互阻塞式（SSE 弹窗 + HTTP 应答，刷新可恢复）；提示词从 profile + schema + 工具集三源动态装配 |

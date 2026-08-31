@@ -92,7 +92,7 @@ func (r *PipelineRepo) SetAppendDatasetStatus(ctx context.Context, datasetID, fr
 
 func (r *PipelineRepo) ListAssetSets(ctx context.Context, workspaceID string, limit int) ([]model.AssetSet, error) {
 	var rows []assetSetV2Row
-	if err := r.db.WithContext(ctx).Where("workspace_id = ?", workspaceID).
+	if err := r.db.WithContext(ctx).Where("workspace_id = ? AND created_by NOT LIKE ?", workspaceID, "task_batch:%").
 		Order("created_at DESC, id DESC").Limit(catalogLimit(limit)).Find(&rows).Error; err != nil {
 		return nil, err
 	}

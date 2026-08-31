@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"testing"
 
 	"reqflow/internal/domain/model"
+	"reqflow/internal/port"
 )
 
 func TestDefinitionServiceCreatesTaskSnapshotAndStepRuns(t *testing.T) {
@@ -69,6 +71,30 @@ func TestDefinitionServiceValidatesRequiredBindings(t *testing.T) {
 	}
 }
 
+func TestDefinitionServiceArchivesAndRestoresDefinition(t *testing.T) {
+	repo := &memoryOrchestratorRepo{}
+	service := NewDefinitionService(repo, definitionTestRegistry(t), repo)
+	definition, err := service.Create(context.Background(), activeDefinition())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := service.ArchiveDefinition(context.Background(), definition.ID); err != nil {
+		t.Fatal(err)
+	}
+	if repo.definition.Status != model.TaskDefinitionRetired {
+		t.Fatalf("归档后状态 = %s", repo.definition.Status)
+	}
+	if _, err := service.CreateTask(context.Background(), CreateTaskInput{DefinitionID: definition.ID}); err == nil {
+		t.Fatal("已归档流程不应允许创建任务")
+	}
+	if err := service.RestoreDefinition(context.Background(), definition.ID); err != nil {
+		t.Fatal(err)
+	}
+	if repo.definition.Status != model.TaskDefinitionActive {
+		t.Fatalf("恢复后状态 = %s", repo.definition.Status)
+	}
+}
+
 func definitionTestRegistry(t *testing.T) *Registry {
 	t.Helper()
 	registry, err := NewRegistry(
@@ -125,6 +151,8 @@ type memoryOrchestratorRepo struct {
 	task       *model.Task
 	bindings   []model.TaskResourceBinding
 	steps      []model.StepRun
+	tasks      []*model.Task
+	executions []port.TaskExecutionCreate
 }
 
 func (r *memoryOrchestratorRepo) CreateTaskDefinition(_ context.Context, definition *model.TaskDefinition, snapshot []byte) error {
@@ -143,6 +171,14 @@ func (r *memoryOrchestratorRepo) GetTaskDefinition(_ context.Context, id string)
 	return &clone, nil
 }
 
+func (r *memoryOrchestratorRepo) SetTaskDefinitionStatus(_ context.Context, id, fromStatus, toStatus string) error {
+	if r.definition == nil || r.definition.ID != id || r.definition.Status != fromStatus {
+		return errors.New("invalid status transition")
+	}
+	r.definition.Status = toStatus
+	return nil
+}
+
 func (r *memoryOrchestratorRepo) CreateTaskExecution(_ context.Context, task *model.Task, bindings []model.TaskResourceBinding, steps []model.StepRun) error {
 	task.ID = "task-1"
 	for i := range bindings {
@@ -155,6 +191,23 @@ func (r *memoryOrchestratorRepo) CreateTaskExecution(_ context.Context, task *mo
 	r.task = &clone
 	r.bindings = append([]model.TaskResourceBinding(nil), bindings...)
 	r.steps = append([]model.StepRun(nil), steps...)
+	return nil
+}
+
+func (r *memoryOrchestratorRepo) CreateTaskExecutions(_ context.Context, executions []port.TaskExecutionCreate) error {
+	r.executions = append([]port.TaskExecutionCreate(nil), executions...)
+	r.tasks = make([]*model.Task, len(executions))
+	for i := range executions {
+		executions[i].Task.ID = fmt.Sprintf("task-%d", i+1)
+		clone := *executions[i].Task
+		r.tasks[i] = &clone
+		for j := range executions[i].Bindings {
+			executions[i].Bindings[j].TaskID = clone.ID
+		}
+		for j := range executions[i].Steps {
+			executions[i].Steps[j].TaskID = clone.ID
+		}
+	}
 	return nil
 }
 

@@ -3,6 +3,7 @@ package httpgin
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -43,6 +44,31 @@ func (h *handlers) v2CreateTaskDefinition(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"success": true, "data": gin.H{"definition": definition}})
 }
 
+func (h *handlers) v2GetTaskDefinition(c *gin.Context) {
+	definition, err := h.svc.V2Definitions.GetView(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		fail(c, http.StatusNotFound, "流程不存在")
+		return
+	}
+	ok(c, gin.H{"definition": definition})
+}
+
+func (h *handlers) v2ArchiveTaskDefinition(c *gin.Context) {
+	if err := h.svc.V2Definitions.ArchiveDefinition(c.Request.Context(), c.Param("id")); err != nil {
+		fail(c, http.StatusConflict, err.Error())
+		return
+	}
+	ok(c, gin.H{"archived": true})
+}
+
+func (h *handlers) v2RestoreTaskDefinition(c *gin.Context) {
+	if err := h.svc.V2Definitions.RestoreDefinition(c.Request.Context(), c.Param("id")); err != nil {
+		fail(c, http.StatusConflict, err.Error())
+		return
+	}
+	ok(c, gin.H{"restored": true})
+}
+
 func (h *handlers) v2CreateTask(c *gin.Context) {
 	var input apporchestrator.CreateExecutionInput
 	if err := c.ShouldBindJSON(&input); err != nil {
@@ -55,6 +81,32 @@ func (h *handlers) v2CreateTask(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "data": gin.H{"task": task}})
+}
+
+func (h *handlers) v2CreateTaskBatch(c *gin.Context) {
+	var input apporchestrator.CreateBatchExecutionInput
+	if err := c.ShouldBindJSON(&input); err != nil {
+		fail(c, http.StatusBadRequest, "批量任务输入 JSON 非法")
+		return
+	}
+	batch, err := h.svc.V2TaskBatches.CreateExecutions(c.Request.Context(), input)
+	if err != nil {
+		fail(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if input.StartNow {
+		for i := range batch.Tasks {
+			if err := h.svc.V2Runtime.Start(c.Request.Context(), batch.Tasks[i].ID); err != nil {
+				fail(c, http.StatusConflict, fmt.Sprintf("批次已创建，但第 %d 个子任务启动失败: %v", i+1, err))
+				return
+			}
+			snapshot, err := h.svc.V2Runtime.Snapshot(c.Request.Context(), batch.Tasks[i].ID)
+			if err == nil {
+				batch.Tasks[i] = snapshot.Task
+			}
+		}
+	}
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": gin.H{"batch": batch}})
 }
 
 func (h *handlers) v2GetTask(c *gin.Context) {

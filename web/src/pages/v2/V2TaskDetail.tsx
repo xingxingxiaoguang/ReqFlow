@@ -135,10 +135,12 @@ export default function V2TaskDetail() {
                 <Title level={3} style={{ margin: 0 }}>{task.title}</Title>
                 <TaskStatusTag status={task.status} />
                 <Tag color="purple">{task.type}</Tag>
+                {task.batch_id && <Tag color="cyan">批量任务 {task.batch_ordinal}/{task.batch_size}</Tag>}
               </Space>
               <Space split={<Divider type="vertical" />}>
                 <Text type="secondary">Task {task.id}</Text>
                 <Text type="secondary">Definition {task.definition_id}</Text>
+                {task.source_filename && <Text type="secondary">独立处理文件：{task.source_filename}</Text>}
                 <Badge status={streamStatus === 'connected' ? 'success' : 'processing'} text={streamStatus === 'connected' ? '实时快照已连接' : '事件流重连中'} />
               </Space>
             </Space>

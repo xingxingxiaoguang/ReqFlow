@@ -216,7 +216,10 @@ func taskToModel(row *taskRow) model.Task {
 	return model.Task{
 		ID: row.ID, WorkspaceID: row.WorkspaceID, DefinitionID: strVal(row.DefinitionID),
 		DefinitionSnapshot: strVal(row.DefinitionSnapshot),
-		Type:               row.Type, Title: row.Title, Status: row.Status, CurrentStep: row.CurrentStep,
+		Type:               row.Type, Title: row.Title, BatchID: strVal(row.BatchID),
+		BatchOrdinal: row.BatchOrdinal, BatchSize: row.BatchSize,
+		SourceAssetID: strVal(row.SourceAssetID), SourceFilename: row.SourceFilename,
+		Status: row.Status, CurrentStep: row.CurrentStep,
 		Workflow: strVal(row.Workflow), Input: strVal(row.Input), Output: strVal(row.Output),
 		AgentContext: strVal(row.AgentContext),
 		ItemsCount:   row.ItemsCount, ImportedCount: row.ImportedCount, FailedCount: row.FailedCount,

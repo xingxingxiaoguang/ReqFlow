@@ -15,6 +15,13 @@ export const v2TasksApi = {
   get: (id: string) => api.get<V2TaskSnapshot>(`/api/v2/tasks/${id}`),
   create: (input: { definition_id: string; title?: string; bindings: Array<{ port_name: string; resource_type: string; resource_id: string }> }) =>
     api.post<{ task: V2Task }>('/api/v2/tasks', input),
+  createBatch: (input: {
+    definition_id: string
+    title?: string
+    bindings: Array<{ port_name: string; resource_type: string; resource_id: string }>
+    split_port_name: string
+    start_now: boolean
+  }) => api.post<{ batch: { id: string; size: number; tasks: V2Task[] } }>('/api/v2/task-batches', input),
   start: (id: string) => api.post<V2TaskSnapshot>(`/api/v2/tasks/${id}/start`, {}),
   pause: (id: string) => api.post<V2TaskSnapshot>(`/api/v2/tasks/${id}/pause`, {}),
   resume: (id: string) => api.post<V2TaskSnapshot>(`/api/v2/tasks/${id}/resume`, {}),

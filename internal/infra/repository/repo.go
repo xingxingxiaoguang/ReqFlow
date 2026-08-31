@@ -50,6 +50,11 @@ type taskRow struct {
 	DefinitionSnapshot *string    `gorm:"column:definition_snapshot;type:jsonb"`
 	Type               string     `gorm:"column:type"`
 	Title              string     `gorm:"column:title"`
+	BatchID            *string    `gorm:"column:batch_id"`
+	BatchOrdinal       int        `gorm:"column:batch_ordinal"`
+	BatchSize          int        `gorm:"column:batch_size"`
+	SourceAssetID      *string    `gorm:"column:source_asset_id"`
+	SourceFilename     string     `gorm:"column:source_filename"`
 	Status             string     `gorm:"column:status"`
 	CurrentStep        int        `gorm:"column:current_step"`
 	Workflow           *string    `gorm:"column:workflow"`      // 工作流定义快照（JSON 文本）

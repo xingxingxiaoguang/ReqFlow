@@ -10,6 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { v2CatalogApi } from '../../api/v2/catalog'
 import type { JSONSchemaProperty, V2Dataset, V2RetrievalProfile } from '../../api/v2/types'
 import EmbeddedResourceCreate, { type EmbeddedResource, type EmbeddedResourceKind } from './EmbeddedResourceCreate'
+import { DATASET_PURPOSE_OPTIONS, datasetPurposeLabel } from './datasetPurpose'
 import { schemaFieldOptions } from './SchemaFieldEditor'
 
 const { Paragraph, Text, Title } = Typography
@@ -99,7 +100,7 @@ export default function V2Datasets() {
       title: '数据集',
       render: (_, item) => <Space direction="vertical" size={1}><Text strong>{item.name}</Text><Text type="secondary">{item.description || item.id}</Text></Space>,
     },
-    { title: '用途', dataIndex: 'purpose', width: 120, render: (value) => <Tag color="geekblue">{purposeLabel(value)}</Tag> },
+    { title: '用于', dataIndex: 'purpose', width: 170, render: (value) => <Tag color="geekblue">{datasetPurposeLabel(value)}</Tag> },
     { title: '数据结构', dataIndex: 'schema_id', width: 180, render: (value: string) => schemaMap.get(value)?.name ?? value.slice(0, 8) },
     { title: '条目', dataIndex: 'item_count', width: 90, align: 'right' },
     { title: '更新时间', dataIndex: 'updated_at', width: 180, render: (value: string) => new Date(value).toLocaleString('zh-CN') },
@@ -143,12 +144,13 @@ export default function V2Datasets() {
       <Form form={form} layout="vertical" onFinish={create} requiredMark="optional">
         <Form.Item name="name" label="数据集名称" rules={[{ required: true, whitespace: true }]}><Input placeholder="例如：产品知识库" /></Form.Item>
         <Form.Item name="description" label="用途说明"><Input.TextArea rows={2} /></Form.Item>
-        <Form.Item name="purpose" label="数据用途" rules={[{ required: true }]}>
-          <Select options={[
-            { value: 'base', label: '基础业务数据' }, { value: 'query', label: '检索派生数据' },
-            { value: 'analysis', label: '分析结果数据' }, { value: 'graph_node', label: '图谱节点' },
-            { value: 'graph_edge', label: '图谱关系' },
-          ]} />
+        <Form.Item
+          name="purpose"
+          label="这批数据用于什么"
+          extra="请选择最贴近实际业务场景的一项，系统会据此判断它能在哪些流程步骤中使用。"
+          rules={[{ required: true }]}
+        >
+          <Select options={DATASET_PURPOSE_OPTIONS} />
         </Form.Item>
 
         <Form.Item label="数据结构" required>
@@ -245,8 +247,4 @@ function IndexRuleCard({ rule }: { rule: V2RetrievalProfile }) {
 function fieldType(property: JSONSchemaProperty) {
   if (property.type === 'array') return `数组<${property.items?.type ?? '对象'}>`
   return Array.isArray(property.type) ? property.type.join(' / ') : property.type || '对象'
-}
-
-function purposeLabel(value: string) {
-  return ({ base: '基础数据', query: '检索数据', analysis: '分析结果', graph_node: '图谱节点', graph_edge: '图谱关系' } as Record<string, string>)[value] ?? value
 }

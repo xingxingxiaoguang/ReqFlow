@@ -1,6 +1,6 @@
-import { ArrowLeftOutlined, RocketOutlined } from '@ant-design/icons'
-import { Alert, Button, Card, Descriptions, Empty, Space, Tag, Typography } from 'antd'
-import { useQuery } from '@tanstack/react-query'
+import { ArrowLeftOutlined, CopyOutlined, InboxOutlined, RocketOutlined } from '@ant-design/icons'
+import { Alert, App, Button, Card, Descriptions, Empty, Popconfirm, Space, Tag, Typography } from 'antd'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { v2CatalogApi } from '../../api/v2/catalog'
 import type { V2TaskDefinition } from '../../api/v2/types'
@@ -10,20 +10,34 @@ import { RESOURCE_TYPE_LABEL } from './workflowBlocks'
 const { Paragraph, Text, Title } = Typography
 
 export default function V2DefinitionDetail() {
+  const { message } = App.useApp()
   const { id } = useParams()
   const navigate = useNavigate()
-  const definitions = useQuery({ queryKey: ['v2-definitions'], queryFn: () => v2CatalogApi.listDefinitions({ limit: 200 }) })
+  const client = useQueryClient()
+  const definitionQuery = useQuery({ queryKey: ['v2-definition', id], queryFn: () => v2CatalogApi.getDefinition(id!), enabled: Boolean(id) })
   const extraction = useQuery({ queryKey: ['v2-extraction-profiles'], queryFn: v2CatalogApi.listExtractionProfiles })
   const retrieval = useQuery({ queryKey: ['v2-retrieval-profiles'], queryFn: v2CatalogApi.listRetrievalProfiles })
   const analysis = useQuery({ queryKey: ['v2-analysis-profiles'], queryFn: v2CatalogApi.listAnalysisProfiles })
-  const definition = definitions.data?.task_definitions.find((item) => item.id === id)
+  const definition = definitionQuery.data?.definition
   const ruleNames = new Map([
     ...(extraction.data?.extraction_profiles ?? []).map((item) => [item.id, item.name] as const),
     ...(retrieval.data?.retrieval_profiles ?? []).map((item) => [item.id, item.name] as const),
     ...(analysis.data?.analysis_profiles ?? []).map((item) => [item.id, item.name] as const),
   ])
 
-  if (definitions.isLoading) return <Card loading />
+  const archive = async () => {
+    if (!definition) return
+    try {
+      await v2CatalogApi.archiveDefinition(definition.id)
+      message.success(`流程「${definition.name}」已归档`)
+      await client.invalidateQueries({ queryKey: ['v2-definitions'] })
+      navigate('/definitions')
+    } catch (error) {
+      message.error((error as Error).message)
+    }
+  }
+
+  if (definitionQuery.isLoading) return <Card loading />
   if (!definition) return <Card><Empty description="流程不存在"><Button onClick={() => navigate('/definitions')}>返回流程管理</Button></Empty></Card>
 
   return <Space direction="vertical" size={16} style={{ width: '100%' }}>
@@ -36,7 +50,13 @@ export default function V2DefinitionDetail() {
             <Paragraph type="secondary" style={{ marginBottom: 0 }}>{definition.description || '暂无业务说明'}</Paragraph>
           </div>
         </Space>
-        <Button type="primary" size="large" icon={<RocketOutlined />} onClick={() => navigate(`/tasks/new?definition_id=${definition.id}`)}>创建任务</Button>
+        <Space wrap>
+          <Button size="large" icon={<CopyOutlined />} onClick={() => navigate(`/definitions/new?copy=${definition.id}`)}>复制并编辑</Button>
+          <Button type="primary" size="large" icon={<RocketOutlined />} onClick={() => navigate(`/tasks/new?definition_id=${definition.id}`)}>创建任务</Button>
+          <Popconfirm title="归档这个流程？" description="已创建任务不会受影响；归档后不能再创建新任务。" okText="归档" onConfirm={() => void archive()}>
+            <Button size="large" icon={<InboxOutlined />}>归档</Button>
+          </Popconfirm>
+        </Space>
       </Space>
     </Card>
 

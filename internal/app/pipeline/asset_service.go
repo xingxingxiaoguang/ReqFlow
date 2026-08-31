@@ -129,6 +129,16 @@ func (s *AssetService) GetAssetSet(ctx context.Context, id string) (*model.Asset
 	return set, entries, err
 }
 
+func (s *AssetService) CreateSingleAssetSet(ctx context.Context, workspaceID, name, createdBy, assetID string) (*model.AssetSet, error) {
+	set, _, err := s.CreateAssetSet(ctx, CreateAssetSetInput{
+		WorkspaceID: workspaceID,
+		Name:        name,
+		CreatedBy:   createdBy,
+		AssetIDs:    []string{assetID},
+	})
+	return set, err
+}
+
 type ParseAssetSetInput struct {
 	AssetSetID      string
 	SourceStepRunID string

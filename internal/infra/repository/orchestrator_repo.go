@@ -35,6 +35,19 @@ func (r *PipelineRepo) GetTaskDefinition(ctx context.Context, id string) (*model
 	return row.toModel()
 }
 
+func (r *PipelineRepo) SetTaskDefinitionStatus(ctx context.Context, id, fromStatus, toStatus string) error {
+	result := r.db.WithContext(ctx).Model(&taskDefinitionV2Row{}).
+		Where("id = ? AND status = ?", id, fromStatus).
+		Updates(map[string]any{"status": toStatus, "updated_at": time.Now()})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return fmt.Errorf("流程不存在或当前状态不允许此操作")
+	}
+	return nil
+}
+
 func (r *PipelineRepo) ResolveTaskResource(ctx context.Context, workspaceID string, binding model.TaskResourceBinding, alias string) (model.TaskResourceBinding, error) {
 	if workspaceID == "" {
 		workspaceID = "default"
@@ -308,66 +321,89 @@ func (r *PipelineRepo) ResolveTaskResource(ctx context.Context, workspaceID stri
 }
 
 func (r *PipelineRepo) CreateTaskExecution(ctx context.Context, task *model.Task, bindings []model.TaskResourceBinding, steps []model.StepRun) error {
-	if task.ID == "" {
-		task.ID = uuid.NewString()
+	return r.CreateTaskExecutions(ctx, []port.TaskExecutionCreate{{Task: task, Bindings: bindings, Steps: steps}})
+}
+
+func (r *PipelineRepo) CreateTaskExecutions(ctx context.Context, executions []port.TaskExecutionCreate) error {
+	if len(executions) == 0 {
+		return fmt.Errorf("至少需要一个任务实例")
 	}
 	now := time.Now()
-	task.CreatedAt, task.UpdatedAt = now, now
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := tx.Exec(`INSERT INTO tasks
-			(id, workspace_id, definition_id, definition_snapshot, type, title, status,
-			 current_step, created_at, updated_at)
-			VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, 0, ?, ?)`,
-			task.ID, task.WorkspaceID, task.DefinitionID, task.DefinitionSnapshot,
-			task.Type, task.Title, task.Status, task.CreatedAt, task.UpdatedAt).Error; err != nil {
-			return err
-		}
-		for i := range bindings {
-			binding := &bindings[i]
-			if binding.ID == "" {
-				binding.ID = uuid.NewString()
-			}
-			binding.TaskID = task.ID
-			binding.CreatedAt = now
-			boundary := binding.Boundary
-			if len(boundary) == 0 {
-				boundary = json.RawMessage(`{}`)
-			}
-			if err := tx.Exec(`INSERT INTO task_resource_bindings
-				(id, task_id, port_name, direction, resource_type, resource_id, boundary, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?)`,
-				binding.ID, binding.TaskID, binding.PortName, binding.Direction,
-				binding.ResourceType, binding.ResourceID, string(boundary), binding.CreatedAt).Error; err != nil {
-				return err
-			}
-		}
-		for i := range steps {
-			step := &steps[i]
-			if step.ID == "" {
-				step.ID = uuid.NewString()
-			}
-			step.TaskID = task.ID
-			step.CreatedAt = now
-			checkpoint := step.Checkpoint
-			if len(checkpoint) == 0 {
-				checkpoint = json.RawMessage(`{}`)
-			}
-			progress := step.Progress
-			if len(progress) == 0 {
-				progress = json.RawMessage(`{}`)
-			}
-			if err := tx.Exec(`INSERT INTO step_runs
-				(id, task_id, step_id, ordinal, kind, status, attempt, input_hash, config_hash,
-				 checkpoint, progress, error_code, error_message, lease_owner, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?)`,
-				step.ID, step.TaskID, step.StepID, step.Ordinal, step.Kind, step.Status, step.Attempt,
-				step.InputHash, step.ConfigHash, string(checkpoint), string(progress),
-				step.ErrorCode, step.ErrorMessage, step.LeaseOwner, step.CreatedAt).Error; err != nil {
+		for i := range executions {
+			if err := insertTaskExecution(tx, &executions[i], now); err != nil {
 				return err
 			}
 		}
 		return nil
 	})
+}
+
+func insertTaskExecution(tx *gorm.DB, execution *port.TaskExecutionCreate, now time.Time) error {
+	task := execution.Task
+	if task == nil {
+		return fmt.Errorf("任务实例不能为空")
+	}
+	if task.ID == "" {
+		task.ID = uuid.NewString()
+	}
+	task.CreatedAt, task.UpdatedAt = now, now
+	if err := tx.Exec(`INSERT INTO tasks
+		(id, workspace_id, definition_id, definition_snapshot, type, title,
+		 batch_id, batch_ordinal, batch_size, source_asset_id, source_filename,
+		 status, current_step, created_at, updated_at)
+		VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+		task.ID, task.WorkspaceID, task.DefinitionID, task.DefinitionSnapshot,
+		task.Type, task.Title, strPtr(task.BatchID), task.BatchOrdinal, task.BatchSize,
+		strPtr(task.SourceAssetID), task.SourceFilename, task.Status,
+		task.CreatedAt, task.UpdatedAt).Error; err != nil {
+		return err
+	}
+	for i := range execution.Bindings {
+		binding := &execution.Bindings[i]
+		if binding.ID == "" {
+			binding.ID = uuid.NewString()
+		}
+		binding.TaskID = task.ID
+		binding.CreatedAt = now
+		boundary := binding.Boundary
+		if len(boundary) == 0 {
+			boundary = json.RawMessage(`{}`)
+		}
+		if err := tx.Exec(`INSERT INTO task_resource_bindings
+				(id, task_id, port_name, direction, resource_type, resource_id, boundary, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?)`,
+			binding.ID, binding.TaskID, binding.PortName, binding.Direction,
+			binding.ResourceType, binding.ResourceID, string(boundary), binding.CreatedAt).Error; err != nil {
+			return err
+		}
+	}
+	for i := range execution.Steps {
+		step := &execution.Steps[i]
+		if step.ID == "" {
+			step.ID = uuid.NewString()
+		}
+		step.TaskID = task.ID
+		step.CreatedAt = now
+		checkpoint := step.Checkpoint
+		if len(checkpoint) == 0 {
+			checkpoint = json.RawMessage(`{}`)
+		}
+		progress := step.Progress
+		if len(progress) == 0 {
+			progress = json.RawMessage(`{}`)
+		}
+		if err := tx.Exec(`INSERT INTO step_runs
+				(id, task_id, step_id, ordinal, kind, status, attempt, input_hash, config_hash,
+				 checkpoint, progress, error_code, error_message, lease_owner, created_at)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?, ?)`,
+			step.ID, step.TaskID, step.StepID, step.Ordinal, step.Kind, step.Status, step.Attempt,
+			step.InputHash, step.ConfigHash, string(checkpoint), string(progress),
+			step.ErrorCode, step.ErrorMessage, step.LeaseOwner, step.CreatedAt).Error; err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *PipelineRepo) GetTaskResourceBindings(ctx context.Context, taskID string) ([]model.TaskResourceBinding, error) {
@@ -431,7 +467,7 @@ func (r *PipelineRepo) ListOrchestratorTasks(ctx context.Context, filter port.Or
 		query = query.Where("status = ?", filter.Status)
 	}
 	var rows []taskRow
-	if err := query.Order("created_at DESC, id DESC").Limit(limit).Find(&rows).Error; err != nil {
+	if err := query.Order("created_at DESC, batch_id DESC NULLS LAST, batch_ordinal ASC, id DESC").Limit(limit).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	tasks := make([]model.Task, len(rows))

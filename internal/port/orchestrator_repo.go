@@ -25,8 +25,16 @@ var (
 type OrchestratorDefinitionRepo interface {
 	CreateTaskDefinition(ctx context.Context, definition *model.TaskDefinition, snapshot []byte) error
 	GetTaskDefinition(ctx context.Context, id string) (*model.TaskDefinition, error)
+	SetTaskDefinitionStatus(ctx context.Context, id, fromStatus, toStatus string) error
 
 	CreateTaskExecution(ctx context.Context, task *model.Task, bindings []model.TaskResourceBinding, steps []model.StepRun) error
+	CreateTaskExecutions(ctx context.Context, executions []TaskExecutionCreate) error
+}
+
+type TaskExecutionCreate struct {
+	Task     *model.Task
+	Bindings []model.TaskResourceBinding
+	Steps    []model.StepRun
 }
 
 // TaskResourceResolver 在 Task 创建时把用户定位器解析为具体、存在的资源，并固化

@@ -35,6 +35,14 @@ type Config struct {
 		RetryIntervalMs int    `yaml:"retry_interval_ms" env:"REQFLOW_DATABASE_RETRY_INTERVAL_MS"`
 	} `yaml:"database"`
 
+	Worker struct {
+		Concurrency        int `yaml:"concurrency"          env:"REQFLOW_WORKER_CONCURRENCY"`
+		LeaseSeconds       int `yaml:"lease_seconds"        env:"REQFLOW_WORKER_LEASE_SECONDS"`
+		PollIntervalMs     int `yaml:"poll_interval_ms"     env:"REQFLOW_WORKER_POLL_INTERVAL_MS"`
+		RecoveryIntervalMs int `yaml:"recovery_interval_ms" env:"REQFLOW_WORKER_RECOVERY_INTERVAL_MS"`
+		ReconcileLimit     int `yaml:"reconcile_limit"      env:"REQFLOW_WORKER_RECONCILE_LIMIT"`
+	} `yaml:"worker"`
+
 	LLM struct {
 		Provider    string  `yaml:"provider"    env:"REQFLOW_LLM_PROVIDER"`
 		BaseURL     string  `yaml:"base_url"    env:"REQFLOW_LLM_BASE_URL"`
@@ -180,6 +188,21 @@ func applyDefaults(cfg *Config) {
 	if cfg.Server.LogFormat == "" {
 		cfg.Server.LogFormat = "text"
 	}
+	if cfg.Worker.Concurrency == 0 {
+		cfg.Worker.Concurrency = 6
+	}
+	if cfg.Worker.LeaseSeconds == 0 {
+		cfg.Worker.LeaseSeconds = 30
+	}
+	if cfg.Worker.PollIntervalMs == 0 {
+		cfg.Worker.PollIntervalMs = 500
+	}
+	if cfg.Worker.RecoveryIntervalMs == 0 {
+		cfg.Worker.RecoveryIntervalMs = 5000
+	}
+	if cfg.Worker.ReconcileLimit == 0 {
+		cfg.Worker.ReconcileLimit = 100
+	}
 	if cfg.Workspace.UploadDir == "" {
 		cfg.Workspace.UploadDir = "./data/uploads"
 	}
@@ -205,6 +228,18 @@ func applyDefaults(cfg *Config) {
 func (c *Config) Validate() (errs, warns []string) {
 	if strings.TrimSpace(c.Database.DSN) == "" {
 		errs = append(errs, "database.dsn 未配置（数据库为核心依赖，必须填写）")
+	}
+	if c.Worker.Concurrency < 1 || c.Worker.Concurrency > 128 {
+		errs = append(errs, "worker.concurrency 必须在 1 到 128 之间")
+	}
+	if c.Worker.LeaseSeconds < 1 {
+		errs = append(errs, "worker.lease_seconds 必须大于 0")
+	}
+	if c.Worker.PollIntervalMs < 1 || c.Worker.RecoveryIntervalMs < 1 {
+		errs = append(errs, "worker.poll_interval_ms 与 worker.recovery_interval_ms 必须大于 0")
+	}
+	if c.Worker.ReconcileLimit < 1 {
+		errs = append(errs, "worker.reconcile_limit 必须大于 0")
 	}
 	if c.Embedding.APIKey != "" && c.Embedding.Dimensions != 1024 {
 		errs = append(errs, fmt.Sprintf(

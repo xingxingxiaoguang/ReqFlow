@@ -57,6 +57,7 @@ make build        # → bin/reqflow
 |------|-----|------|
 | server | port / log_level / log_format | HTTP 端口、日志级别（debug~error）、日志格式（text/json） |
 | database | dsn / auto_migrate / retry_* | PG 连接串；启动自动迁移 |
+| worker | concurrency / lease_seconds / poll_interval_ms / recovery_interval_ms / reconcile_limit | 持久化流程任务协程池；单实例默认并发 6，可由 `REQFLOW_WORKER_*` 覆盖 |
 | llm | base_url / api_key / model / temperature / max_tokens / timeout_ms / **agent_mode** / agent_max_iterations | OpenAI 兼容协议（DeepSeek/GLM/Qwen/Kimi 适用）；`agent_mode: true` 时需求分析启用 agent loop（read_document / search_document / write_work_items / ask_human 四工具，见 HANDOVER §5.2）；agent_max_iterations 迭代上限默认 32 |
 | embedding | base_url / api_key / model / dimensions / batch_size / rerank_* | 语义向量与 SiliconFlow rerank 共用供应商凭证；默认 bge-m3 1024 维 + bge-reranker-v2-m3 |
 | opensearch | base_url / username / password / index_prefix / timeout_ms | BM25 索引与检索；Hybrid 模式的词法检索后端 |
@@ -105,13 +106,13 @@ Task 输入绑定接受具体 `resource_id`；Dataset 也可传 `resource_alias`
 ```
 
 - `/agent`：默认首页和 ReqFlow 数字大脑；会话持久化，支持停止/续聊；流程、任务、数据和 Skill 工具可独立启停，并支持用 `/` 调用纯文本 Skill。
-- `/definitions`：流程定义目录；草稿与已发布流程统一展示，并从流程进入详情或“创建任务”。
-- `/definitions/new`：从空白自由编排，或选择五种模板作为**可修改起点**；发布动作只创建 `TaskDefinition`，不隐式创建任务。
+- `/definitions`：流程定义目录；草稿与已发布流程统一展示，可进入详情、复制并编辑、创建任务或归档流程。
+- `/definitions/new`：从空白自由编排、选择五种模板作为**可修改起点**，或复制现有流程形成独立草稿；发布动作只创建 `TaskDefinition`，不隐式创建任务。
 - `/tasks/new?definition_id=...`：选择已发布流程、按输入端口绑定本次资源，选择“仅创建”或“创建并运行”。
 - `/tasks`：任务运行目录；展示来源流程、状态和执行入口，进入详情后操作 StepRun、人工审核和重试。
 - `/datasets`：数据集目录和条目详情；Schema、字段索引规则和混合检索参数在使用处就地选择或创建。
 
-`TaskDefinition` 定义“怎么执行”，`Task` 表示“一次具体执行”。Task 只能从 `active` Definition 派生；创建时冻结完整 Definition Snapshot、资源绑定和 Dataset/Retrieval 读取边界，后续流程定义变化不会改变已经创建的任务。
+`TaskDefinition` 定义“怎么执行”，`Task` 表示“一次具体执行”。Task 只能从 `active` Definition 派生；创建时冻结完整 Definition Snapshot、资源绑定和 Dataset/Retrieval 读取边界，后续复制、修改或归档流程定义不会改变已经创建的任务。归档流程会转为 `retired`，可从归档管理恢复后继续派生新任务。
 
 ## Legacy API（已退出产品路由，仅供拆除期间参考）
 

@@ -261,8 +261,8 @@ export default function V2Metadata() {
         system_instruction: values.instruction,
         field_guides: {},
         examples: [],
-        normalization_rules: {},
-        validation_rules: {},
+        normalization_rules: [],
+        validation_rules: [],
       })
       if (kind === 'retrieval') {
         const lexicalFields = Object.fromEntries((values.lexical_fields ?? []).map((field: string) => [field, 1]))

@@ -26,11 +26,26 @@ export interface DefinitionInput {
   }>
 }
 
+export interface ExtractionProfileInput {
+  workspace_id?: string
+  name: string
+  target_schema_id: string
+  record_granularity: string
+  system_instruction: string
+  field_guides: Record<string, unknown>
+  examples: unknown[]
+  normalization_rules: Array<Record<string, unknown>>
+  validation_rules: Array<Record<string, unknown>>
+}
+
 export const v2CatalogApi = {
   listDefinitions: (params: { status?: string; limit?: number } = {}) =>
     api.get<{ task_definitions: V2TaskDefinition[] }>(`/api/v2/task-definitions?${query(params)}`),
+  getDefinition: (id: string) => api.get<{ definition: V2TaskDefinition }>(`/api/v2/task-definitions/${id}`),
   createDefinition: (input: DefinitionInput) =>
     api.post<{ definition: V2TaskDefinition }>('/api/v2/task-definitions', input),
+  archiveDefinition: (id: string) => api.post<{ archived: boolean }>(`/api/v2/task-definitions/${id}/archive`, {}),
+  restoreDefinition: (id: string) => api.post<{ restored: boolean }>(`/api/v2/task-definitions/${id}/restore`, {}),
   listSchemas: () => api.get<{ schemas: V2Schema[] }>('/api/v2/schemas?limit=200'),
   createSchema: (input: { name: string; description?: string; json_schema: V2JSONSchema; ui_schema?: Record<string, unknown> }) =>
     api.post<{ schema: V2Schema }>('/api/v2/schemas', input),
@@ -50,7 +65,7 @@ export const v2CatalogApi = {
   },
   createAssetSet: (input: { name: string; asset_ids: string[] }) => api.post<{ asset_set: V2AssetSet }>('/api/v2/asset-sets', input),
   listExtractionProfiles: () => api.get<{ extraction_profiles: V2ExtractionProfile[] }>('/api/v2/extraction-profiles?limit=200'),
-  createExtractionProfile: (input: Record<string, unknown>) => api.post<{ extraction_profile: V2ExtractionProfile }>('/api/v2/extraction-profiles', input),
+  createExtractionProfile: (input: ExtractionProfileInput) => api.post<{ extraction_profile: V2ExtractionProfile }>('/api/v2/extraction-profiles', input),
   listRetrievalProfiles: () => api.get<{ retrieval_profiles: V2RetrievalProfile[] }>('/api/v2/retrieval-profiles?limit=200'),
   queryRetrievalProfiles: (params: { workspaceId?: string; datasetSchemaId?: string; limit?: number } = {}) =>
     api.get<{ retrieval_profiles: V2RetrievalProfile[] }>(`/api/v2/retrieval-profiles?${query({

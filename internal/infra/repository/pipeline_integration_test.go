@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
+
 	appOrchestrator "reqflow/internal/app/orchestrator"
 	appPipeline "reqflow/internal/app/pipeline"
 	"reqflow/internal/domain/model"
@@ -185,6 +187,133 @@ func TestIntegrationTaskDefinitionAndResourceBindings(t *testing.T) {
 	var snapshot string
 	if err := db.Raw(`SELECT definition_snapshot::text FROM tasks WHERE id = ?`, task.ID).Scan(&snapshot).Error; err != nil || snapshot == "" {
 		t.Fatalf("Task 定义快照缺失: %q, %v", snapshot, err)
+	}
+}
+
+func TestIntegrationCreateTaskExecutionsPersistsBatchIsolation(t *testing.T) {
+	ctx := context.Background()
+	db, err := database.Connect(testDSN(), 3, 500)
+	if err != nil {
+		t.Skipf("本地 PG 不可用，跳过集成测试: %v", err)
+	}
+	if err := database.Migrate(db); err != nil {
+		t.Fatalf("迁移失败: %v", err)
+	}
+
+	repo := NewPipelineRepo(db)
+	registry, err := appOrchestrator.NewRegistry(integrationExecutor{kind: model.StepKindLLMExtract})
+	if err != nil {
+		t.Fatal(err)
+	}
+	definitions := appOrchestrator.NewDefinitionService(repo, registry, integrationResourceResolver{})
+	definition, err := definitions.Create(ctx, model.TaskDefinition{
+		Key: fmt.Sprintf("batch_integration_%d", time.Now().UnixNano()), Name: "按文件拆分集成测试",
+		Status: model.TaskDefinitionActive,
+		InputPorts: map[string]model.PortDefinition{
+			"documents": {ResourceType: model.ResourceAssetSet, Required: true},
+		},
+		OutputPorts:    map[string]model.PortDefinition{"drafts": {ResourceType: model.ResourceRecordDrafts}},
+		OutputBindings: map[string]string{"drafts": "$step.extract.drafts"},
+		Steps: []model.StepDefinition{{ID: "extract", Name: "抽取", Kind: model.StepKindLLMExtract,
+			Inputs:  map[string]string{"documents": "$task.documents"},
+			Outputs: map[string]model.ResourceType{"drafts": model.ResourceRecordDrafts}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	batchID := uuid.NewString()
+	assets := make([]*model.Asset, 2)
+	assetSets := make([]*model.AssetSet, 2)
+	filenames := []string{"需求说明.docx", "产品清单.xlsx"}
+	for i, filename := range filenames {
+		asset, _, createErr := repo.CreateOrGetAsset(ctx, &model.Asset{
+			WorkspaceID: "default", Filename: filename, MIMEType: "application/octet-stream",
+			SizeBytes: int64(i + 1), SHA256: fmt.Sprintf("batch-integration-%d-%d", time.Now().UnixNano(), i),
+			BlobURI: "file:///integration/" + filename,
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		assets[i] = asset
+		assetSet := &model.AssetSet{WorkspaceID: "default", Name: "单文件 · " + filename, CreatedBy: "task_batch:" + batchID}
+		if err := repo.CreateAssetSet(ctx, assetSet, []model.AssetSetMember{{AssetID: asset.ID, Ordinal: 0}}); err != nil {
+			t.Fatal(err)
+		}
+		assetSets[i] = assetSet
+	}
+
+	snapshot, err := json.Marshal(definition)
+	if err != nil {
+		t.Fatal(err)
+	}
+	executions := make([]port.TaskExecutionCreate, len(assets))
+	for i := range assets {
+		executions[i] = port.TaskExecutionCreate{
+			Task: &model.Task{
+				WorkspaceID: "default", DefinitionID: definition.ID, DefinitionSnapshot: string(snapshot),
+				Type: "orchestrator", Title: "批量抽取 · " + filenames[i], Status: model.TaskStatusPending,
+				BatchID: batchID, BatchOrdinal: i + 1, BatchSize: len(assets),
+				SourceAssetID: assets[i].ID, SourceFilename: filenames[i],
+			},
+			Bindings: []model.TaskResourceBinding{{
+				PortName: "documents", Direction: model.ResourceInput,
+				ResourceType: model.ResourceAssetSet, ResourceID: assetSets[i].ID,
+			}},
+			Steps: []model.StepRun{{
+				StepID: "extract", Ordinal: 1, Kind: model.StepKindLLMExtract, Status: model.StepRunPending,
+			}},
+		}
+	}
+	t.Cleanup(func() {
+		for i := range executions {
+			_ = db.Exec(`DELETE FROM tasks WHERE id = ?`, executions[i].Task.ID).Error
+		}
+		for i := range assetSets {
+			_ = db.Exec(`DELETE FROM asset_sets WHERE id = ?`, assetSets[i].ID).Error
+			_ = db.Exec(`DELETE FROM assets WHERE id = ?`, assets[i].ID).Error
+		}
+		_ = db.Exec(`DELETE FROM task_definitions WHERE id = ?`, definition.ID).Error
+	})
+
+	if err := repo.CreateTaskExecutions(ctx, executions); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ListDatasetSchemas(ctx, "default", 10); err != nil {
+		t.Fatalf("内部文件集过滤不能影响数据结构列表: %v", err)
+	}
+	visibleSets, err := repo.ListAssetSets(ctx, "default", 200)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, visibleSet := range visibleSets {
+		if visibleSet.ID == assetSets[0].ID || visibleSet.ID == assetSets[1].ID {
+			t.Fatalf("任务批次内部单文件集不应出现在普通文件集列表: %s", visibleSet.ID)
+		}
+	}
+	if executions[0].Task.ID == executions[1].Task.ID {
+		t.Fatal("每个文件必须生成不同任务实例")
+	}
+	for i := range executions {
+		stored, err := repo.GetTaskExecution(ctx, executions[i].Task.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if stored.Task.BatchID != batchID || stored.Task.BatchOrdinal != i+1 || stored.Task.BatchSize != len(assets) {
+			t.Fatalf("第 %d 个子任务批次信息错误: %+v", i+1, stored.Task)
+		}
+		if stored.Task.SourceAssetID != assets[i].ID || stored.Task.SourceFilename != filenames[i] {
+			t.Fatalf("第 %d 个子任务来源文件错误: %+v", i+1, stored.Task)
+		}
+		if len(stored.Inputs) != 1 || stored.Inputs[0].ResourceID != assetSets[i].ID {
+			t.Fatalf("第 %d 个子任务未绑定独立单文件集: %+v", i+1, stored.Inputs)
+		}
+		if len(stored.Steps) != 1 || stored.Steps[0].TaskID != stored.Task.ID {
+			t.Fatalf("第 %d 个子任务步骤实例串线: %+v", i+1, stored.Steps)
+		}
+	}
+	if executions[0].Bindings[0].ResourceID == executions[1].Bindings[0].ResourceID {
+		t.Fatal("不同文件的子任务不能共享同一个输入文件集")
 	}
 }
 

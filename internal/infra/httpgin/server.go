@@ -23,6 +23,7 @@ type Services struct {
 	Archive         *app.ArchiveService
 	Metadata        *app.MetadataService
 	V2Definitions   *apporchestrator.DefinitionService
+	V2TaskBatches   *apporchestrator.TaskBatchService
 	V2Runtime       *apporchestrator.RuntimeService
 	V2TaskQueries   *apporchestrator.TaskQueryService
 	V2Datasets      *apppipeline.DatasetService
@@ -142,10 +143,16 @@ func New(svc Services) *gin.Engine {
 	}
 	if svc.V2Definitions != nil && svc.V2Runtime != nil {
 		v2.POST("/task-definitions", h.v2CreateTaskDefinition)
+		v2.GET("/task-definitions/:id", h.v2GetTaskDefinition)
+		v2.POST("/task-definitions/:id/archive", h.v2ArchiveTaskDefinition)
+		v2.POST("/task-definitions/:id/restore", h.v2RestoreTaskDefinition)
 		if svc.V2Catalog != nil {
 			v2.GET("/task-definitions", h.v2ListTaskDefinitions)
 		}
 		v2.POST("/tasks", h.v2CreateTask)
+		if svc.V2TaskBatches != nil {
+			v2.POST("/task-batches", h.v2CreateTaskBatch)
+		}
 		v2.GET("/tasks/:id", h.v2GetTask)
 		v2.POST("/tasks/:id/start", h.v2StartTask)
 		v2.POST("/tasks/:id/pause", h.v2PauseTask)

@@ -13,6 +13,14 @@ database:
   retry_count: 5
   retry_interval_ms: 2000
 
+# 持久化流程任务 Worker。每个并发槽同一时刻执行一个流程步骤；多实例可继续水平扩展。
+worker:
+  concurrency: 6        # 单实例同时执行的最大步骤数
+  lease_seconds: 30     # 执行权租约，运行期间会自动续租
+  poll_interval_ms: 500
+  recovery_interval_ms: 5000
+  reconcile_limit: 100
+
 # LLM 协议（provider: openai = OpenAI 兼容 /chat/completions，DeepSeek / GLM / Qwen / Kimi
 # 等均适用，默认；anthropic = Anthropic Messages 协议）
 llm:

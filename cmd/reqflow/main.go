@@ -283,12 +283,24 @@ func main() {
 		os.Exit(1)
 	}
 	v2Definitions := apporchestrator.NewDefinitionService(pipelineRepo, v2Registry, pipelineRepo)
+	v2TaskBatches, err := apporchestrator.NewTaskBatchService(v2Definitions, v2Assets)
+	if err != nil {
+		logger.Error("V2 Task Batch 初始化失败", "err", err)
+		os.Exit(1)
+	}
 	v2Scheduler := apporchestrator.NewScheduler(pipelineRepo)
-	v2Worker, err := apporchestrator.NewWorker(pipelineRepo, v2Registry, v2Scheduler, apporchestrator.WorkerOptions{})
+	v2Worker, err := apporchestrator.NewWorker(pipelineRepo, v2Registry, v2Scheduler, apporchestrator.WorkerOptions{
+		Concurrency: cfg.Worker.Concurrency, LeaseDuration: time.Duration(cfg.Worker.LeaseSeconds) * time.Second,
+		PollInterval:     time.Duration(cfg.Worker.PollIntervalMs) * time.Millisecond,
+		RecoveryInterval: time.Duration(cfg.Worker.RecoveryIntervalMs) * time.Millisecond,
+		ReconcileLimit:   cfg.Worker.ReconcileLimit,
+	})
 	if err != nil {
 		logger.Error("V2 Worker 初始化失败", "err", err)
 		os.Exit(1)
 	}
+	logger.Info("V2 Worker 协程池已初始化", "concurrency", cfg.Worker.Concurrency,
+		"lease_seconds", cfg.Worker.LeaseSeconds)
 	v2Runtime, err := apporchestrator.NewRuntimeService(pipelineRepo, v2Scheduler, v2Worker)
 	if err != nil {
 		logger.Error("V2 Runtime 初始化失败", "err", err)
@@ -341,7 +353,8 @@ func main() {
 	engine := httpgin.New(httpgin.Services{
 		Tasks: taskMgr, Match: matchSvc, Settings: settingsSvc, Overview: overviewSvc,
 		DatasetQuery: datasetQuery, DatasetAdmin: datasetAdmin, Archive: archiveSvc, Metadata: metadataSvc,
-		V2Definitions: v2Definitions, V2Runtime: v2Runtime, V2TaskQueries: v2TaskQueries,
+		V2Definitions: v2Definitions, V2TaskBatches: v2TaskBatches,
+		V2Runtime: v2Runtime, V2TaskQueries: v2TaskQueries,
 		V2Datasets: v2Datasets, V2QueryDatasets: v2QueryDatasets,
 		V2Assets: v2Assets, V2Extractions: v2Extractions, V2Cleaning: v2Cleaning, V2Review: v2Review,
 		V2Retrieval: v2Retrieval, V2Analysis: v2Analysis, V2Artifacts: v2Artifacts,

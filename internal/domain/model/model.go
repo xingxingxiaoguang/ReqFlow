@@ -75,6 +75,11 @@ type Task struct {
 	DefinitionSnapshot string
 	Type               string // requirement_import | bug_*（第二波）
 	Title              string
+	BatchID            string
+	BatchOrdinal       int
+	BatchSize          int
+	SourceAssetID      string
+	SourceFilename     string
 	Status             string
 	CurrentStep        int    // 当前步骤序号（0=未开始；与 TaskStep.Seq 对应）
 	Workflow           string // 工作流定义快照（JSON 文本：步骤链 + 依赖声明，创建时从注册表写入）

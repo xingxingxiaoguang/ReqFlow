@@ -10,6 +10,11 @@ export interface V2Task {
   definition_id: string
   type: string
   title: string
+  batch_id?: string
+  batch_ordinal?: number
+  batch_size?: number
+  source_asset_id?: string
+  source_filename?: string
   status: V2TaskStatus
   current_step: number
   error_message?: string

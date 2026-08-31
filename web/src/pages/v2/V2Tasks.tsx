@@ -61,7 +61,14 @@ export default function V2Tasks() {
   const columns: ColumnsType<V2Task> = [
     {
       title: '任务',
-      render: (_, task) => <Space direction="vertical" size={2}><Text strong>{task.title}</Text><Text type="secondary">{task.id}</Text></Space>,
+      render: (_, task) => <Space direction="vertical" size={2}>
+        <Text strong>{task.title}</Text>
+        {task.batch_id && <Space size={6} wrap>
+          <Tag color="cyan">批量任务 {task.batch_ordinal}/{task.batch_size}</Tag>
+          <Text type="secondary">独立处理：{task.source_filename}</Text>
+        </Space>}
+        <Text type="secondary">{task.id}</Text>
+      </Space>,
     },
     {
       title: '来源流程', width: 210,

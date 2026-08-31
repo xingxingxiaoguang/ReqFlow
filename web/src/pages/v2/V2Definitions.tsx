@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react'
-import { Button, Card, Empty, Popconfirm, Space, Table, Tag, Typography } from 'antd'
-import { DeleteOutlined, EditOutlined, EyeOutlined, PlusOutlined, RocketOutlined } from '@ant-design/icons'
+import { App, Button, Card, Empty, Popconfirm, Space, Table, Tag, Typography } from 'antd'
+import { CopyOutlined, DeleteOutlined, EditOutlined, EyeOutlined, InboxOutlined, PlusOutlined, RocketOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { v2CatalogApi } from '../../api/v2/catalog'
 import type { V2TaskDefinition } from '../../api/v2/types'
@@ -17,7 +17,9 @@ type FlowListItem =
   | { id: string; kind: 'published'; definition: V2TaskDefinition }
 
 export default function V2Definitions() {
+  const { message } = App.useApp()
   const navigate = useNavigate()
+  const client = useQueryClient()
   const [localDrafts, setLocalDrafts] = useState(listLocalWorkflowDrafts)
   const definitions = useQuery({
     queryKey: ['v2-definitions'],
@@ -29,6 +31,17 @@ export default function V2Definitions() {
       .filter((definition) => definition.status === 'active')
       .map((definition) => ({ id: definition.id, kind: 'published' as const, definition })),
   ], [definitions.data, localDrafts])
+
+  const archiveDefinition = async (definition: V2TaskDefinition) => {
+    try {
+      await v2CatalogApi.archiveDefinition(definition.id)
+      message.success(`流程「${definition.name}」已归档`)
+      await client.invalidateQueries({ queryKey: ['v2-definitions'] })
+      await client.invalidateQueries({ queryKey: ['v2-archived-definitions'] })
+    } catch (error) {
+      message.error((error as Error).message)
+    }
+  }
 
   const columns: ColumnsType<FlowListItem> = [
     {
@@ -60,7 +73,7 @@ export default function V2Definitions() {
       render: (_, item) => new Date(item.kind === 'draft' ? item.draft.saved_at : item.definition.updated_at).toLocaleString('zh-CN'),
     },
     {
-      title: '操作', width: 250,
+      title: '操作', width: 410,
       render: (_, item) => item.kind === 'draft' ? <Space>
         <Button type="primary" size="small" icon={<EditOutlined />} onClick={() => navigate(`/definitions/new?draft=${item.draft.id}`)}>继续编辑</Button>
         <Popconfirm title="删除这份草稿？" onConfirm={() => {
@@ -69,9 +82,18 @@ export default function V2Definitions() {
         }}>
           <Button danger size="small" icon={<DeleteOutlined />}>删除</Button>
         </Popconfirm>
-      </Space> : <Space>
+      </Space> : <Space size={4} wrap>
         <Button size="small" icon={<EyeOutlined />} onClick={() => navigate(`/definitions/${item.definition.id}`)}>详情</Button>
+        <Button size="small" icon={<CopyOutlined />} onClick={() => navigate(`/definitions/new?copy=${item.definition.id}`)}>复制并编辑</Button>
         <Button type="primary" size="small" icon={<RocketOutlined />} onClick={() => navigate(`/tasks/new?definition_id=${item.definition.id}`)}>创建任务</Button>
+        <Popconfirm
+          title="归档这个流程？"
+          description="已创建任务仍按冻结快照继续运行；归档后不能再创建新任务。"
+          okText="归档"
+          onConfirm={() => void archiveDefinition(item.definition)}
+        >
+          <Button size="small" icon={<InboxOutlined />}>归档</Button>
+        </Popconfirm>
       </Space>,
     },
   ]

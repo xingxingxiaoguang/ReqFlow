@@ -16,6 +16,7 @@ import (
 
 type WorkerOptions struct {
 	Owner            string
+	Concurrency      int
 	LeaseDuration    time.Duration
 	PollInterval     time.Duration
 	RecoveryInterval time.Duration
@@ -36,7 +37,7 @@ type Worker struct {
 	opts      WorkerOptions
 
 	mu     sync.Mutex
-	active map[string]*activeRun // task_id -> 当前本机运行（首期 Worker 串行）
+	active map[string]map[string]*activeRun // task_id -> step_run_id -> 当前本机运行
 }
 
 func NewWorker(repo port.OrchestratorWorkerRepo, registry *Registry, scheduler *Scheduler, opts WorkerOptions) (*Worker, error) {
@@ -52,6 +53,9 @@ func NewWorker(repo port.OrchestratorWorkerRepo, registry *Registry, scheduler *
 	if opts.Owner == "" {
 		opts.Owner = randomWorkerOwner()
 	}
+	if opts.Concurrency <= 0 {
+		opts.Concurrency = 1
+	}
 	if opts.LeaseDuration <= 0 {
 		opts.LeaseDuration = 30 * time.Second
 	}
@@ -64,19 +68,60 @@ func NewWorker(repo port.OrchestratorWorkerRepo, registry *Registry, scheduler *
 	if opts.ReconcileLimit <= 0 {
 		opts.ReconcileLimit = 100
 	}
-	return &Worker{repo: repo, registry: registry, scheduler: scheduler, opts: opts, active: map[string]*activeRun{}}, nil
+	return &Worker{repo: repo, registry: registry, scheduler: scheduler, opts: opts,
+		active: map[string]map[string]*activeRun{}}, nil
 }
 
 func (w *Worker) Run(ctx context.Context) error {
-	recovery := time.NewTicker(w.opts.RecoveryInterval)
-	defer recovery.Stop()
 	if _, err := w.repo.RecoverExpiredLeases(ctx); err != nil {
 		return fmt.Errorf("回收过期 lease: %w", err)
 	}
+	if err := w.reconcile(ctx); err != nil {
+		return err
+	}
+
+	poolCtx, stopPool := context.WithCancel(ctx)
+	var pool sync.WaitGroup
+	errorsFromPool := make(chan error, w.opts.Concurrency)
+	for range w.opts.Concurrency {
+		pool.Add(1)
+		go func() {
+			defer pool.Done()
+			errorsFromPool <- w.runSlot(poolCtx)
+		}()
+	}
+	defer func() {
+		stopPool()
+		pool.Wait()
+	}()
+
+	recovery := time.NewTicker(w.opts.RecoveryInterval)
+	defer recovery.Stop()
+	reconcile := time.NewTicker(w.opts.PollInterval)
+	defer reconcile.Stop()
 	for {
-		if err := w.scheduler.Reconcile(ctx, w.opts.ReconcileLimit); err != nil && !errors.Is(err, port.ErrInvalidTransition) {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case err := <-errorsFromPool:
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
 			return err
+		case <-reconcile.C:
+			if err := w.reconcile(ctx); err != nil {
+				return err
+			}
+		case <-recovery.C:
+			if _, err := w.repo.RecoverExpiredLeases(ctx); err != nil {
+				return fmt.Errorf("回收过期 lease: %w", err)
+			}
 		}
+	}
+}
+
+func (w *Worker) runSlot(ctx context.Context) error {
+	for {
 		err := w.RunOnce(ctx)
 		if err == nil {
 			continue
@@ -87,16 +132,23 @@ func (w *Worker) Run(ctx context.Context) error {
 			}
 			return err
 		}
+		timer := time.NewTimer(w.opts.PollInterval)
 		select {
 		case <-ctx.Done():
-			return ctx.Err()
-		case <-recovery.C:
-			if _, err := w.repo.RecoverExpiredLeases(ctx); err != nil {
-				return fmt.Errorf("回收过期 lease: %w", err)
+			if !timer.Stop() {
+				<-timer.C
 			}
-		case <-time.After(w.opts.PollInterval):
+			return ctx.Err()
+		case <-timer.C:
 		}
 	}
+}
+
+func (w *Worker) reconcile(ctx context.Context) error {
+	if err := w.scheduler.Reconcile(ctx, w.opts.ReconcileLimit); err != nil && !errors.Is(err, port.ErrInvalidTransition) {
+		return err
+	}
+	return nil
 }
 
 func (w *Worker) RunOnce(ctx context.Context) error {
@@ -132,12 +184,18 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 	execCtx, cancel := context.WithCancel(ctx)
 	active := &activeRun{cancel: cancel}
 	w.mu.Lock()
-	w.active[claimed.TaskID] = active
+	if w.active[claimed.TaskID] == nil {
+		w.active[claimed.TaskID] = make(map[string]*activeRun)
+	}
+	w.active[claimed.TaskID][claimed.ID] = active
 	w.mu.Unlock()
 	defer func() {
 		cancel()
 		w.mu.Lock()
-		delete(w.active, claimed.TaskID)
+		delete(w.active[claimed.TaskID], claimed.ID)
+		if len(w.active[claimed.TaskID]) == 0 {
+			delete(w.active, claimed.TaskID)
+		}
 		w.mu.Unlock()
 	}()
 
@@ -209,12 +267,14 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 func (w *Worker) CancelTask(taskID string) bool {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	run, ok := w.active[taskID]
-	if !ok {
+	runs := w.active[taskID]
+	if len(runs) == 0 {
 		return false
 	}
-	run.pauseRequested = true
-	run.cancel()
+	for _, run := range runs {
+		run.pauseRequested = true
+		run.cancel()
+	}
 	return true
 }
 

@@ -163,7 +163,7 @@ export default function EmbeddedResourceCreate({ kind, fixedSchemaId, onCancel, 
           target_schema_id: values.schema_id,
           record_granularity: values.record_granularity,
           system_instruction: values.instruction,
-          field_guides: {}, examples: [], normalization_rules: {}, validation_rules: {},
+          field_guides: {}, examples: [], normalization_rules: [], validation_rules: [],
         })
         created = response.extraction_profile
       } else {
