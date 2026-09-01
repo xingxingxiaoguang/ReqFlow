@@ -32,6 +32,24 @@ internal/domain  V2 实体模型 + 纯领域逻辑（Schema、Dataset、DAG、�
 
 ## 快速开始
 
+### 业务交付：一键启动
+
+```bash
+./scripts/start.sh        # 或 make start
+```
+
+脚本会依次：启动依赖容器（PostgreSQL+pgvector、OpenSearch）→ 等待就绪 → 构建单二进制 → 运行于 :8080。打开 http://localhost:8080 即可使用。
+
+- 前置：Docker、Go、pnpm；Linux 需 `sudo sysctl -w vm.max_map_count=262144`（OpenSearch 要求）。
+- 首次启动自动生成 `config.yaml`，并**自动完成数据库迁移与种子数据**：
+  - 固定流程两条：**数据清洗入库**（任务管理页发起）、**建立检索索引**（数据集上的「索引」抽屉隐式调用）；
+  - 示例知识库 **DH1功能&需求知识库** 四件套：字段结构「HD1-功能原文」、抽取规则「DH1文档数据清洗」、索引规则「HD1-语义索引」、空数据集（业务数据由清洗任务发布产生）；
+  - 平台 Agent 两个内置 Skill：平台指南（platform-guide）、查询分析（query-analysis）。
+- LLM 能力（文件抽取、审核辅助、数字大脑）需要编辑 `config.yaml` 填写 `llm.api_key` 与 `embedding.api_key` 后重启；启动脚本会检测并提醒。
+- 全部种子幂等：同名资源已存在则跳过，不会覆盖业务改动。
+
+### 开发模式
+
 ```bash
 # 1. 数据库（Docker，PG16 + pgvector）
 docker compose up -d

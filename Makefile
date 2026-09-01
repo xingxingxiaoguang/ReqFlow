@@ -1,4 +1,4 @@
-.PHONY: dev backend frontend build test lint-arch migrate-down clean help
+.PHONY: dev backend frontend build test lint-arch check-secrets start clean help
 
 # 开发：终端1 起后端(:8080)，终端2 起前端(:5173，代理 /api)
 dev: backend
@@ -39,8 +39,12 @@ setup:
 	git config core.hooksPath .githooks
 	@echo "✓ pre-commit 密钥护栏已启用"
 
+# 业务交付一键启动：依赖容器 → 等待就绪 → 构建 → 运行 :8080
+start:
+	bash scripts/start.sh
+
 clean:
 	rm -rf bin web/dist
 
 help:
-	@echo "setup | dev | build | test | lint-arch | check-secrets | clean"
+	@echo "setup | dev | build | test | lint-arch | check-secrets | start | clean"

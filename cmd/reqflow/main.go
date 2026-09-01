@@ -312,6 +312,14 @@ func main() {
 		logger.Error("V2 Catalog 初始化失败", "err", err)
 		os.Exit(1)
 	}
+	starter, err := seedStarterKit(context.Background(), v2Datasets, v2Extractions, v2Retrieval, v2Catalog)
+	if err != nil {
+		logger.Error("示例知识库种子失败", "err", err)
+		os.Exit(1)
+	}
+	if len(starter) > 0 {
+		logger.Info("已种子示例知识库（DH1功能&需求知识库）", "created", strings.Join(starter, ","))
+	}
 	v2Review, err := apppipeline.NewReviewService(pipelineRepo, v2Runtime)
 	if err != nil {
 		logger.Error("V2 Review Pipeline 初始化失败", "err", err)
