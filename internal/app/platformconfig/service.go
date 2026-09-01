@@ -19,6 +19,9 @@ const (
 	fileConfigID       = "file"
 )
 
+// ErrNotFound 激活/更新/删除的目标配置不存在（HTTP 层映射 404；与仓储哨兵同值）。
+var ErrNotFound = port.ErrPlatformConfigNotFound
+
 var kinds = []string{
 	model.PlatformConfigLLM,
 	model.PlatformConfigEmbedding,
