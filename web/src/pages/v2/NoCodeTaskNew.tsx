@@ -206,26 +206,27 @@ export default function NoCodeTaskNew() {
                 <Row gutter={16}>
                   <Col xs={24} lg={12}>
                     <Form.Item
-                      name="extraction_profile_id"
                       label={<Space>抽取规则<Tag>按字段服务</Tag></Space>}
-                      rules={[{ required: true, message: '请选择抽取规则' }]}
                       extra="抽取规则决定按哪套字段结构理解文件；选定后目标数据集会自动对齐。"
                     >
-                      <Select
-                        showSearch
-                        optionFilterProp="label"
-                        placeholder="选择抽取规则"
-                        options={(extractionProfiles.data?.extraction_profiles ?? []).map((profile) => {
-                          const schema = schemas.data?.schemas.find((item) => item.id === profile.target_schema_id)
-                          return { value: profile.id, label: schema ? `${profile.name} · ${schema.name}` : profile.name }
-                        })}
-                        notFoundContent={<Empty description="还没有抽取规则" />}
-                      />
+                      <Space.Compact style={{ width: '100%' }}>
+                        <Form.Item name="extraction_profile_id" noStyle rules={[{ required: true, message: '请选择抽取规则' }]}>
+                          <Select
+                            showSearch
+                            optionFilterProp="label"
+                            placeholder="选择抽取规则"
+                            options={(extractionProfiles.data?.extraction_profiles ?? []).map((profile) => {
+                              const schema = schemas.data?.schemas.find((item) => item.id === profile.target_schema_id)
+                              return { value: profile.id, label: schema ? `${profile.name} · ${schema.name}` : profile.name }
+                            })}
+                            notFoundContent={<Empty description="还没有抽取规则" />}
+                            style={{ flex: 1, minWidth: 0 }}
+                          />
+                        </Form.Item>
+                        <Button icon={<EyeOutlined />} disabled={!extractionProfileID} onClick={() => setProfileDetailOpen(true)}>预览</Button>
+                        <Button icon={<PlusOutlined />} onClick={() => setProfileCreator('extraction')}>新建规则</Button>
+                      </Space.Compact>
                     </Form.Item>
-                    <Space style={{ marginBottom: 8 }}>
-                      <Button size="small" icon={<EyeOutlined />} disabled={!extractionProfileID} onClick={() => setProfileDetailOpen(true)}>预览规则</Button>
-                      <Button size="small" icon={<PlusOutlined />} onClick={() => setProfileCreator('extraction')}>就地创建抽取规则</Button>
-                    </Space>
                   </Col>
                   <Col xs={24} lg={12}>
                     <Form.Item
