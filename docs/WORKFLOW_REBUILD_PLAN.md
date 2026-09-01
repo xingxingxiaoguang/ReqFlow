@@ -197,10 +197,10 @@ Agent 和手动 UI 必须调用同一个 WorkflowDraft Command 层。Agent 只�
 
 ### Phase 4：Rule Synthesis Agent
 
-- [ ] 抽取 Agent Runtime 通用内核；
-- [ ] 增加类型化错误、Provider fallback 和 `needs_human`；
-- [ ] 增加规则推断工具集；
-- [ ] Agent 输出 Command Proposal，不直接修改/发布；
+- [x] 抽取 Agent Runtime 通用内核；
+- [x] 增加类型化错误、Provider fallback 和 `needs_human`；
+- [x] 增加 Proposal/Human 核心工具，Agent 不直接修改/发布；
+- [ ] 增加基于画像的规则推断工具集；
 - [ ] UI 展示证据、置信度、决策和实时 trace。
 
 完成标准：Agent 中途断开后能无损切换手动模式或恢复。

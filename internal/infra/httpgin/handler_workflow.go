@@ -1,6 +1,7 @@
 package httpgin
 
 import (
+	"encoding/json"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
@@ -143,6 +144,92 @@ func (h *handlers) getWorkflowRevision(c *gin.Context) {
 		return
 	}
 	ok(c, revision)
+}
+
+func (h *handlers) createDesignSession(c *gin.Context) {
+	var request struct {
+		AgentAvailable bool `json:"agent_available"`
+	}
+	if c.Request.ContentLength != 0 {
+		if err := c.ShouldBindJSON(&request); err != nil {
+			fail(c, http.StatusUnprocessableEntity, "设计会话参数非法")
+			return
+		}
+	}
+	view, err := h.svc.WorkflowDesign.Create(c.Request.Context(), c.Param("id"), request.AgentAvailable)
+	if err != nil {
+		workflowError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": view})
+}
+
+func (h *handlers) getDesignSession(c *gin.Context) {
+	view, err := h.svc.WorkflowDesign.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		workflowError(c, err)
+		return
+	}
+	ok(c, view)
+}
+
+func (h *handlers) runDesignSession(c *gin.Context) {
+	var request struct {
+		Message string `json:"message"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || request.Message == "" {
+		fail(c, http.StatusUnprocessableEntity, "设计消息不能为空")
+		return
+	}
+	view, err := h.svc.WorkflowDesign.Run(c.Request.Context(), c.Param("id"), request.Message)
+	if err != nil {
+		workflowError(c, err)
+		return
+	}
+	ok(c, view)
+}
+
+func (h *handlers) answerDesignQuestion(c *gin.Context) {
+	var request struct {
+		Answer json.RawMessage `json:"answer"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil {
+		fail(c, http.StatusUnprocessableEntity, "人工回答参数非法")
+		return
+	}
+	view, err := h.svc.WorkflowDesign.Answer(c.Request.Context(), c.Param("id"), request.Answer, appworkflow.LocalActorID)
+	if err != nil {
+		workflowError(c, err)
+		return
+	}
+	ok(c, view)
+}
+
+func (h *handlers) acceptDesignProposal(c *gin.Context) {
+	view, err := h.svc.WorkflowDesign.AcceptProposal(c.Request.Context(), c.Param("id"), c.Param("proposal_id"))
+	if err != nil {
+		workflowError(c, err)
+		return
+	}
+	ok(c, view)
+}
+
+func (h *handlers) rejectDesignProposal(c *gin.Context) {
+	view, err := h.svc.WorkflowDesign.RejectProposal(c.Request.Context(), c.Param("id"), c.Param("proposal_id"))
+	if err != nil {
+		workflowError(c, err)
+		return
+	}
+	ok(c, view)
+}
+
+func (h *handlers) switchDesignManual(c *gin.Context) {
+	view, err := h.svc.WorkflowDesign.SwitchToManual(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		workflowError(c, err)
+		return
+	}
+	ok(c, view)
 }
 
 func workflowError(c *gin.Context, err error) {

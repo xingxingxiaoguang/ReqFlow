@@ -308,6 +308,11 @@ func main() {
 		logger.Error("Workflow Publication 服务初始化失败", "err", err)
 		os.Exit(1)
 	}
+	workflowDesign, err := appworkflow.NewDesignService(workflowRepo, workflowService, llmClient, workflowCatalog)
+	if err != nil {
+		logger.Error("Workflow Design 服务初始化失败", "err", err)
+		os.Exit(1)
+	}
 	v2Review, err := apppipeline.NewReviewService(pipelineRepo, v2Runtime)
 	if err != nil {
 		logger.Error("V2 Review Pipeline 初始化失败", "err", err)
@@ -344,7 +349,8 @@ func main() {
 		V2Catalog: v2Catalog, V2Agent: v2Agent,
 		Workflows:        workflowService,
 		WorkflowPreviews: workflowPreviews, WorkflowPublications: workflowPublications,
-		MaxFileMB: int64(cfg.Parser.MaxFileMB),
+		WorkflowDesign: workflowDesign,
+		MaxFileMB:      int64(cfg.Parser.MaxFileMB),
 	})
 	mountStatic(engine)
 

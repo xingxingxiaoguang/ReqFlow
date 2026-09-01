@@ -218,6 +218,26 @@ func (s *DesignSession) ResolveProposal(id string, accept bool, nextDraftRevisio
 	return fmt.Errorf("命令建议 %s 不存在", id)
 }
 
+func (s *DesignSession) RefreshDraftRevision(revision int64, now time.Time) error {
+	if err := s.ensureMutable(now); err != nil {
+		return err
+	}
+	if revision < s.DraftRevision {
+		return fmt.Errorf("草稿版本不能回退")
+	}
+	if revision == s.DraftRevision {
+		return nil
+	}
+	s.DraftRevision = revision
+	for index := range s.Proposals {
+		if s.Proposals[index].Status == ProposalPending {
+			s.Proposals[index].Status = ProposalObsolete
+		}
+	}
+	s.UpdatedAt = now
+	return nil
+}
+
 func (s *DesignSession) Complete(now time.Time) error {
 	if err := s.ensureMutable(now); err != nil {
 		return err

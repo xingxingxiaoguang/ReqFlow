@@ -2,10 +2,12 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
 
+	domain "reqflow/internal/domain/workflow"
 	"reqflow/internal/port"
 )
 
@@ -72,13 +74,18 @@ type RunOptions struct {
 	// BeforeFlush 让领域节点先把局部状态放回自己的 checkpoint envelope。
 	BeforeFlush func()
 	// OnFlush 在 trace 和领域状态都更新后持久化 checkpoint、上报进度。
-	OnFlush func(RunTrace) error
+	OnFlush       func(RunTrace) error
+	OnNeedsHuman  func(domain.HumanQuestion) error
+	TraceEnvelope *TraceEnvelope
 }
 
 // Execute 运行一个可恢复 Agent，并统一生成实时 trace。工具错误仍由 Loop 作为可纠正
 // 反馈写回上下文；只有 LLM/上下文取消、checkpoint 或进度回调失败才中止本次运行。
 func Execute(ctx context.Context, llm port.LLMClient, tools []Tool, state *RunState,
 	traces *TraceEnvelope, options RunOptions) error {
+	if options.TraceEnvelope != nil {
+		traces = options.TraceEnvelope
+	}
 	if llm == nil || state == nil || traces == nil {
 		return fmt.Errorf("agent run: llm、state 和 traces 不能为空")
 	}
@@ -146,6 +153,16 @@ func Execute(ctx context.Context, llm port.LLMClient, tools []Tool, state *RunSt
 		state.Context = *finalContext
 	}
 	status := "succeeded"
+	var needsHuman *NeedsHumanError
+	if errors.As(runErr, &needsHuman) {
+		status = "awaiting_human"
+		if options.OnNeedsHuman != nil {
+			if err := options.OnNeedsHuman(needsHuman.Question); err != nil {
+				callbackErr = err
+			}
+		}
+		runErr = nil
+	}
 	if runErr != nil || callbackErr != nil {
 		status = "failed"
 	}

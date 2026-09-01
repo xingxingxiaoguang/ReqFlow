@@ -3,9 +3,12 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"testing"
+	"time"
 
+	domain "reqflow/internal/domain/workflow"
 	"reqflow/internal/port"
 )
 
@@ -246,6 +249,41 @@ func TestLoopCanRequireExplicitTerminateTool(t *testing.T) {
 	}
 	if !foundReminder {
 		t.Fatal("缺少显式完成提醒")
+	}
+}
+
+func TestLoopSuspendsForNeedsHumanOutcome(t *testing.T) {
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	session, err := domain.NewDesignSession("session", "draft", 1, true, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := &HumanQuestionTool{Session: session, Now: func() time.Time { return now }}
+	client := &scriptedClient{responses: []*port.Message{assistantToolCalls(port.StopReasonToolUse,
+		port.ToolCall{ID: "question-1", Name: "request_human_decision", Arguments: json.RawMessage(`{"id":"decision-1","path":"rules.data_contract.record_granularity","prompt":"一条记录代表什么？"}`)})}}
+	final, _, err := runLoop(t, client, []Tool{tool}, Config{MaxIterations: 2})
+	var needsHuman *NeedsHumanError
+	if !errors.As(err, &needsHuman) || needsHuman.Question.ID != "decision-1" {
+		t.Fatalf("err=%v, want NeedsHumanError", err)
+	}
+	if session.Status != domain.DesignAwaitingHuman || final.Messages[len(final.Messages)-1].Role != port.RoleToolResult {
+		t.Fatalf("session=%s messages=%d", session.Status, len(final.Messages))
+	}
+}
+
+func TestProposalToolOnlyWritesProposalSink(t *testing.T) {
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	session, err := domain.NewDesignSession("session", "draft", 4, true, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool := &ProposalTool{Sink: session, Now: func() time.Time { return now }}
+	out := tool.Execute(context.Background(), port.ToolCall{Arguments: json.RawMessage(`{"proposals":[{"id":"p1","draft_revision":4,"summary":"增加解析节点","command":{"type":"append_after"}}]}`)}, nil)
+	if out.Status != domain.ToolCompleted || !out.Terminate || len(session.Proposals) != 1 {
+		t.Fatalf("out=%+v proposals=%d", out, len(session.Proposals))
+	}
+	if session.Proposals[0].Status != domain.ProposalPending {
+		t.Fatal("Proposal tool 只能留下 pending 建议")
 	}
 }
 

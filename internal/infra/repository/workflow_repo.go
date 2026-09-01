@@ -73,6 +73,20 @@ type workflowPreviewRow struct {
 	Temporary      bool      `gorm:"column:temporary"`
 }
 
+type workflowDesignSessionRow struct {
+	ID            string    `gorm:"column:id;primaryKey"`
+	WorkflowID    string    `gorm:"column:workflow_id"`
+	DraftRevision int64     `gorm:"column:draft_revision"`
+	Status        string    `gorm:"column:status"`
+	Session       string    `gorm:"column:session;type:jsonb"`
+	AgentState    string    `gorm:"column:agent_state;type:jsonb"`
+	Trace         string    `gorm:"column:trace;type:jsonb"`
+	CreatedAt     time.Time `gorm:"column:created_at"`
+	UpdatedAt     time.Time `gorm:"column:updated_at"`
+}
+
+func (workflowDesignSessionRow) TableName() string { return "workflow_design_sessions" }
+
 func (workflowPreviewRow) TableName() string { return "workflow_previews" }
 
 func (workflowCommandEventRow) TableName() string { return "workflow_command_events" }
@@ -342,4 +356,52 @@ func (r *WorkflowRepo) GetRevision(ctx context.Context, id string) (*domain.Work
 		return nil, err
 	}
 	return &revision, nil
+}
+
+func (r *WorkflowRepo) CreateDesignSession(ctx context.Context, record port.DesignSessionRecord) error {
+	session, err := json.Marshal(record.Session)
+	if err != nil {
+		return err
+	}
+	if len(record.AgentState) == 0 {
+		record.AgentState = json.RawMessage(`{"context":{"messages":[]}}`)
+	}
+	if len(record.Trace) == 0 {
+		record.Trace = json.RawMessage(`{"agent_runs":[]}`)
+	}
+	now := time.Now()
+	return r.db.WithContext(ctx).Create(&workflowDesignSessionRow{ID: record.Session.ID, WorkflowID: record.Session.DraftID,
+		DraftRevision: record.Session.DraftRevision, Status: string(record.Session.Status), Session: string(session),
+		AgentState: string(record.AgentState), Trace: string(record.Trace), CreatedAt: now, UpdatedAt: now}).Error
+}
+
+func (r *WorkflowRepo) GetDesignSession(ctx context.Context, id string) (*port.DesignSessionRecord, error) {
+	var row workflowDesignSessionRow
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&row).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, port.ErrDesignSessionNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	var session domain.DesignSession
+	if err := json.Unmarshal([]byte(row.Session), &session); err != nil {
+		return nil, err
+	}
+	return &port.DesignSessionRecord{Session: session, AgentState: json.RawMessage(row.AgentState), Trace: json.RawMessage(row.Trace)}, nil
+}
+
+func (r *WorkflowRepo) SaveDesignSession(ctx context.Context, record port.DesignSessionRecord) error {
+	session, err := json.Marshal(record.Session)
+	if err != nil {
+		return err
+	}
+	result := r.db.WithContext(ctx).Model(&workflowDesignSessionRow{}).Where("id = ?", record.Session.ID).
+		Updates(map[string]any{"draft_revision": record.Session.DraftRevision, "status": string(record.Session.Status),
+			"session": string(session), "agent_state": string(record.AgentState), "trace": string(record.Trace), "updated_at": time.Now()})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return port.ErrDesignSessionNotFound
+	}
+	return nil
 }

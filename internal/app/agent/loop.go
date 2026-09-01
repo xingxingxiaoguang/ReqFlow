@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	domain "reqflow/internal/domain/workflow"
 	"reqflow/internal/port"
 )
 
@@ -27,7 +28,13 @@ type ToolOutput struct {
 	Details   string
 	IsError   bool
 	Terminate bool
+	Status    domain.ToolOutcomeStatus
+	Question  *domain.HumanQuestion
 }
+
+type NeedsHumanError struct{ Question domain.HumanQuestion }
+
+func (e *NeedsHumanError) Error() string { return "agent 需要人工决策: " + e.Question.Path }
 
 // Tool 工具接口。Spec 返回的 Parameters 为 JSON Schema；Execute 收到原始 JSON 参数。
 // onProgress 可选地推送中间进度（UI 展示用，不进 LLM 上下文）。
@@ -154,7 +161,17 @@ func (l *Loop) Run(
 		} else {
 			for _, call := range calls {
 				out := l.executeTool(ctx, call, emit)
-				if out.Terminate {
+				if out.Status == domain.ToolNeedsHuman || out.Question != nil {
+					if out.Question == nil {
+						out.Question = &domain.HumanQuestion{ID: call.ID, Path: "agent", Prompt: out.Output}
+					}
+					l.appendResult(cc, call, out, emit)
+					emit(Event{Type: "agent_needs_human", ToolCallID: call.ID, ToolName: call.Name, Output: out, Message: msg})
+					emit(Event{Type: "turn_end", Message: msg})
+					emit(Event{Type: "agent_end"})
+					return cc, &NeedsHumanError{Question: *out.Question}
+				}
+				if out.Terminate || out.Status == domain.ToolCompleted {
 					terminate = true
 				}
 				l.appendResult(cc, call, out, emit)
