@@ -9,7 +9,7 @@ import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { v2CatalogApi } from '../../api/v2/catalog'
 import { v2TasksApi } from '../../api/v2/tasks'
-import BuildIndexModal from './BuildIndexModal'
+import DatasetIndexDrawer from './DatasetIndexDrawer'
 
 const { Paragraph, Text, Title } = Typography
 
@@ -228,7 +228,7 @@ export default function V2DatasetDetail() {
       />}
     </Card>
 
-    <BuildIndexModal
+    <DatasetIndexDrawer
       dataset={dataset}
       open={indexOpen}
       onCancel={() => setIndexOpen(false)}

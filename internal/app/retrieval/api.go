@@ -93,6 +93,12 @@ type SnapshotView struct {
 	ActivatedAt        time.Time `json:"activated_at,omitempty"`
 }
 
+// DeleteSnapshot 删除快照元数据行。物理索引按（数据集, 规则）共享且随增量构建自愈，
+// 删除后下一次构建会自动从 0 全量重建，因此无需清理 LexicalRef / VectorRef。
+func (s *Service) DeleteSnapshot(ctx context.Context, id string) (bool, error) {
+	return s.repo.DeleteRetrievalSnapshot(ctx, id)
+}
+
 func (s *Service) GetSnapshotView(ctx context.Context, id string) (*SnapshotView, error) {
 	snapshot, err := s.repo.GetRetrievalSnapshot(ctx, id)
 	if err != nil {

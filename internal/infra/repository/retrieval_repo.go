@@ -432,6 +432,14 @@ type retrievalSnapshotRow struct {
 	ActivatedAt        *time.Time `gorm:"column:activated_at"`
 }
 
+func (r *PipelineRepo) DeleteRetrievalSnapshot(ctx context.Context, id string) (bool, error) {
+	result := r.db.WithContext(ctx).Where("id = ?", id).Delete(&retrievalSnapshotRow{})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
 func (retrievalSnapshotRow) TableName() string { return "retrieval_snapshots" }
 
 func (row retrievalSnapshotRow) toModel() (*model.RetrievalSnapshot, error) {

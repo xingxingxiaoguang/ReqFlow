@@ -73,6 +73,19 @@ func (h *handlers) v2CloneRetrievalProfile(c *gin.Context) {
 	c.JSON(http.StatusCreated, gin.H{"success": true, "data": gin.H{"retrieval_profile": profile}})
 }
 
+func (h *handlers) v2DeleteRetrievalSnapshot(c *gin.Context) {
+	deleted, err := h.svc.V2Retrieval.DeleteSnapshot(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		fail(c, http.StatusInternalServerError, err.Error())
+		return
+	}
+	if !deleted {
+		fail(c, http.StatusNotFound, "RetrievalSnapshot 不存在")
+		return
+	}
+	ok(c, gin.H{"deleted": true})
+}
+
 func (h *handlers) v2GetRetrievalSnapshot(c *gin.Context) {
 	snapshot, err := h.svc.V2Retrieval.GetSnapshotView(c.Request.Context(), c.Param("id"))
 	if err != nil {

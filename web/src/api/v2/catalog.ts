@@ -87,6 +87,7 @@ export const v2CatalogApi = {
       limit: params.limit ?? 200,
     })}`),
   createRetrievalProfile: (input: Record<string, unknown>) => api.post<{ retrieval_profile: V2RetrievalProfile }>('/api/v2/retrieval-profiles', input),
+  deleteRetrievalSnapshot: (id: string) => api.del<{ deleted: boolean }>(`/api/v2/retrieval-snapshots/${id}`),
   search: (input: Record<string, unknown>) => api.post<{ search: Record<string, unknown> }>('/api/v2/retrieval/search', input),
   listAnalysisProfiles: () => api.get<{ analysis_profiles: V2AnalysisProfile[] }>('/api/v2/analysis-profiles?limit=200'),
   createAnalysisProfile: (input: { name: string; instruction: string; output_schema: V2JSONSchema }) =>

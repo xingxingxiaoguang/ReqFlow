@@ -12,7 +12,7 @@ import type { JSONSchemaProperty, V2Dataset, V2RetrievalProfile } from '../../ap
 import EmbeddedResourceCreate, { type EmbeddedResource, type EmbeddedResourceKind } from './EmbeddedResourceCreate'
 import { DATASET_PURPOSE_OPTIONS, datasetPurposeLabel } from './datasetPurpose'
 import { schemaFieldOptions } from './SchemaFieldEditor'
-import BuildIndexModal from './BuildIndexModal'
+import DatasetIndexDrawer from './DatasetIndexDrawer'
 
 const { Paragraph, Text, Title } = Typography
 
@@ -221,7 +221,7 @@ export default function V2Datasets() {
       </Space>}
     </Drawer>
 
-    <BuildIndexModal
+    <DatasetIndexDrawer
       dataset={indexDataset}
       open={Boolean(indexDataset)}
       onCancel={() => setIndexDataset(undefined)}

@@ -187,6 +187,7 @@ func New(svc Services) *gin.Engine {
 		v2.POST("/retrieval-profiles/:id/clone", h.v2CloneRetrievalProfile)
 		v2.GET("/retrieval-snapshots", h.v2ListRetrievalSnapshots)
 		v2.GET("/retrieval-snapshots/:id", h.v2GetRetrievalSnapshot)
+		v2.DELETE("/retrieval-snapshots/:id", h.v2DeleteRetrievalSnapshot)
 		v2.POST("/retrieval/search", h.v2SearchRetrieval)
 	}
 	if svc.V2Analysis != nil {

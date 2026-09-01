@@ -416,6 +416,14 @@ func (r *retrievalMemoryRepo) GetRetrievalSnapshot(_ context.Context, id string)
 	clone := *value
 	return &clone, nil
 }
+func (r *retrievalMemoryRepo) DeleteRetrievalSnapshot(_ context.Context, id string) (bool, error) {
+	if _, ok := r.snapshots[id]; !ok {
+		return false, nil
+	}
+	delete(r.snapshots, id)
+	return true, nil
+}
+
 func (r *retrievalMemoryRepo) ListRetrievalSnapshots(_ context.Context, datasetID, profileID, status string, limit int) ([]model.RetrievalSnapshot, error) {
 	var out []model.RetrievalSnapshot
 	for _, value := range r.snapshots {

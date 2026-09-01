@@ -73,6 +73,7 @@ type RetrievalRepo interface {
 
 	GetOrCreateRetrievalSnapshotForStep(ctx context.Context, snapshot *model.RetrievalSnapshot, producerAttempt int) (*model.RetrievalSnapshot, error)
 	GetRetrievalSnapshot(ctx context.Context, id string) (*model.RetrievalSnapshot, error)
+	DeleteRetrievalSnapshot(ctx context.Context, id string) (bool, error)
 	ListRetrievalSnapshots(ctx context.Context, datasetID, profileID, status string, limit int) ([]model.RetrievalSnapshot, error)
 	GetLatestActiveRetrievalSnapshot(ctx context.Context, datasetID, profileID string, throughSeq int64) (*model.RetrievalSnapshot, error)
 	SetRetrievalSnapshotStatusForStep(ctx context.Context, snapshotID, stepRunID string, producerAttempt int, status, failureReason string) error
