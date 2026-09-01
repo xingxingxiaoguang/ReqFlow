@@ -211,19 +211,22 @@ func (*listTasksTool) PromptGuidelines() []string {
 type queryDataTool struct{ platformTool }
 
 func (*queryDataTool) Spec() port.ToolSpec {
-	return port.ToolSpec{Name: "query_data", Description: "查询数据集与可用索引，或在数据集的激活快照上执行关键词、语义或混合检索。带 query 检索未指定数据集时：唯一活动数据集自动锁定，多个数据集会返回可选清单。",
-		Parameters: json.RawMessage(`{"type":"object","properties":{"dataset_id":{"type":"string"},"retrieval_snapshot_id":{"type":"string"},"query":{"type":"string"},"filters":{"type":"object","additionalProperties":{"type":"array","items":{"type":"string"}}},"mode":{"type":"string","enum":["lexical","semantic","hybrid"]},"top_k":{"type":"integer","minimum":1,"maximum":50},"rerank_enabled":{"type":"boolean"}},"additionalProperties":false}`)}
+	return port.ToolSpec{Name: "query_data", Description: "查询数据集与可用索引，或在数据集的激活快照上执行关键词、语义或混合检索。默认重排序后按相关性阈值过滤并返回 top 8。可调参数请按任务自主决定：score_threshold 相关性分数阈值默认 0.3（0..1 的重排序相关性分；宽泛探索可降到 0.2，精确查证可升到 0.5，传 0 关闭过滤）；lexical_weight / semantic_weight 混合权重默认 0.4 / 0.6（精确术语、编号、代号类查询调高 lexical；泛化语义、同义改写类查询调高 semantic）；rerank_enabled 默认开启，关闭后分数阈值不生效。带 query 检索未指定数据集时：唯一活动数据集自动锁定，多个数据集会返回可选清单。",
+		Parameters: json.RawMessage(`{"type":"object","properties":{"dataset_id":{"type":"string"},"retrieval_snapshot_id":{"type":"string"},"query":{"type":"string"},"filters":{"type":"object","additionalProperties":{"type":"array","items":{"type":"string"}}},"mode":{"type":"string","enum":["lexical","semantic","hybrid"]},"top_k":{"type":"integer","minimum":1,"maximum":50},"rerank_enabled":{"type":"boolean"},"score_threshold":{"type":"number","minimum":0,"maximum":1},"lexical_weight":{"type":"number","minimum":0},"semantic_weight":{"type":"number","minimum":0}},"additionalProperties":false}`)}
 }
 
 func (t *queryDataTool) Execute(ctx context.Context, call port.ToolCall, _ func(string)) baseagent.ToolOutput {
 	var args struct {
-		DatasetID  string              `json:"dataset_id"`
-		SnapshotID string              `json:"retrieval_snapshot_id"`
-		Query      string              `json:"query"`
-		Filters    map[string][]string `json:"filters"`
-		Mode       string              `json:"mode"`
-		TopK       int                 `json:"top_k"`
-		Rerank     bool                `json:"rerank_enabled"`
+		DatasetID      string              `json:"dataset_id"`
+		SnapshotID     string              `json:"retrieval_snapshot_id"`
+		Query          string              `json:"query"`
+		Filters        map[string][]string `json:"filters"`
+		Mode           string              `json:"mode"`
+		TopK           int                 `json:"top_k"`
+		Rerank         *bool               `json:"rerank_enabled"`
+		ScoreThreshold *float64            `json:"score_threshold"`
+		LexicalWeight  float64             `json:"lexical_weight"`
+		SemanticWeight float64             `json:"semantic_weight"`
 	}
 	if err := decodeStrict(call.Arguments, &args); err != nil {
 		return toolError(err)
@@ -286,16 +289,26 @@ func (t *queryDataTool) Execute(ctx context.Context, call port.ToolCall, _ func(
 	if args.Mode == "" {
 		args.Mode = string(model.RetrievalModeHybrid)
 	}
+	// 推荐默认值：重排序开启、相关性阈值 0.3、混合权重 0.4/0.6；模型可按任务在入参中覆盖。
+	rerank := args.Rerank == nil || *args.Rerank
+	scoreThreshold := 0.3
+	if args.ScoreThreshold != nil {
+		scoreThreshold = *args.ScoreThreshold
+	}
 	strategy := model.RetrievalSearchStrategy{Mode: model.RetrievalSearchMode(args.Mode),
-		RecallLimit: max(args.TopK*4, 20), TopK: args.TopK, RerankEnabled: args.Rerank,
-		RerankTopN: max(args.TopK*2, 20)}
+		RecallLimit: max(args.TopK*4, 20), TopK: args.TopK, RerankEnabled: rerank,
+		RerankTopN: max(args.TopK*2, 20), ScoreThreshold: scoreThreshold}
 	switch strategy.Mode {
 	case model.RetrievalModeLexical:
 		strategy.LexicalWeight = 1
 	case model.RetrievalModeSemantic:
 		strategy.SemanticWeight = 1
 	default:
-		strategy.LexicalWeight, strategy.SemanticWeight = 1, 1
+		if args.LexicalWeight <= 0 && args.SemanticWeight <= 0 {
+			strategy.LexicalWeight, strategy.SemanticWeight = 0.4, 0.6
+		} else {
+			strategy.LexicalWeight, strategy.SemanticWeight = args.LexicalWeight, args.SemanticWeight
+		}
 	}
 	result, err := t.deps.Retrieval.SearchAPI(ctx, appretrieval.SearchAPIRequest{
 		RetrievalSnapshotID: args.SnapshotID, Query: args.Query, Filters: args.Filters, Strategy: strategy,

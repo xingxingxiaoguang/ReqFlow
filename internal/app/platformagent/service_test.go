@@ -373,6 +373,11 @@ func TestQueryDataAutoSelectsSingleActiveDataset(t *testing.T) {
 		platform.searched.Query != "FA卡片" {
 		t.Fatalf("未按唯一活动数据集执行检索: %+v", platform.searched)
 	}
+	strategy := platform.searched.Strategy
+	if !strategy.RerankEnabled || strategy.ScoreThreshold != 0.3 ||
+		strategy.LexicalWeight != 0.4 || strategy.SemanticWeight != 0.6 || strategy.TopK != 8 {
+		t.Fatalf("默认检索策略不符合推荐值: %+v", strategy)
+	}
 	if !strings.Contains(output.Details, "DH1知识库") {
 		t.Fatalf("结果未说明自动选择的数据集: %q", output.Details)
 	}
