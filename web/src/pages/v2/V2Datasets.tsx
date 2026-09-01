@@ -10,7 +10,7 @@ import { useNavigate } from 'react-router-dom'
 import { v2CatalogApi } from '../../api/v2/catalog'
 import type { JSONSchemaProperty, V2Dataset, V2RetrievalProfile } from '../../api/v2/types'
 import EmbeddedResourceCreate, { type EmbeddedResource, type EmbeddedResourceKind } from './EmbeddedResourceCreate'
-import { DATASET_PURPOSE_OPTIONS, datasetPurposeLabel } from './datasetPurpose'
+import { DATASET_PURPOSE_FIXED, datasetPurposeLabel } from './datasetPurpose'
 import { schemaFieldOptions } from './SchemaFieldEditor'
 import DatasetIndexDrawer from './DatasetIndexDrawer'
 
@@ -19,7 +19,6 @@ const { Paragraph, Text, Title } = Typography
 interface DatasetForm {
   name: string
   description?: string
-  purpose: string
   schema_id: string
   retrieval_profile_id: string
   key_fields: string[]
@@ -53,7 +52,7 @@ export default function V2Datasets() {
 
   const openCreate = () => {
     form.resetFields()
-    form.setFieldsValue({ purpose: 'base', key_fields: [] } as Partial<DatasetForm>)
+    form.setFieldsValue({ key_fields: [] } as Partial<DatasetForm>)
     setCreateOpen(true)
   }
 
@@ -63,7 +62,7 @@ export default function V2Datasets() {
       await v2CatalogApi.createDataset({
         name: values.name,
         description: values.description,
-        purpose: values.purpose,
+        purpose: DATASET_PURPOSE_FIXED,
         schema_id: values.schema_id,
         key_fields: values.key_fields,
       })
@@ -147,14 +146,6 @@ export default function V2Datasets() {
       <Form form={form} layout="vertical" onFinish={create} requiredMark="optional">
         <Form.Item name="name" label="数据集名称" rules={[{ required: true, whitespace: true }]}><Input placeholder="例如：产品知识库" /></Form.Item>
         <Form.Item name="description" label="用途说明"><Input.TextArea rows={2} /></Form.Item>
-        <Form.Item
-          name="purpose"
-          label="这批数据用于什么"
-          extra="请选择最贴近实际业务场景的一项，系统会据此判断它能在哪些流程步骤中使用。"
-          rules={[{ required: true }]}
-        >
-          <Select options={DATASET_PURPOSE_OPTIONS} />
-        </Form.Item>
 
         <Form.Item label="数据结构" required>
           <Space.Compact style={{ width: '100%' }}>

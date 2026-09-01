@@ -9,7 +9,7 @@ import { useNavigate } from 'react-router-dom'
 import { v2CatalogApi } from '../../api/v2/catalog'
 import { v2TasksApi } from '../../api/v2/tasks'
 import type { V2Dataset, V2TaskDefinition } from '../../api/v2/types'
-import { DATASET_PURPOSE_OPTIONS, datasetPurposeLabel } from './datasetPurpose'
+import { DATASET_PURPOSE_FIXED, datasetPurposeLabel } from './datasetPurpose'
 import { schemaFieldOptions } from './SchemaFieldEditor'
 import { STEP_KIND_LABEL } from './status'
 import { RESOURCE_TYPE_LABEL } from './workflowBlocks'
@@ -318,7 +318,7 @@ function DatasetSelector({ datasets, targetSchemaId, targetSchemaName, keyFieldO
   const { message } = App.useApp()
   const [open, setOpen] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [datasetForm] = Form.useForm<{ name: string; description?: string; purpose: string; key_fields: string[] }>()
+  const [datasetForm] = Form.useForm<{ name: string; description?: string; key_fields: string[] }>()
 
   useEffect(() => {
     if (value && targetSchemaId && !datasets.some((dataset) => dataset.id === value && dataset.schema_id === targetSchemaId)) {
@@ -337,14 +337,14 @@ function DatasetSelector({ datasets, targetSchemaId, targetSchemaName, keyFieldO
     datasetForm.resetFields()
   }
 
-  const save = async (values: { name: string; description?: string; purpose: string; key_fields: string[] }) => {
+  const save = async (values: { name: string; description?: string; key_fields: string[] }) => {
     if (!targetSchemaId) return
     setSaving(true)
     try {
       const created = await v2CatalogApi.createDataset({
         name: values.name.trim(),
         description: values.description?.trim(),
-        purpose: values.purpose,
+        purpose: DATASET_PURPOSE_FIXED,
         schema_id: targetSchemaId,
         key_fields: values.key_fields,
       })
@@ -374,7 +374,7 @@ function DatasetSelector({ datasets, targetSchemaId, targetSchemaName, keyFieldO
         notFoundContent={targetSchemaId ? `还没有采用“${targetSchemaName ?? ''}”的数据集` : '先选择抽取规则'}
       />
       <Button icon={<PlusOutlined />} disabled={!targetSchemaId} onClick={() => {
-        datasetForm.setFieldsValue({ purpose: 'base', key_fields: [] })
+        datasetForm.setFieldsValue({ key_fields: [] })
         setOpen(true)
       }}>就地新建</Button>
     </Space.Compact>
@@ -403,14 +403,6 @@ function DatasetSelector({ datasets, targetSchemaId, targetSchemaName, keyFieldO
         </Form.Item>
         <Form.Item name="description" label="用途说明">
           <Input.TextArea rows={2} placeholder="说明这批数据服务的业务场景" />
-        </Form.Item>
-        <Form.Item
-          name="purpose"
-          label="这批数据用于什么"
-          extra="请选择最贴近实际业务场景的一项，系统会据此判断它能在哪些流程步骤中使用。"
-          rules={[{ required: true, message: '请选择这批数据的业务用途' }]}
-        >
-          <Select options={DATASET_PURPOSE_OPTIONS} />
         </Form.Item>
         <Form.Item name="key_fields" label="业务唯一键" rules={[{ required: true, message: '至少选择一个唯一键字段' }]}>
           <Select mode="multiple" options={keyFieldOptions} placeholder="用于识别同一条业务数据" />

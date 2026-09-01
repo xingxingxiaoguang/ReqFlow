@@ -6,6 +6,9 @@ export const DATASET_PURPOSE_OPTIONS: Array<{ value: string; label: string; shor
   { value: 'graph_edge', label: '登记对象之间的关系（隶属、依赖、引用等）', shortLabel: '对象之间的关系' },
 ]
 
+// v1 所有新建数据集统一焊死为搜索与问答用途；选项列表仅用于展示历史数据的用途标签。
+export const DATASET_PURPOSE_FIXED = 'query'
+
 const DATASET_PURPOSE_LABELS = new Map<string, string>(
   DATASET_PURPOSE_OPTIONS.map((option) => [option.value, option.shortLabel]),
 )
