@@ -36,6 +36,7 @@ type Services struct {
 	WorkflowPreviews     *appworkflow.PreviewService
 	WorkflowPublications *appworkflow.PublicationService
 	WorkflowDesign       *appworkflow.DesignService
+	WorkflowRuntime      *appworkflow.RuntimeService
 
 	MaxFileMB int64 // 上传大小上限
 }
@@ -79,6 +80,16 @@ func New(svc Services) *gin.Engine {
 		api.POST("/design-sessions/:id/proposals/:proposal_id/accept", h.acceptDesignProposal)
 		api.POST("/design-sessions/:id/proposals/:proposal_id/reject", h.rejectDesignProposal)
 		api.POST("/design-sessions/:id/manual", h.switchDesignManual)
+	}
+	if svc.WorkflowRuntime != nil {
+		api.POST("/workflow-runs", h.createWorkflowRun)
+		api.GET("/workflow-runs", h.listWorkflowRuns)
+		api.GET("/workflow-runs/:id", h.getWorkflowRun)
+		api.POST("/workflow-runs/:id/start", h.startWorkflowRun)
+		api.POST("/workflow-runs/:id/pause", h.pauseWorkflowRun)
+		api.POST("/workflow-runs/:id/resume", h.resumeWorkflowRun)
+		api.POST("/workflow-runs/:id/nodes/:node_id/retry", h.retryWorkflowNode)
+		api.POST("/workflow-runs/:id/nodes/:node_id/manual-completion", h.completeWorkflowNodeManual)
 	}
 
 	v2 := api.Group("/v2")

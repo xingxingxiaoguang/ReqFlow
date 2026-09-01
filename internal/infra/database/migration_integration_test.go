@@ -34,8 +34,8 @@ func TestIntegrationFreshMigration(t *testing.T) {
 	if err := target.Raw(`SELECT max(version) FROM schema_migrations`).Scan(&version).Error; err != nil {
 		t.Fatal(err)
 	}
-	if version != 4 {
-		t.Fatalf("latest migration=%d want=4", version)
+	if version != 5 {
+		t.Fatalf("latest migration=%d want=5", version)
 	}
 	var tables int64
 	if err := target.Raw(`SELECT count(*) FROM information_schema.tables
@@ -97,6 +97,15 @@ func TestIntegrationFreshMigration(t *testing.T) {
 	}
 	if designSessionTables != 1 {
 		t.Fatalf("design session tables=%d want=1", designSessionTables)
+	}
+	var workflowRuntimeTables int64
+	if err := target.Raw(`SELECT count(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name IN
+		('workflow_runs', 'workflow_node_runs', 'node_resource_bindings')`).Scan(&workflowRuntimeTables).Error; err != nil {
+		t.Fatal(err)
+	}
+	if workflowRuntimeTables != 3 {
+		t.Fatalf("workflow runtime tables=%d want=3", workflowRuntimeTables)
 	}
 	var legacyTables int64
 	if err := target.Raw(`SELECT count(*) FROM information_schema.tables

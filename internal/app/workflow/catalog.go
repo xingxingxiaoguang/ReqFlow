@@ -25,9 +25,9 @@ func BuiltinCatalog() (*domain.StaticCatalog, error) {
 			primaryInput("records", "清洗后记录", domain.ResourceTransformedRecords),
 			primaryOutput("validation", "校验结果", domain.ResourceValidationResults)),
 			domain.RuleDataContract), sideInput("dataset", "目标数据集", domain.ResourceDataset)),
-		capability("human.review_records", "人工审核记录", "人工确认、修改或排除校验结果。",
+		manualCapability(capability("human.review_records", "人工审核记录", "人工确认、修改或排除校验结果。",
 			primaryInput("validation", "校验结果", domain.ResourceValidationResults),
-			primaryOutput("approved", "审核通过记录", domain.ResourceApprovedRecords)),
+			primaryOutput("approved", "审核通过记录", domain.ResourceApprovedRecords))),
 		withDelivery(withSideEffects(capability("data.publish", "发布数据", "原子发布审核通过记录，并交付数据集边界与批次。",
 			primaryInput("approved", "审核通过记录", domain.ResourceApprovedRecords),
 			primaryOutput("dataset", "发布后数据集", domain.ResourceDatasetBoundary))),
@@ -40,9 +40,9 @@ func BuiltinCatalog() (*domain.StaticCatalog, error) {
 			primaryInput("knowledge", "知识快照", domain.ResourceRetrievalSnapshot),
 			primaryOutput("analysis", "分析结果", domain.ResourceAnalysisResult)),
 			domain.RuleOutputContract),
-		capability("human.approve_analysis", "人工确认分析", "人工确认或编辑结构化分析结果后继续。",
+		manualCapability(capability("human.approve_analysis", "人工确认分析", "人工确认或编辑结构化分析结果后继续。",
 			primaryInput("analysis", "分析结果", domain.ResourceAnalysisResult),
-			primaryOutput("approved", "已确认分析", domain.ResourceAnalysisResult)),
+			primaryOutput("approved", "已确认分析", domain.ResourceAnalysisResult))),
 		withSideEffects(withRules(capability("artifact.render", "生成业务制品", "把分析结果固化为可查看和下载的业务制品。",
 			primaryInput("analysis", "分析结果", domain.ResourceAnalysisResult),
 			primaryOutput("artifact", "业务制品", domain.ResourceArtifact)),
@@ -101,5 +101,10 @@ func withDelivery(definition domain.CapabilityDefinition, port domain.PortDefini
 
 func withSideEffects(definition domain.CapabilityDefinition) domain.CapabilityDefinition {
 	definition.HasSideEffects = true
+	return definition
+}
+
+func manualCapability(definition domain.CapabilityDefinition) domain.CapabilityDefinition {
+	definition.ManualCompletion = true
 	return definition
 }

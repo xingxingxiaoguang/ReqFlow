@@ -43,6 +43,12 @@ func ErrorStatus(err error) int {
 	if errors.Is(err, port.ErrRevisionConflict) || errors.Is(err, port.ErrCommandIDConflict) {
 		return http.StatusConflict
 	}
+	if errors.Is(err, port.ErrWorkflowRunNotFound) || errors.Is(err, port.ErrNodeRunNotFound) {
+		return http.StatusNotFound
+	}
+	if errors.Is(err, port.ErrRunLeaseLost) || errors.Is(err, port.ErrRunInvalidTransition) || errors.Is(err, port.ErrNoRunnableNode) {
+		return http.StatusConflict
+	}
 	return http.StatusUnprocessableEntity
 }
 
@@ -64,6 +70,18 @@ func ErrorCode(err error) string {
 	}
 	if errors.Is(err, port.ErrAcceptanceNotFound) {
 		return "acceptance_case_not_found"
+	}
+	if errors.Is(err, port.ErrWorkflowRunNotFound) {
+		return "workflow_run_not_found"
+	}
+	if errors.Is(err, port.ErrNodeRunNotFound) {
+		return "workflow_node_run_not_found"
+	}
+	if errors.Is(err, port.ErrRunLeaseLost) {
+		return "workflow_node_lease_lost"
+	}
+	if errors.Is(err, port.ErrRunInvalidTransition) {
+		return "workflow_run_invalid_transition"
 	}
 	return "workflow_invalid"
 }
@@ -172,7 +190,9 @@ func (s *DraftService) apply(draft domain.WorkflowDraft, commandType string, pay
 	switch commandType {
 	case "create_from_blank":
 		var command CreateFromBlankCommand
-		return decodeAndApply(payload, &command, func(value CreateFromBlankCommand) (domain.WorkflowDraft, error) { return s.editor.CreateFromBlank(draft, value) })
+		return decodeAndApply(payload, &command, func(value CreateFromBlankCommand) (domain.WorkflowDraft, error) {
+			return s.editor.CreateFromBlank(draft, value)
+		})
 	case "insert_between":
 		var command InsertBetweenCommand
 		return decodeAndApply(payload, &command, func(value InsertBetweenCommand) (domain.WorkflowDraft, error) {

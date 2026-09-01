@@ -17,6 +17,8 @@ const V2Archives = lazy(() => import('./pages/v2/V2Archives'))
 const WorkflowList = lazy(() => import('./pages/workflows/WorkflowList'))
 const WorkflowNew = lazy(() => import('./pages/workflows/WorkflowNew'))
 const WorkflowDesigner = lazy(() => import('./pages/workflows/WorkflowDesigner'))
+const WorkflowRuns = lazy(() => import('./pages/workflows/WorkflowRuns'))
+const WorkflowRunDetail = lazy(() => import('./pages/workflows/WorkflowRunDetail'))
 
 const page = (element: ReactNode) => <Suspense fallback={<Spin fullscreen tip="加载工作区…" />}>{element}</Suspense>
 
@@ -41,6 +43,8 @@ export const router = createBrowserRouter([
       { path: 'workflows', element: page(<WorkflowList />) },
       { path: 'workflows/new', element: page(<WorkflowNew />) },
       { path: 'workflows/:id/design', element: page(<WorkflowDesigner />) },
+      { path: 'runs', element: page(<WorkflowRuns />) },
+      { path: 'runs/:id', element: page(<WorkflowRunDetail />) },
       { path: 'settings', element: page(<Settings />) },
       { path: '*', element: <Navigate to="/agent" replace /> },
     ],

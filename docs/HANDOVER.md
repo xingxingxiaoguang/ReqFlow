@@ -14,15 +14,16 @@ ReqFlow 正在把旧的 `TaskDefinition + StepDefinition + depends_on + Profile`
 - 单链拓扑、端口资源类型、必填输入、规则证据、高风险人工确认和发布验收校验；
 - 连接推导执行顺序和自包含 Revision 内容哈希；
 - Agent 可选、无模型直接手动编辑、模型故障切换手动、人工问题挂起/恢复和 Command Proposal 生命周期；
-- 新应用包 `internal/app/workflow`：首期 Capability Catalog、节点原子插入和可桥接删除。
+- 新应用包 `internal/app/workflow`：完整 Draft Command、乐观并发、Preview/Acceptance/Publication、DesignSession；
+- 新 Workflow API 和纵向编辑器、运行目录与运行详情页；
+- 类型化模型故障、Provider fallback、熔断和 `needs_human`；
+- WorkflowRun/NodeRun 线性运行时、lease/checkpoint、attempt fencing、重试、暂停恢复和人工完成协议。
 
 尚未完成：
 
-- Draft 持久化、乐观并发、撤销事件、替换/追加/规则编辑命令；
-- 新 Workflow API 和纵向线性编辑器；
-- 确定性样本画像、规则差异视图、样本预览与验收用例管理；
-- Rule Synthesis Agent、Provider fallback 和运行态人工完成；
-- 新的 WorkflowRun/NodeRun 线性运行时；
+- 确定性样本画像、规则差异视图和基于真实 Capability 的 dry-run；
+- 基于画像、样本和证据的完整 Rule Synthesis 工具集与 trace UI；
+- 将业务资源 Manifest 的生产者从旧 StepRun 统一切换到 NodeRun，并启用自动 Capability Executor；
 - 新入口切换以及旧 Definition/Profile/Orchestrator/API/页面/表的整体删除。
 
 旧 `TaskDefinition`、独立 Profile、DAG Orchestrator 和 `/api/v2` 相关代码目前仍承载原有界面和运行路径，只是待删除实现，不是新系统依赖，也不得继续扩展。新旧之间不建立适配器、双写、导入或兼容层。
@@ -91,14 +92,14 @@ internal/domain  领域模型和纯逻辑
 | 位置 | 职责 |
 |---|---|
 | `docs/WORKFLOW_REBUILD_PLAN.md` | 新工作流系统的唯一设计与阶段计划 |
-| `internal/domain/workflow/` | 新 Capability、Draft、Connection、RuleBundle、Revision、校验和 DesignSession |
-| `internal/app/workflow/` | 新 Capability Catalog 和 Draft Command 层 |
+| `internal/domain/workflow/` | 新 Capability、Draft、Connection、RuleBundle、Revision、DesignSession、WorkflowRun 和 NodeRun |
+| `internal/app/workflow/` | 新 Capability Catalog、Draft Command、DesignSession 和线性运行时 |
 | `internal/app/agent/` | 可复用 Agent Loop、RunState、trace、checkpoint 和工具执行内核 |
 | `internal/port/llm.go` | Provider 无关的消息、工具和 LLMClient 合同 |
 | `internal/app/pipeline/` | 可复用的数据清洗、校验、审核和 Batch 发布能力 |
 | `internal/app/retrieval/` | 可复用的 Retrieval Snapshot、混合检索和知识工具 |
 | `internal/app/analysis/` | 待改造为 RuleBundle OutputContract 驱动的结构化分析能力 |
-| `internal/infra/repository/` | 数据资源、运行状态、lease/checkpoint 和事务持久化实现 |
+| `internal/infra/repository/` | 数据资源、WorkflowRun/NodeRun、lease/checkpoint、attempt fencing 和事务持久化实现 |
 | `internal/infra/database/migrations/` | 当前数据库基线；最终切换时按新模型重建 |
 
 ### 3.2 待删除面

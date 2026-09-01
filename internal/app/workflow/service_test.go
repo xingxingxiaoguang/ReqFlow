@@ -14,6 +14,7 @@ type memoryWorkflowRepo struct {
 	draft    domain.WorkflowDraft
 	preview  *domain.WorkflowPreview
 	revision *domain.WorkflowRevision
+	sessions map[string]port.DesignSessionRecord
 }
 
 func (r *memoryWorkflowRepo) CreateDraft(_ context.Context, draft domain.WorkflowDraft) error {
@@ -72,6 +73,31 @@ func (r *memoryWorkflowRepo) ListRevisions(_ context.Context, _ string) ([]domai
 }
 func (r *memoryWorkflowRepo) GetRevision(_ context.Context, _ string) (*domain.WorkflowRevision, error) {
 	return nil, port.ErrRevisionNotFound
+}
+
+func (r *memoryWorkflowRepo) CreateDesignSession(_ context.Context, record port.DesignSessionRecord) error {
+	if r.sessions == nil {
+		r.sessions = map[string]port.DesignSessionRecord{}
+	}
+	r.sessions[record.Session.ID] = record
+	return nil
+}
+func (r *memoryWorkflowRepo) GetDesignSession(_ context.Context, id string) (*port.DesignSessionRecord, error) {
+	record, ok := r.sessions[id]
+	if !ok {
+		return nil, port.ErrDesignSessionNotFound
+	}
+	return &record, nil
+}
+func (r *memoryWorkflowRepo) SaveDesignSession(_ context.Context, record port.DesignSessionRecord) error {
+	if r.sessions == nil {
+		return port.ErrDesignSessionNotFound
+	}
+	if _, ok := r.sessions[record.Session.ID]; !ok {
+		return port.ErrDesignSessionNotFound
+	}
+	r.sessions[record.Session.ID] = record
+	return nil
 }
 
 func (r *memoryWorkflowRepo) ApplyCommand(_ context.Context, workflowID string, command port.DraftCommand,
@@ -162,5 +188,58 @@ func TestPreviewAcceptanceAndPublicationStayOnDraftRevision(t *testing.T) {
 	}
 	if revision.RevisionNo != 1 || revision.ContentHash == "" || repo.revision == nil {
 		t.Fatalf("发布结果非法: %+v", revision)
+	}
+}
+
+type designScriptClient struct{ response *domainToolMessage }
+type domainToolMessage = port.Message
+
+func (c *designScriptClient) Stream(context.Context, *port.Context, func(port.AssistantEvent)) (*port.Message, error) {
+	response := port.Message(*c.response)
+	return &response, nil
+}
+func (c *designScriptClient) Complete(ctx context.Context, cc *port.Context) (*port.Message, error) {
+	return c.Stream(ctx, cc, nil)
+}
+func (c *designScriptClient) Ping(context.Context) error { return nil }
+
+func TestDesignSessionProposalPersistsAndAcceptsThroughDraftService(t *testing.T) {
+	catalog := editorCatalog(t)
+	repo := &memoryWorkflowRepo{draft: editorDraft()}
+	proposal := port.ToolCall{ID: "proposal-call", Name: "submit_command_proposals", Arguments: json.RawMessage(`{"proposals":[{"id":"proposal-1","draft_revision":1,"summary":"更新来源节点","command":{"type":"set_node_config","payload":{"node_id":"source","config":{}}}}]}`)}
+	client := &designScriptClient{response: &domainToolMessage{Role: port.RoleAssistant, StopReason: port.StopReasonToolUse,
+		Content: []port.Block{{Type: port.BlockToolCall, ToolCall: &proposal}}}}
+	drafts, err := NewDraftService(repo, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	design, err := NewDesignService(repo, drafts, client, catalog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := design.Create(context.Background(), repo.draft.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := design.Run(context.Background(), created.Session.ID, "请提出一个编辑建议")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Session.Proposals) != 1 || view.Session.Proposals[0].Status != domain.ProposalPending || len(view.Trace.AgentRuns) != 1 {
+		t.Fatalf("设计运行结果非法: %+v trace=%+v", view.Session, view.Trace)
+	}
+	accepted, err := design.AcceptProposal(context.Background(), created.Session.ID, "proposal-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if accepted.Session.Proposals[0].Status != domain.ProposalAccepted || accepted.Session.DraftRevision != 2 || repo.draft.Revision != 2 {
+		t.Fatalf("接受 Proposal 未推进 Draft: session=%+v draft=%d", accepted.Session, repo.draft.Revision)
+	}
+	restored, err := design.Get(context.Background(), created.Session.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(restored.Trace.AgentRuns) != 1 || restored.Session.Proposals[0].Status != domain.ProposalAccepted {
+		t.Fatalf("DesignSession 恢复丢失状态: %+v trace=%+v", restored.Session, restored.Trace)
 	}
 }

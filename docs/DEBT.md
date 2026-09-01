@@ -13,6 +13,7 @@
 | WF-2 | 开发期 Command Service 使用固定 local actor，尚未接入认证与 workspace 上下文 | HTTP 可用但不能证明多主体/跨 workspace 授权边界 | 接入服务端认证上下文和 workspace-scoped Repository 查询；请求体永不覆盖 actor | 高（Phase 6 前销账） |
 | WF-3 | 当前 PreviewService 生成的是结构化 temporary manifest，尚未驱动真实 Capability dry-run | 验收现在证明 Draft 结构与边界可运行，不证明真实解析/抽取/清洗输出 | Phase 5 接入 `ResolvedNode + RuleBundle + temporary binding` 执行器，副作用节点统一 dry-run | 高（Phase 5 销账） |
 | WF-4 | Design Agent 已具备 Proposal/Human 核心工具，但 Profile/sample/evidence 查询工具尚未绑定实际数据源 | Agent 目前可安全表达建议和人工问题，不能基于样本自动生成完整规则候选 | Phase 3 画像服务完成后注入只读查询工具；写入仍只走 Proposal sink | 高（Phase 4 收尾/Phase 3 依赖） |
+| WF-5 | 新 Workflow Capability Executor 已使用 `ResolvedNode + RuleBundle + NodeResourceBinding`，但底层数据 Manifest 仍以旧 `step_runs` 外键和 `source_step_run_id` 做生产者 fencing，因此自动 Executor 暂未注册 | 若直接启用，NodeRun UUID 会被旧外键拒绝；运行时只能安全执行人工 Capability | Phase 6 删除旧任务运行时，并把 Parsed/Transform/Validation/Review/Publish 等 Manifest 的生产者统一改为 `workflow_node_runs` | 阻断（Phase 6 首项销账） |
 
 ## 已销账记录（Legacy 切割，2026-09-01）
 

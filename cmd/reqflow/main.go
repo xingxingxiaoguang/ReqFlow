@@ -25,6 +25,7 @@ import (
 	appplatformconfig "reqflow/internal/app/platformconfig"
 	appretrieval "reqflow/internal/app/retrieval"
 	appworkflow "reqflow/internal/app/workflow"
+	domain "reqflow/internal/domain/workflow"
 	"reqflow/internal/infra/blobstore"
 	"reqflow/internal/infra/config"
 	secretcrypto "reqflow/internal/infra/crypto"
@@ -313,6 +314,32 @@ func main() {
 		logger.Error("Workflow Design 服务初始化失败", "err", err)
 		os.Exit(1)
 	}
+	humanReview, err := appworkflow.NewManualExecutor(domain.CapabilityRef{Kind: "human.review_records", Version: 1}, "人工审核记录")
+	if err != nil {
+		logger.Error("human.review_records Executor 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	humanAnalysis, err := appworkflow.NewManualExecutor(domain.CapabilityRef{Kind: "human.approve_analysis", Version: 1}, "人工确认分析")
+	if err != nil {
+		logger.Error("human.approve_analysis Executor 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	workflowExecutors, err := appworkflow.NewNodeExecutorRegistry(humanReview, humanAnalysis)
+	if err != nil {
+		logger.Error("Workflow Runtime Executor Registry 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	workflowRuntime, err := appworkflow.NewRuntimeService(workflowRepo, workflowRepo, workflowExecutors,
+		time.Duration(cfg.Worker.LeaseSeconds)*time.Second, 2)
+	if err != nil {
+		logger.Error("Workflow Runtime 服务初始化失败", "err", err)
+		os.Exit(1)
+	}
+	workflowWorker, err := appworkflow.NewRuntimeWorker(workflowRuntime, "", time.Duration(cfg.Worker.PollIntervalMs)*time.Millisecond)
+	if err != nil {
+		logger.Error("Workflow Runtime Worker 初始化失败", "err", err)
+		os.Exit(1)
+	}
 	v2Review, err := apppipeline.NewReviewService(pipelineRepo, v2Runtime)
 	if err != nil {
 		logger.Error("V2 Review Pipeline 初始化失败", "err", err)
@@ -331,10 +358,17 @@ func main() {
 	}
 	workerCtx, stopWorker := context.WithCancel(context.Background())
 	workerDone := make(chan struct{})
+	workflowWorkerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
 		if err := v2Worker.Run(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
 			logger.Error("V2 Worker 异常退出", "err", err)
+		}
+	}()
+	go func() {
+		defer close(workflowWorkerDone)
+		if err := workflowWorker.Run(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("Workflow Runtime Worker 异常退出", "err", err)
 		}
 	}()
 
@@ -349,8 +383,9 @@ func main() {
 		V2Catalog: v2Catalog, V2Agent: v2Agent,
 		Workflows:        workflowService,
 		WorkflowPreviews: workflowPreviews, WorkflowPublications: workflowPublications,
-		WorkflowDesign: workflowDesign,
-		MaxFileMB:      int64(cfg.Parser.MaxFileMB),
+		WorkflowDesign:  workflowDesign,
+		WorkflowRuntime: workflowRuntime,
+		MaxFileMB:       int64(cfg.Parser.MaxFileMB),
 	})
 	mountStatic(engine)
 
@@ -378,6 +413,11 @@ func main() {
 	case <-workerDone:
 	case <-ctx.Done():
 		logger.Warn("V2 Worker 未在关闭窗口内退出")
+	}
+	select {
+	case <-workflowWorkerDone:
+	case <-ctx.Done():
+		logger.Warn("Workflow Runtime Worker 未在关闭窗口内退出")
 	}
 }
 

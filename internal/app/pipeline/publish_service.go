@@ -34,6 +34,18 @@ type PublishApprovedRecordsInput struct {
 	ProducerAttempt     int
 }
 
+type WorkflowPublishInput struct {
+	ResourceID  string
+	RunID       string
+	ExecutionID string
+	Attempt     int
+}
+
+func (s *PublishService) PublishWorkflowApproved(ctx context.Context, input WorkflowPublishInput) (*model.DatasetBatch, error) {
+	return s.PublishApprovedRecords(ctx, PublishApprovedRecordsInput{ApprovedRecordSetID: input.ResourceID,
+		SourceTaskID: input.RunID, SourceStepRunID: input.ExecutionID, ProducerAttempt: input.Attempt})
+}
+
 func (s *PublishService) PublishApprovedRecords(ctx context.Context,
 	in PublishApprovedRecordsInput) (*model.DatasetBatch, error) {
 	set, err := s.repo.GetApprovedRecordSet(ctx, strings.TrimSpace(in.ApprovedRecordSetID))

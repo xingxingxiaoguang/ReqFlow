@@ -145,6 +145,17 @@ type ParseAssetSetInput struct {
 	ProducerAttempt int
 }
 
+type WorkflowParseInput struct {
+	ResourceID  string
+	ExecutionID string
+	Attempt     int
+}
+
+func (s *AssetService) ParseWorkflowAssetSet(ctx context.Context, input WorkflowParseInput, onItem func(ParseAssetSetProgress) error) (*model.ParsedDocumentSet, error) {
+	return s.ParseAssetSet(ctx, ParseAssetSetInput{AssetSetID: input.ResourceID,
+		SourceStepRunID: input.ExecutionID, ProducerAttempt: input.Attempt}, onItem)
+}
+
 type ParseAssetSetProgress struct {
 	ManifestID string
 	AssetID    string

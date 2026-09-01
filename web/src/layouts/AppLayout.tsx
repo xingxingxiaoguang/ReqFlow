@@ -13,7 +13,8 @@ const menu = {
   path: '/',
   routes: [
     { path: '/agent', name: '数字大脑', icon: <RobotOutlined /> },
-    { path: '/workflows', name: '线性工作流', icon: <BranchesOutlined /> },
+	{ path: '/workflows', name: '线性工作流', icon: <BranchesOutlined /> },
+	{ path: '/runs', name: '运行目录', icon: <BranchesOutlined /> },
     { path: '/datasets', name: '数据管理', icon: <DatabaseOutlined /> },
     { path: '/tasks', name: '任务管理', icon: <UnorderedListOutlined /> },
     { path: '/archives', name: '归档管理', icon: <InboxOutlined /> },

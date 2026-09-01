@@ -207,11 +207,11 @@ Agent 和手动 UI 必须调用同一个 WorkflowDraft Command 层。Agent 只�
 
 ### Phase 5：新线性运行时
 
-- [ ] 新建 WorkflowRun/NodeRun 状态机；
-- [ ] 实现线性调度、lease、checkpoint、重试和幂等输出；
-- [ ] 实现人工完成协议；
-- [ ] 实现节点产物查看器；
-- [ ] 接入首期数据处理 Capability。
+- [x] 新建 WorkflowRun/NodeRun 状态机；
+- [x] 实现线性调度、lease、checkpoint、重试和幂等输出；
+- [x] 实现人工完成协议；
+- [x] 实现节点产物查看器；
+- [ ] 首期数据处理 Capability 已实现新执行合同，待 Phase 6 将资源生产者外键从旧 StepRun 切到 NodeRun 后启用。
 
 完成标准：自动和人工产生的相同端口产物可被同一下游节点消费。
 

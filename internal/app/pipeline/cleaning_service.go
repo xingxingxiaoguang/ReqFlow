@@ -28,9 +28,23 @@ func NewCleaningService(repo port.CleaningPipelineRepo) (*CleaningService, error
 }
 
 type TransformInput struct {
-	RecordDraftSetID string
-	SourceStepRunID  string
-	ProducerAttempt  int
+	RecordDraftSetID   string
+	SourceStepRunID    string
+	ProducerAttempt    int
+	NormalizationRules json.RawMessage
+}
+
+type WorkflowTransformInput struct {
+	ResourceID         string
+	ExecutionID        string
+	Attempt            int
+	NormalizationRules json.RawMessage
+}
+
+func (s *CleaningService) TransformWorkflow(ctx context.Context, input WorkflowTransformInput,
+	progress func(CleaningProgress) error) (*model.TransformedRecordSet, error) {
+	return s.Transform(ctx, TransformInput{RecordDraftSetID: input.ResourceID, SourceStepRunID: input.ExecutionID,
+		ProducerAttempt: input.Attempt, NormalizationRules: input.NormalizationRules}, progress)
 }
 
 type CleaningProgress struct {
@@ -65,6 +79,10 @@ func (s *CleaningService) Transform(ctx context.Context, in TransformInput, prog
 	if len(drafts) != draftSet.DraftCount {
 		return nil, fmt.Errorf("RecordDraftSet %s 声明 %d 条草稿，实际读取 %d 条", draftSet.ID, draftSet.DraftCount, len(drafts))
 	}
+	normalizationRules := profile.NormalizationRules
+	if len(in.NormalizationRules) > 0 {
+		normalizationRules = in.NormalizationRules
+	}
 	manifest, err := s.repo.BeginTransformedRecordSet(ctx, &model.TransformedRecordSet{
 		RecordDraftSetID: draftSet.ID, ExtractionProfileID: profile.ID,
 		TargetSchemaID: schema.ID, SourceStepRunID: strings.TrimSpace(in.SourceStepRunID),
@@ -90,7 +108,7 @@ func (s *CleaningService) Transform(ctx context.Context, in TransformInput, prog
 		reused := completed[draft.ID]
 		if !reused {
 			fields, changes, issues, transformErr := logic.TransformRecord(
-				schema.JSONSchema, profile.NormalizationRules, draft.Fields)
+				schema.JSONSchema, normalizationRules, draft.Fields)
 			if transformErr != nil {
 				return nil, fmt.Errorf("转换第 %d 条 RecordDraft: %w", ordinal+1, transformErr)
 			}
@@ -116,6 +134,22 @@ type ValidateInput struct {
 	TargetDatasetID        string
 	SourceStepRunID        string
 	ProducerAttempt        int
+	ValidationRules        json.RawMessage
+}
+
+type WorkflowValidateInput struct {
+	RecordsID       string
+	DatasetID       string
+	ExecutionID     string
+	Attempt         int
+	ValidationRules json.RawMessage
+}
+
+func (s *CleaningService) ValidateWorkflow(ctx context.Context, input WorkflowValidateInput,
+	progress func(CleaningProgress) error) (*model.ValidationResultSet, error) {
+	return s.Validate(ctx, ValidateInput{TransformedRecordSetID: input.RecordsID, TargetDatasetID: input.DatasetID,
+		SourceStepRunID: input.ExecutionID, ProducerAttempt: input.Attempt,
+		ValidationRules: input.ValidationRules}, progress)
 }
 
 type validationPlan struct {
@@ -159,6 +193,10 @@ func (s *CleaningService) Validate(ctx context.Context, in ValidateInput, progre
 	if len(records) != transformedSet.TransformedCount {
 		return nil, fmt.Errorf("TransformedRecordSet %s 记录数量不一致", transformedSet.ID)
 	}
+	validationRules := profile.ValidationRules
+	if len(in.ValidationRules) > 0 {
+		validationRules = in.ValidationRules
+	}
 	manifest, err := s.repo.BeginValidationResultSet(ctx, &model.ValidationResultSet{
 		TransformedRecordSetID: transformedSet.ID, TargetDatasetID: dataset.ID,
 		TargetSchemaID: schema.ID, SourceStepRunID: strings.TrimSpace(in.SourceStepRunID),
@@ -176,7 +214,7 @@ func (s *CleaningService) Validate(ctx context.Context, in ValidateInput, progre
 	keyCounts := make(map[string]int, len(records))
 	keys := make([]string, 0, len(records))
 	for i, record := range records {
-		fields, issues, validateErr := logic.ValidateTransformedRecord(schema.JSONSchema, profile.ValidationRules, record.Fields)
+		fields, issues, validateErr := logic.ValidateTransformedRecord(schema.JSONSchema, validationRules, record.Fields)
 		if validateErr != nil {
 			return nil, fmt.Errorf("校验第 %d 条 TransformedRecord: %w", i+1, validateErr)
 		}
