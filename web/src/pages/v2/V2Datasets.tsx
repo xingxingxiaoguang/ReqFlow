@@ -3,7 +3,7 @@ import {
   App, Button, Card, Descriptions, Drawer, Empty, Form, Input, Modal,
   Popconfirm, Select, Space, Table, Tag, Typography,
 } from 'antd'
-import { EyeOutlined, InboxOutlined, PlusOutlined, ProfileOutlined } from '@ant-design/icons'
+import { EyeOutlined, InboxOutlined, PlusOutlined, ProfileOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
@@ -12,6 +12,7 @@ import type { JSONSchemaProperty, V2Dataset, V2RetrievalProfile } from '../../ap
 import EmbeddedResourceCreate, { type EmbeddedResource, type EmbeddedResourceKind } from './EmbeddedResourceCreate'
 import { DATASET_PURPOSE_OPTIONS, datasetPurposeLabel } from './datasetPurpose'
 import { schemaFieldOptions } from './SchemaFieldEditor'
+import BuildIndexModal from './BuildIndexModal'
 
 const { Paragraph, Text, Title } = Typography
 
@@ -38,6 +39,7 @@ export default function V2Datasets() {
   const [createOpen, setCreateOpen] = useState(false)
   const [schemaDataset, setSchemaDataset] = useState<V2Dataset>()
   const [resourceRequest, setResourceRequest] = useState<ResourceRequest>()
+  const [indexDataset, setIndexDataset] = useState<V2Dataset>()
   const [creating, setCreating] = useState(false)
   const datasets = useQuery({ queryKey: ['v2-datasets'], queryFn: () => v2CatalogApi.listDatasets({ status: 'active' }) })
   const schemas = useQuery({ queryKey: ['v2-schemas'], queryFn: v2CatalogApi.listSchemas })
@@ -105,9 +107,10 @@ export default function V2Datasets() {
     { title: '条目', dataIndex: 'item_count', width: 90, align: 'right' },
     { title: '更新时间', dataIndex: 'updated_at', width: 180, render: (value: string) => new Date(value).toLocaleString('zh-CN') },
     {
-      title: '操作', width: 260,
+      title: '操作', width: 330,
       render: (_, item) => <Space>
         <Button size="small" icon={<ProfileOutlined />} onClick={() => setSchemaDataset(item)}>字段</Button>
+        <Button size="small" icon={<ThunderboltOutlined />} onClick={() => setIndexDataset(item)}>索引</Button>
         <Button size="small" type="primary" icon={<EyeOutlined />} onClick={() => navigate(`/datasets/${item.id}`)}>详情</Button>
         <Popconfirm title="将数据集移入归档？" onConfirm={() => void archive(item)}>
           <Button size="small" danger icon={<InboxOutlined />}>归档</Button>
@@ -217,6 +220,12 @@ export default function V2Datasets() {
         </Card>
       </Space>}
     </Drawer>
+
+    <BuildIndexModal
+      dataset={indexDataset}
+      open={Boolean(indexDataset)}
+      onCancel={() => setIndexDataset(undefined)}
+    />
 
     <EmbeddedResourceCreate
       kind={resourceRequest?.kind}

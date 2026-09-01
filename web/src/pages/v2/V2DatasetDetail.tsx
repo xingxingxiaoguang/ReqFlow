@@ -1,16 +1,15 @@
 import { useEffect, useMemo, useState } from 'react'
 import {
-  Alert, App, Button, Card, Col, Empty, Form, Input, InputNumber, Modal, Row, Segmented,
+  Alert, App, Button, Card, Col, Empty, Form, Input, InputNumber, Row, Segmented,
   Select, Slider, Space, Switch, Table, Tag, Typography,
 } from 'antd'
-import { ArrowLeftOutlined, DownOutlined, PlusOutlined, RocketOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, DownOutlined, RocketOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
 import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { v2CatalogApi } from '../../api/v2/catalog'
 import { v2TasksApi } from '../../api/v2/tasks'
-import type { V2RetrievalProfile } from '../../api/v2/types'
-import EmbeddedResourceCreate, { type EmbeddedResource } from './EmbeddedResourceCreate'
+import BuildIndexModal from './BuildIndexModal'
 
 const { Paragraph, Text, Title } = Typography
 
@@ -52,9 +51,6 @@ export default function V2DatasetDetail() {
   const [searching, setSearching] = useState(false)
   const [result, setResult] = useState<SearchResult>()
   const [indexOpen, setIndexOpen] = useState(false)
-  const [profileCreateOpen, setProfileCreateOpen] = useState(false)
-  const [selectedProfileID, setSelectedProfileID] = useState<string>()
-  const [indexing, setIndexing] = useState(false)
   const [indexTaskID, setIndexTaskID] = useState<string>()
   const datasets = useQuery({ queryKey: ['v2-datasets'], queryFn: () => v2CatalogApi.listDatasets({ status: 'active' }) })
   const schemas = useQuery({ queryKey: ['v2-schemas'], queryFn: v2CatalogApi.listSchemas })
@@ -64,16 +60,6 @@ export default function V2DatasetDetail() {
     queryKey: ['v2-retrieval-snapshots', id, 'active'],
     queryFn: () => v2CatalogApi.queryRetrievalSnapshots({ datasetId: id, status: 'active' }),
     enabled: Boolean(id),
-  })
-  const profiles = useQuery({
-    queryKey: ['v2-retrieval-profiles', dataset?.schema_id],
-    queryFn: () => v2CatalogApi.queryRetrievalProfiles({ datasetSchemaId: dataset!.schema_id }),
-    enabled: Boolean(dataset?.schema_id),
-  })
-  const definitions = useQuery({
-    queryKey: ['v2-definitions', 'active'],
-    queryFn: () => v2CatalogApi.listDefinitions({ status: 'active', limit: 200 }),
-    enabled: indexOpen,
   })
   const indexTask = useQuery({
     queryKey: ['v2-task', indexTaskID],
@@ -101,54 +87,11 @@ export default function V2DatasetDetail() {
   }, [activeSnapshots, dataset, form, snapshots.isLoading])
 
   useEffect(() => {
-    const available = profiles.data?.retrieval_profiles ?? []
-    if (!available.some((item) => item.id === selectedProfileID)) {
-      setSelectedProfileID(available[0]?.id)
-    }
-  }, [profiles.data, selectedProfileID])
-
-  useEffect(() => {
     const status = indexTask.data?.task.status
-    if (status === 'succeeded') {
+    if (indexTaskID && status && ['succeeded', 'failed'].includes(status)) {
       setIndexTaskID(undefined)
-      void snapshots.refetch()
-      message.success('索引已建立，搜索已自动启用')
-    } else if (status === 'failed') {
-      setIndexTaskID(undefined)
-      message.error(indexTask.data?.task.error_message || '索引任务执行失败')
     }
-  }, [indexTask.data?.task.error_message, indexTask.data?.task.status, message, snapshots])
-
-  const startIndexing = async () => {
-    if (!dataset || !selectedProfileID) return
-    setIndexing(true)
-    try {
-      const fixed = (definitions.data?.task_definitions ?? []).find((item) => item.key === 'retrieval_index')
-      if (!fixed) throw new Error('固定索引流程未就绪，请稍后重试或联系管理员')
-      const buildStep = fixed.steps.find((item) => item.kind === 'retrieval.build')
-      if (!buildStep) throw new Error('固定索引流程缺少 retrieval.build 步骤')
-      const created = await v2TasksApi.create({
-        definition_id: fixed.id,
-        title: `为「${dataset.name}」建立检索索引`,
-        bindings: [{ port_name: 'dataset', resource_type: 'dataset_boundary', resource_id: dataset.id }],
-        step_configs: { [buildStep.id]: { retrieval_profile_id: selectedProfileID } },
-      })
-      await v2TasksApi.start(created.task.id)
-      setIndexTaskID(created.task.id)
-      setIndexOpen(false)
-      message.success('索引任务已启动，完成后会自动启用搜索')
-    } catch (error) {
-      message.error((error as Error).message)
-    } finally {
-      setIndexing(false)
-    }
-  }
-
-  const profileCreated = (resource: EmbeddedResource) => {
-    const profile = resource as V2RetrievalProfile
-    setSelectedProfileID(profile.id)
-  }
-
+  }, [indexTask.data?.task.status, indexTaskID])
   const search = async (values: SearchForm) => {
     // snapshot 选择器藏在"展开搜索参数"里，未展开时字段未挂载、表单值可能为空：
     // 与界面承诺一致地回退到覆盖数据最多的最新快照。
@@ -285,38 +228,12 @@ export default function V2DatasetDetail() {
       />}
     </Card>
 
-    <Modal
-      title="为当前数据集建立索引"
+    <BuildIndexModal
+      dataset={dataset}
       open={indexOpen}
-      onCancel={() => !indexing && setIndexOpen(false)}
-      onOk={() => void startIndexing()}
-      okText="创建并运行索引任务"
-      confirmLoading={indexing}
-      okButtonProps={{ disabled: !selectedProfileID || definitions.isLoading }}
-      destroyOnHidden
-    >
-      <Alert type="info" showIcon style={{ marginBottom: 16 }} message="索引会通过标准 retrieval.build 流程任务生成，不会绕过流程直接写入数据。" />
-      <Space.Compact style={{ width: '100%' }}>
-        <Select
-          value={selectedProfileID}
-          onChange={setSelectedProfileID}
-          loading={profiles.isLoading}
-          showSearch
-          optionFilterProp="label"
-          placeholder="选择适用于当前数据结构的索引规则"
-          options={(profiles.data?.retrieval_profiles ?? []).map((item) => ({ value: item.id, label: item.name }))}
-          style={{ width: 'calc(100% - 112px)' }}
-        />
-        <Button icon={<PlusOutlined />} onClick={() => setProfileCreateOpen(true)}>新建规则</Button>
-      </Space.Compact>
-      {!profiles.isLoading && profiles.data?.retrieval_profiles.length === 0 && <Text type="secondary">当前数据结构还没有索引规则，请直接新建。</Text>}
-    </Modal>
-
-    <EmbeddedResourceCreate
-      kind={profileCreateOpen ? 'retrieval' : undefined}
-      fixedSchemaId={dataset.schema_id}
-      onCancel={() => setProfileCreateOpen(false)}
-      onCreated={profileCreated}
+      onCancel={() => setIndexOpen(false)}
+      onStarted={(taskID) => setIndexTaskID(taskID)}
+      onSucceeded={() => void snapshots.refetch()}
     />
   </Space>
 }

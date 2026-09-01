@@ -2,10 +2,10 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Alert, App, Button, Card, Col, Empty, Form, Input, Modal, Radio, Row, Select, Space, Steps, Tag, Typography, Upload,
 } from 'antd'
-import { ArrowLeftOutlined, DatabaseOutlined, InboxOutlined, PlusOutlined, RocketOutlined, SaveOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, InboxOutlined, PlusOutlined, RocketOutlined, SaveOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { UploadFile } from 'antd/es/upload/interface'
-import { useNavigate, useSearchParams } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { v2CatalogApi } from '../../api/v2/catalog'
 import { v2TasksApi } from '../../api/v2/tasks'
 import type { V2Dataset, V2TaskDefinition } from '../../api/v2/types'
@@ -17,23 +17,20 @@ import EmbeddedResourceCreate, { type EmbeddedResource } from './EmbeddedResourc
 
 const { Paragraph, Text, Title } = Typography
 
-type FlowKey = 'cleaning' | 'index'
+type FlowKey = 'cleaning'
+
+// v1：索引建立收敛为数据集上的隐式任务（数据管理 → 索引），任务发起页只保留数据清洗。
 
 const FIXED_FLOWS: Array<{ key: FlowKey; definitionKey: string; name: string; description: string }> = [
   {
     key: 'cleaning', definitionKey: 'data_clean_import', name: '数据清洗入库',
     description: '解析文件、按字段结构抽取、清洗校验、人工审核后原子发布到数据集。',
   },
-  {
-    key: 'index', definitionKey: 'retrieval_index', name: '建立检索索引',
-    description: '对数据集的固定边界构建精准 + 语义混合检索快照。',
-  },
 ]
 
 interface FormValues {
   title?: string
   extraction_profile_id?: string
-  retrieval_profile_id?: string
   bindings?: Record<string, string>
   file_strategy?: 'per_file' | 'whole_set'
   split_asset_port?: string
@@ -42,12 +39,11 @@ interface FormValues {
 /** v1：流程管理已收敛为两个固定流程；抽取/检索规则在创建任务时按数据集字段选择。 */
 export default function NoCodeTaskNew() {
   const navigate = useNavigate()
-  const [searchParams] = useSearchParams()
   const { message } = App.useApp()
   const queryClient = useQueryClient()
   const [creating, setCreating] = useState<'create' | 'run'>()
   const [flow, setFlow] = useState<FlowKey>()
-  const [profileCreator, setProfileCreator] = useState<'extraction' | 'retrieval'>()
+  const [profileCreator, setProfileCreator] = useState<'extraction'>()
   const [form] = Form.useForm<FormValues>()
 
   const definitions = useQuery({
@@ -77,18 +73,13 @@ export default function NoCodeTaskNew() {
   const targetSchemaId = selectedExtractionProfile?.target_schema_id
   const targetSchema = schemas.data?.schemas.find((schema) => schema.id === targetSchemaId)
   const fileStrategy = Form.useWatch('file_strategy', form)
-  const indexDatasetID = Form.useWatch(['bindings', 'dataset'], form)
-  const indexDataset = datasets.data?.datasets.find((item) => item.id === indexDatasetID)
-  const retrievalProfiles = useQuery({
-    queryKey: ['v2-retrieval-profiles', indexDataset?.schema_id],
-    queryFn: () => v2CatalogApi.queryRetrievalProfiles({ datasetSchemaId: indexDataset!.schema_id }),
-    enabled: Boolean(indexDataset?.schema_id),
-  })
 
   useEffect(() => {
-    const requested = searchParams.get('flow')
-    if (requested === 'cleaning' || requested === 'index') setFlow(requested)
-  }, [searchParams])
+    if (!flow && definitionByFlow.cleaning) {
+      setFlow('cleaning')
+      form.setFieldsValue({ title: definitionByFlow.cleaning.name })
+    }
+  }, [definitionByFlow.cleaning, flow, form])
 
   const chooseFlow = (key: FlowKey) => {
     setFlow(key)
@@ -126,13 +117,6 @@ export default function NoCodeTaskNew() {
         return
       }
       stepConfigs[step.id] = { extraction_profile_id: values.extraction_profile_id }
-    } else {
-      const step = selected.steps.find((item) => item.kind === 'retrieval.build')
-      if (!step || !values.retrieval_profile_id) {
-        message.error('请选择索引规则')
-        return
-      }
-      stepConfigs[step.id] = { retrieval_profile_id: values.retrieval_profile_id }
     }
     setCreating(startNow ? 'run' : 'create')
     try {
@@ -173,9 +157,9 @@ export default function NoCodeTaskNew() {
         <Space align="start">
           <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/tasks')} />
           <div>
-            <Title level={3} style={{ margin: 0 }}>发起业务任务</Title>
+            <Title level={3} style={{ margin: 0 }}>发起数据清洗任务</Title>
             <Paragraph type="secondary" style={{ marginBottom: 0 }}>
-              平台提供固定的业务流程；抽取、索引等规则在创建任务时按数据集字段选择，无需关心流程编排。
+              流程已固定；抽取规则在创建任务时按目标数据集的字段结构选择。建立索引请到数据管理页的数据集上直接发起。
             </Paragraph>
           </div>
         </Space>
@@ -289,44 +273,6 @@ export default function NoCodeTaskNew() {
               </Card>
             </>}
 
-            {flow === 'index' && <Card size="small" title={<Space><DatabaseOutlined /><span>数据与索引</span></Space>} style={{ marginBottom: 18 }}>
-              <Row gutter={16}>
-                <Col xs={24} lg={12}>
-                  <Form.Item
-                    name={['bindings', 'dataset']}
-                    label={<Space>数据集<Tag>{RESOURCE_TYPE_LABEL.dataset_boundary}</Tag></Space>}
-                    rules={[{ required: true, message: '请选择数据集' }]}
-                    extra="将对该数据集当前已提交的内容边界建立索引。"
-                  >
-                    <Select
-                      showSearch
-                      optionFilterProp="label"
-                      placeholder="选择数据集"
-                      options={(datasets.data?.datasets ?? []).map((item) => ({ value: item.id, label: `${item.name} · ${datasetPurposeLabel(item.purpose)} · ${item.item_count} 条` }))}
-                      notFoundContent="还没有可用数据集"
-                    />
-                  </Form.Item>
-                </Col>
-                <Col xs={24} lg={12}>
-                  <Form.Item
-                    name="retrieval_profile_id"
-                    label={<Space>索引规则<Tag>按字段服务</Tag></Space>}
-                    rules={[{ required: true, message: '请选择索引规则' }]}
-                    extra={indexDataset ? '索引规则与数据集的字段结构绑定；可就地创建新的规则。' : '先选择数据集，索引规则会按字段结构自动过滤。'}
-                  >
-                    <Select
-                      showSearch
-                      optionFilterProp="label"
-                      placeholder={indexDataset ? '选择索引规则' : '先选择数据集'}
-                      disabled={!indexDataset}
-                      options={(retrievalProfiles.data?.retrieval_profiles ?? []).map((profile) => ({ value: profile.id, label: profile.name }))}
-                      notFoundContent={indexDataset ? '该数据集的字段结构还没有索引规则' : undefined}
-                    />
-                  </Form.Item>
-                  {indexDataset && <Button size="small" icon={<PlusOutlined />} onClick={() => setProfileCreator('retrieval')}>就地创建索引规则</Button>}
-                </Col>
-              </Row>
-            </Card>}
 
             <Alert
               type="info"
@@ -346,17 +292,12 @@ export default function NoCodeTaskNew() {
 
       <EmbeddedResourceCreate
         kind={profileCreator}
-        fixedSchemaId={profileCreator === 'retrieval' ? indexDataset?.schema_id : targetSchemaId}
+        fixedSchemaId={targetSchemaId}
         onCancel={() => setProfileCreator(undefined)}
         onCreated={(resource: EmbeddedResource) => {
-          if (profileCreator === 'retrieval') {
-            form.setFieldValue('retrieval_profile_id', resource.id)
-            void queryClient.invalidateQueries({ queryKey: ['v2-retrieval-profiles'] })
-          } else {
-            form.setFieldValue('extraction_profile_id', resource.id)
-            void queryClient.invalidateQueries({ queryKey: ['v2-extraction-profiles'] })
-            void queryClient.invalidateQueries({ queryKey: ['v2-schemas'] })
-          }
+          form.setFieldValue('extraction_profile_id', resource.id)
+          void queryClient.invalidateQueries({ queryKey: ['v2-extraction-profiles'] })
+          void queryClient.invalidateQueries({ queryKey: ['v2-schemas'] })
           setProfileCreator(undefined)
         }}
       />

@@ -23,7 +23,7 @@ const quickPrompts = [
   { icon: <BranchesOutlined />, label: '发起数据清洗', prompt: '我想把一批文件清洗入库。请按平台使用规则告诉我要准备什么（文件集、抽取规则、目标数据集），以及在哪里发起数据清洗任务。' },
   { icon: <UnorderedListOutlined />, label: '查看运行任务', prompt: '查询当前正在运行和等待处理的任务，按优先级告诉我需要关注什么。' },
   { icon: <SearchOutlined />, label: '查询平台数据', prompt: '先列出平台里可查询的数据集和索引，帮助我选择要分析的数据。' },
-  { icon: <DatabaseOutlined />, label: '建立数据索引', prompt: '查询还没有可用检索索引的数据集，并按平台使用规则指导我一步步为它建立索引。' },
+  { icon: <DatabaseOutlined />, label: '建立数据索引', prompt: '查询还没有可用检索索引的数据集，并告诉我如何在数据管理页的数据集上用「索引」操作直接建立。' },
 ]
 
 const toolMeta: Record<string, { label: string; group: string; path?: string }> = {

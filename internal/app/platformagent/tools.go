@@ -76,9 +76,10 @@ const platformGuideText = `ReqFlow 是无代码 AI 数据管线平台：流程�
 - 数据集（Dataset）：由 data.publish 步骤产出的结构化资产，带 schema 字段定义；语义与混合检索依赖数据集处于激活状态的检索快照。
 
 ## 固定流程（v1 已收敛，无需自建）
-1. 平台内置两个固定流程：数据清洗入库（解析 → 结构化抽取 → 确定性清洗 → 校验 → 人工审核 → 原子发布）与建立检索索引（对数据集固定边界构建混合检索快照，含 human.review 人工确认门）。
-2. 抽取规则、索引规则不写在流程里：创建任务时按目标数据集的字段结构（schema）选择，注入本次任务的执行快照。
-3. 流程设计/流程管理界面在 v1 暂不开放；用户从「任务管理 → 发起业务任务」选择固定流程发起即可。
+1. 平台内置固定流程：数据清洗入库（解析 → 结构化抽取 → 确定性清洗 → 校验 → 人工审核 → 原子发布），从「任务管理 → 发起数据清洗任务」发起。
+2. 检索索引在数据集上直接发起：数据管理 → 数据集行的「索引」操作，选择或新建与该数据集字段结构绑定的索引规则后，即自动创建并运行隐式索引任务（底层仍经由 retrieval.build 流程任务执行）。
+3. 抽取规则、索引规则不写在流程里：发起任务时按目标数据集的字段结构（schema）选择，注入本次任务的执行快照。
+4. 流程设计/流程管理界面在 v1 暂不开放。
 
 ## 创建与运行任务（任务页）
 1. 只能从 active 流程创建任务。
@@ -98,7 +99,7 @@ const platformGuideText = `ReqFlow 是无代码 AI 数据管线平台：流程�
 type platformGuideTool struct{ platformTool }
 
 func (*platformGuideTool) Spec() port.ToolSpec {
-	return port.ToolSpec{Name: "platform_guide", Description: "获取 ReqFlow 平台使用规则说明：核心对象模型、两个固定任务流程、创建与运行任务、数据集与索引规则，以及本 Agent 的能力边界。指导用户使用平台前先调用本工具。",
+	return port.ToolSpec{Name: "platform_guide", Description: "获取 ReqFlow 平台使用规则说明：核心对象模型、固定数据清洗流程、数据集上的索引建立方式，以及本 Agent 的能力边界。指导用户使用平台前先调用本工具。",
 		Parameters: json.RawMessage(`{"type":"object","additionalProperties":false}`)}
 }
 
