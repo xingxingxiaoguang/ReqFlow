@@ -23,7 +23,7 @@ internal/infra   外层一体（基建 + 三方客户端 + 仓储 + HTTP 路由�
   parser/          docx(标准库 OOXML) / pdf(MinerU 云端) / xlsx(excelize, 第二波开放) / txt·md
   httpgin/         Gin 路由与 SSE handler，只调 app 用例
 
-internal/app     V2 用例编排：platformagent / pipeline / orchestrator / retrieval / analysis / catalog
+internal/app     V2 用例编排：platformagent / platformconfig / pipeline / extraction / orchestrator / retrieval / analysis / catalog / agent（统一运行壳）
 internal/port    出站接口契约：仓储 / LLM / embedding / rerank / parser / BlobStore
 internal/domain  V2 实体模型 + 纯领域逻辑（Schema、Dataset、DAG、资源边界、检索与制品）
 ```
@@ -61,8 +61,6 @@ make build        # → bin/reqflow
 | llm | base_url / api_key / model / temperature / max_tokens / timeout_ms / agent_max_iterations | OpenAI 兼容协议（DeepSeek/GLM/Qwen/Kimi 适用）；流程中的模型节点统一运行 Agent loop，agent_max_iterations 是每个 Agent 运行的迭代安全阀 |
 | embedding | base_url / api_key / model / dimensions / batch_size / rerank_* | 语义向量与 SiliconFlow rerank 共用供应商凭证；默认 bge-m3 1024 维 + bge-reranker-v2-m3 |
 | opensearch | base_url / username / password / index_prefix / timeout_ms | BM25 索引与检索；Hybrid 模式的词法检索后端 |
-| match | duplicate_threshold / project_top_n | 查重阈值（默认 0.75）与项目推荐数 |
-| fts | ts_config | PG 全文检索分词配置（默认 simple；中文全文检索需安装 zhparser/pg_jieba 扩展后改配置） |
 | parser | max_file_mb / mineru.* | 上传上限与 MinerU 云端 PDF 解析 |
 | security | encryption_key | 第二波敏感字段入库加密密钥（64 hex） |
 | workspace | name / blob_dir | 工作区名与内容寻址 Blob 根目录 |
@@ -114,25 +112,7 @@ Task 输入绑定接受具体 `resource_id`；Dataset 也可传 `resource_alias`
 
 `TaskDefinition` 定义“怎么执行”，`Task` 表示“一次具体执行”。Task 只能从 `active` Definition 派生；创建时冻结完整 Definition Snapshot、资源绑定和 Dataset/Retrieval 读取边界，后续复制、修改或归档流程定义不会改变已经创建的任务。归档流程会转为 `retired`，可从归档管理恢复后继续派生新任务。
 
-旧 `/api/tasks` 运行时、`AnalyzeService` 单发/降级路径及其前端入口已删除；TaskDefinition + StepRun 是唯一任务执行模型。
-| POST | `/api/match/duplicates` | 同项目查重（标题精确 / 语义阈值） |
-| GET | `/api/datasets` `/api/datasets/:id` | 数据集与条目浏览 |
-| GET | `/api/datasets/schemas` | 数据集类型模板目录（新建数据集时带出字段定义） |
-| GET | `/api/datasets/:id/items` | 条目查询：`q=` 语义检索 + `f[字段]=值`（`|` 分隔为 in）筛选叠加 |
-| GET/POST/PUT/DELETE | `/api/platform-configs/...` | LLM、向量化、重排序、MinerU 多配置管理与单配置激活；`config.yaml` 作为只读兜底 |
-
-## Legacy 通用数据集（已退出 V2 产品模型）
-
-- **字段定义归属数据集**（`datasets.schema`，JSONB）：数据集是字段定义的真相源——创建任务即绑定目标数据集，字段元数据自动带出，分析提示词、写入校验、门内表格、查询过滤全按数据集自身的字段执行。类型级定义（`model/dataset_schema.go` + 元数据页）是「数据集类型模板」：新建数据集时带出初始形状，实例可受控编辑独立演进（兼容守卫防打穿存量条目）。字段可标记 `fts`（全文检索）/ `filterable`（筛选下推）/ `in_vector`（向量角色）/ `in_key`（条目主键）。
-- **动态索引随 schema**：FTS 字段建表达式 GIN 索引（`to_tsvector(cfg, fields->>'k')`，中文需 zhparser/pg_jieba）、filterable 字段建表达式 btree——随 schema 受控编辑自动建删，归档回收、恢复重建。
-- **条目身份**：`item_key`（schema 主键字段归一化拼接，同 key = 同一条目）+ `fingerprint`（内容哈希，相同则跳过更新与重嵌）。字段袋为原生 JSONB。
-- **写入策略**（`POST /api/tasks/:id/dataset` 的 `mode`，目标 = 绑定数据集）：
-  - `merge` 并入（默认）：仅插入新条目，已存在跳过
-  - `upsert` 并入并更新：新条目插入，已存在按内容更新
-  - `replace` 覆盖本任务此前写入的条目（同源重跑；其他来源数据不动）
-- **终态可重写**：已完成的任务停留在数据集步骤时可换策略再次写入（幂等，不产生重复条目）。
-- **统一查询**：字段过滤（filterable 字段 SQL 下推）+ 语义检索 / 全文检索（`/search`，tsvector 相关度排序）叠加，数据集浏览、agent 工具、后续任务输入共用。
-- **归档**：任务与数据集的删除不是物理删除，而是事务性搬入独立归档表（`archived_*`，与主表同构直搬，不带索引不占检索成本）。已归档数据物理离开主表——列表、查重语料、语义检索、统计自动不再触达；归档页可查看、可原样恢复（数据集条目向量原生保留，动态索引随行内 schema 重建，任务含步骤/明细快照，恢复后可继续未走完的流程）。运行中任务与被进行中任务引用的数据集拒绝归档。
+Legacy `/api` 一代路由（任务运行时、数据集管理、元数据、查重、归档、概览）及其服务、仓储、前端页面已全部删除；业务能力一律走 `/api/v2`，`/api` 下只保留 `GET /api/health` 探活。平台多配置管理挂 `/api/v2/platform-configs`（LLM、向量化、重排序、MinerU 多配置与单配置激活；`config.yaml` 作为只读兜底）。数据库迁移链已压平为单一 `0001_v2_init`——旧任务/元数据/归档表不再存在。TaskDefinition + StepRun 是唯一任务执行模型。
 
 ## 开发命令
 

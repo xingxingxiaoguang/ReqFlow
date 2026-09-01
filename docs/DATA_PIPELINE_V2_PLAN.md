@@ -46,7 +46,7 @@
 - [x] Query Item 固化 `source_item_id + source_fingerprint`，provenance 同时保留 Base DatasetItem 与原 Asset/Block 链路。
 - [x] 不可变 RetrievalProfile、`retrieval.build`、OpenSearch BM25、pgvector Chunk、加权 RRF、SiliconFlow rerank 和 KnowledgeScope Agent 工具。
 
-V2 开发期间暂以 `0012_pipeline_v2_foundation` 叠加现有迁移，目的是让每批代码可以独立构建和验证；旧运行路径切除后按本文第 14 节压平为新的初始迁移。这不是产品兼容层，V2 服务不通过旧 API 或旧模型读写。
+开发期曾以 `0012_pipeline_v2_foundation` 叠加旧迁移分批演进；2026-09-01 已按第 14 节完成切割：Legacy 代码/表删除，迁移链压平为单一 `0001_v2_init`（纯 V2 形状，含 tasks/datasets/dataset_items 的 V2 列集与全部 V2 专表）。V2 服务不通过旧 API 或旧模型读写。
 
 ## 1. 结论
 

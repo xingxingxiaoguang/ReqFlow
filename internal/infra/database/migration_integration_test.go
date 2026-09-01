@@ -34,8 +34,8 @@ func TestIntegrationFreshMigration(t *testing.T) {
 	if err := target.Raw(`SELECT max(version) FROM schema_migrations`).Scan(&version).Error; err != nil {
 		t.Fatal(err)
 	}
-	if version != 22 {
-		t.Fatalf("latest migration=%d want=22", version)
+	if version != 1 {
+		t.Fatalf("latest migration=%d want=1", version)
 	}
 	var tables int64
 	if err := target.Raw(`SELECT count(*) FROM information_schema.tables
@@ -81,6 +81,17 @@ func TestIntegrationFreshMigration(t *testing.T) {
 	}
 	if platformConfigTables != 1 {
 		t.Fatalf("platform config tables=%d want=1", platformConfigTables)
+	}
+	var legacyTables int64
+	if err := target.Raw(`SELECT count(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name IN
+		('projects', 'work_items', 'import_records', 'task_steps', 'task_items',
+		 'metadata_registry', 'metadata_audit',
+		 'archived_tasks', 'archived_datasets', 'archived_dataset_items')`).Scan(&legacyTables).Error; err != nil {
+		t.Fatal(err)
+	}
+	if legacyTables != 0 {
+		t.Fatalf("legacy tables=%d want=0（压平后不得存在旧表）", legacyTables)
 	}
 	if sqlDB, err := target.DB(); err == nil {
 		_ = sqlDB.Close()

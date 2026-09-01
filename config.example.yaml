@@ -56,13 +56,6 @@ opensearch:
   index_prefix: reqflow
   timeout_ms: 30000
 
-match:
-  duplicate_threshold: 0.75   # 查重相似度阈值，低于视为新工作项
-
-fts:
-  ts_config: simple           # PG 全文检索分词配置（索引与查询两侧共用）。
-                              # simple 按空白切词（中文不分词）；中文全文检索需安装
-                              # zhparser / pg_jieba 扩展后改为对应配置名（见 docker-compose 注释）
 
 parser:
   max_file_mb: 200

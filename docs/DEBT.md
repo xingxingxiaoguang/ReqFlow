@@ -3,35 +3,11 @@
 > 活账本：修一销一，新增债随波登记。产品级平台通用债另见 [HANDOVER §5.3](./HANDOVER.md)（两处不重复立账，修哪边就销哪边）。
 > 每条债记录四件事：现状（在哪）、影响（咬谁）、处置方向（怎么还）、优先级。登记 ≠ 承诺排期——还债与产品波次一起排。
 
-> **V2 口径**：下方 MD/DA 条目描述的是已退出产品路由的 Legacy 元数据与数据集体系，只用于安排删除和识别可复用能力，不得驱动 V2 新功能。当前 V2 的流程定义/任务派生边界、自由编排和 Schema/Profile 可视化入口已经完成，不再作为技术债登记。
+> **V2 口径**：Legacy 元数据与数据集体系已于 2026-09-01 随切割整体删除（见下方销账记录）；本台账只登记现存代码的债务。
 
-## 元数据模块专项债（2026-08，M1~M4 收尾盘点）
+## 已销账记录（Legacy 切割，2026-09-01）
 
-### 功能债
-
-| 编号 | 债 | 影响 | 优先级 |
-|------|-----|------|--------|
-| MD-1 | 提示词渲染措辞硬编码 requirement 语境（B4） | 任意向导类型的系统提示词都领用「工作项」措辞，用户可见错位 | 高 |
-| MD-2 | 查重策略未泛化（B3）：语料写死 requirement + 阈值全局单份 | 向导类型的数据集永远不被语义查重命中；0.75 阈值对 requirement 本身已实测误报 | 高 |
-| MD-3 | 停用自定义类型使在途任务无法续跑 | 暂停中任务恢复时报「任务类型未注册」；停用无前置检查 | 中 |
-
-**MD-1（B4 · 最高优）**：`internal/app/prompt.go:36` 硬编码「每个工作项草稿包含以下字段」、`:169` 「## 待分析文档」。M4 真机验收时评审导入的提示词预览已经渲染出这段字样——债务从设计文档里的理论项变成了用户可见现实。处置方向：措辞模板随 profile 声明（在 AnalyzeProfile 增名词性声明字段，如产出物称呼/输入文档称呼，渲染器从 profile 取、requirement seed 保持现值），属一次性小改造，但改动的是渲染器契约需同步既有测试断言。
-
-**MD-2（B3)**：HANDOVER §5.3 的「查重阈值 0.75 固定」登记的是用户感知症状；本条补充另一半——语料类型在 `app/match.go` 写死 requirement，向导注册类型产出的数据集不在语义查重语料内。**M5 后影响面扩大**：数据集实例可各自持有字段定义，`match.go` 仍按 requirement 模板解析语料字段——跨 schema 的语义查重语料组装已失真。处置方向：查重语料随绑定数据集的 schema 解析（复用 `datasets.schema` 真相源）+ `kind=match_policy` 进元数据。做 Bug 链路第二波时大概率顺路触发（bug 数据集同样需要查重）。
-
-**MD-3**：快照三件套只保护工作流形状（tasks.workflow）；schema/profile 是运行时活解析（`profileFor` / `runner.go datasetWritePlanFor`），类型停用即整体离场。处置方向：SetWorkflowStatus disable 前检查该类型非终态任务并提示确认；或至少在返回文案明示语义。
-
-### 工程债
-
-| 编号 | 债 | 影响 | 优先级 |
-|------|-----|------|--------|
-| MD-4 | 新增 metadata kind 无编译防漏 | Reload switch / History 白名单 / HistoryDrawer 标题 / 导出结构四处手工同步；清单已收录 HANDOVER §3.4（部分缓解） | 中 |
-| MD-5 | 任务类型/数据集类型标识符无删除通道 | 向导类型只能停用不能删：标识连同失败孤儿行永久占用命名空间；重名只能版本续链 | 中 |
-| MD-6 | `summarizeFindings` 规则名硬编码名单 | 新增兼容规则忘追加则判定明细正常、审计摘要缺词（不易察觉的静默降级） | 低 |
-| MD-7 | golden 测试接入双轨 | 单测走 `extraTaskTypes` 代码缝、真机走向导 API——接手者需知道边界（各自适用面见 HANDOVER §3.4 末条） | 低 |
-| MD-8 | 小项合集 | Catalog 草稿组逐条 `lookupDraftRows` 造成 N×全表读放大（管理页频率无害）；`checkWorkflow` 用 `context.Background()` 而非请求 ctx；前端 StepsEditor 依赖声明以 `⇒` 文本切割解析（脆弱约定）；FE `TaskType = string` 放弃了字面量类型校验 | 低 |
-
-### 已销账记录
+**元数据模块专项债（MD-1~MD-8）与数据集归属化专项债（DA-1~DA-4）已整体销账**：两账描述的 Legacy 元数据体系（metadata_registry / seed→override→effective / 兼容规则引擎 / 动态 FTS 索引）与 Legacy 数据集体系（datasets.schema 字段定义归属、受控编辑、merge/upsert/replace 写入、archived_* 归档表）已随 V2 切割整体删除——相关服务、仓储、端口、handler、前端页面、配置组（match/fts）与数据库表不复存在，V2 以不可变 DatasetSchemaDefinition + ExtractionProfile + 只追加 Batch + 状态归档重新表达全部能力。旧债不再适用，不再登记。
 
 - ~~导出格式口径漂移~~（文档写 YAML / 实现为 JSON）：口径已在 HANDOVER §3.4 定为 JSON。
 - ~~锚行双语义、数据集类型所有权不变量无文档~~（代码有约束、设计无处可查）：均已并入 HANDOVER §3.4。
