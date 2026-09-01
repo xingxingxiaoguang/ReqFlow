@@ -1,38 +1,39 @@
 # ReqFlow
 
-> 面向异构业务数据的无代码 AI 管线：可视化定义流程，把原始资料清洗为数据集，建立精准 + 语义索引，再由可追溯任务完成查询、分析与制品生成。
-> 技术栈：React 18 + Ant Design 5（前端）/ Go + Gin + GORM（后端）/ PostgreSQL 16 + pgvector（DB）。
-> 发布形态：`go:embed` 单二进制，配置全部本地 YAML，代码与产物零硬编码。
+> 面向业务的无代码 AI 知识库平台：把零散的文档资料清洗成结构化知识，一键建立精准 + 语义混合检索，直接支撑搜索与智能问答。
+> 技术栈：React 18 + Ant Design 5（前端）/ Go + Gin + GORM（后端）/ PostgreSQL 16 + pgvector + OpenSearch。
+> 发布形态：`go:embed` 单二进制，配置全部本地 YAML，自带依赖编排与开箱种子数据。
 
-📄 **文档**：[产品总纲](./docs/PRODUCT.md)（定位/功能全景/路线图） · [交接文档](./docs/HANDOVER.md)（架构/代码地图/流程/踩坑/第二波指南；元数据系统不变量并入其中 §3.4） · [技术债台账](./docs/DEBT.md)
+📄 **文档**：[产品总纲](./docs/PRODUCT.md)（定位/功能全景/路线图） · [交接文档](./docs/HANDOVER.md)（架构/代码地图/流程/踩坑） · [技术债台账](./docs/DEBT.md)
 
-## 架构（四层，依赖只允许向内）
+## v1.0.0 交付范围
 
-```
-cmd/reqflow      组装点：读配置 → 构造 infra 各实现 → 注入 app 用例 → 挂 httpgin
+### 核心业务流
 
-internal/infra   外层一体（基建 + 三方客户端 + 仓储 + HTTP 路由）
-  config/          配置加载（YAML + REQFLOW_* 环境变量覆盖）与启动校验
-  log/             slog 封装
-  database/        GORM 连接 + 内嵌 SQL 迁移
-  crypto/          AES-256-GCM（第二波 OAuth 令牌入库时启用）
-  repository/      postgres + pgvector 仓储实现
-  llm/             OpenAI 兼容 chat/completions SSE 流式客户端
-  embedding/       OpenAI 兼容 /embeddings 客户端
-  opensearch/      OpenSearch BM25 检索适配器
-  parser/          docx(标准库 OOXML) / pdf(MinerU 云端) / xlsx(excelize, 第二波开放) / txt·md
-  httpgin/         Gin 路由与 SSE handler，只调 app 用例
+1. **数据清洗入库**（任务管理页发起）：上传文件 → AI 按抽取规则把原文结构化 → 确定性清洗与 Schema 校验 → 人工审核门 → 原子发布进数据集。支持按文件拆分为多个独立任务，单个文件失败不影响其他文件。
+2. **检索与问答**（数据管理页发起）：数据集上一键创建索引任务，构建精准（BM25）+ 语义（向量）混合检索并重排序；数据追加后再次建索引即可增量补齐。数字大脑「查询分析」可代做范围确认、多步检索与召回调优。
 
-internal/app     V2 用例编排：platformagent / pipeline / orchestrator / retrieval / analysis / catalog
-internal/port    出站接口契约：仓储 / LLM / embedding / rerank / parser / BlobStore
-internal/domain  V2 实体模型 + 纯领域逻辑（Schema、Dataset、DAG、资源边界、检索与制品）
-```
+### 操作入口
 
-**依赖白名单**（`make lint-arch` 强制）：`infra/httpgin → app`；其余 infra 实现包 → `port / domain / infra 基建`；`app → port / domain`；`port → domain`；`domain → 仅标准库`。越层 import 直接报错。
+| 页面 | 能做什么 |
+|------|----------|
+| 数据管理 | 创建数据集（字段结构、业务唯一键、索引规则）；字段结构 / 抽取规则 / 索引规则均可**预览**与**删除**（被数据或任务产物引用时自动防护）；数据集「索引」抽屉内直接建索引、查看快照列表、按规则筛选、索引落后提醒、删除过期快照；数据浏览与混合检索 |
+| 任务管理 | 发起数据清洗任务（固定流程，抽取规则决定字段结构、数据集自动对齐）；任务目录与详情：进度、模型运行面板、人工审核（通过/修改/剔除）、失败重试 |
+| 数字大脑 | 平台只读助手：解答平台操作问题、查询流程 / 任务 / 数据。内置两个 Skill——**平台指南**（/platform-guide）与**查询分析**（/query-analysis，多步搜索，召回不理想时提取原文关键词与关键语义重搜） |
+| 归档管理 | 数据集归档与原样恢复 |
 
-## 快速开始
+### v1 明确收敛（不在交付范围）
 
-### 业务交付：一键启动
+- 自由流程编排：流程固定为两条内置流程（数据清洗入库 / 建立检索索引），流程设计器与流程归档恢复已隐藏；抽取 / 索引规则在创建任务时按数据集字段结构选择，而非写死在流程里。
+- 数据集用途统一为「用于搜索和智能问答」，不再提供多分类选择。
+- 归档管理仅保留数据集；流程与任务的归档恢复不开放。
+
+### 开箱种子（首次启动自动创建，全部幂等，同名跳过）
+
+- 两条固定流程；示例知识库 **DH1功能&需求知识库** 四件套（字段结构「HD1-功能原文」、抽取规则「DH1文档数据清洗」、索引规则「HD1-语义索引」、空数据集）；数字大脑两个内置 Skill。
+- OpenSearch 物理索引无需预建：第一次执行索引任务时按（数据集, 规则）自动创建，增量构建自动自愈。
+
+## 快速开始（业务交付：一键启动）
 
 ```bash
 ./scripts/start.sh        # 或 make start
@@ -41,31 +42,8 @@ internal/domain  V2 实体模型 + 纯领域逻辑（Schema、Dataset、DAG、�
 脚本会依次：启动依赖容器（PostgreSQL+pgvector、OpenSearch）→ 等待就绪 → 构建单二进制 → 运行于 :8080。打开 http://localhost:8080 即可使用。
 
 - 前置：Docker、Go、pnpm；Linux 需 `sudo sysctl -w vm.max_map_count=262144`（OpenSearch 要求）。
-- 首次启动自动生成 `config.yaml`，并**自动完成数据库迁移与种子数据**：
-  - 固定流程两条：**数据清洗入库**（任务管理页发起）、**建立检索索引**（数据集上的「索引」抽屉隐式调用）；
-  - 示例知识库 **DH1功能&需求知识库** 四件套：字段结构「HD1-功能原文」、抽取规则「DH1文档数据清洗」、索引规则「HD1-语义索引」、空数据集（业务数据由清洗任务发布产生）；
-  - 平台 Agent 两个内置 Skill：平台指南（platform-guide）、查询分析（query-analysis）。
+- 首次启动自动生成 `config.yaml`，并**自动完成数据库迁移与种子数据**（见上文交付范围）。
 - LLM 能力（文件抽取、审核辅助、数字大脑）需要编辑 `config.yaml` 填写 `llm.api_key` 与 `embedding.api_key` 后重启；启动脚本会检测并提醒。
-- 全部种子幂等：同名资源已存在则跳过，不会覆盖业务改动。
-
-### 开发模式
-
-```bash
-# 1. 数据库（Docker，PG16 + pgvector）
-docker compose up -d
-
-# 2. 配置
-cp config.example.yaml config.yaml   # 首次直接运行二进制也会自动生成模板
-#    按需填写 llm.api_key / embedding.api_key / opensearch.* / parser.mineru.api_token
-
-# 3. 开发运行（后端 :8080，前端 Vite :5173 代理 /api）
-make dev          # 终端 1
-make frontend     # 终端 2
-
-# 4. 发布：单二进制（前端产物 embed 进二进制）
-make build        # → bin/reqflow
-./bin/reqflow     # 同目录放 config.yaml 即可运行
-```
 
 配置加载优先级：`-config` 指定路径 > `$REQFLOW_CONFIG` > `./config.yaml`；任何配置项都可用 `REQFLOW_` 前缀环境变量覆盖（如 `REQFLOW_LLM_API_KEY`）。
 
@@ -76,101 +54,53 @@ make build        # → bin/reqflow
 | server | port / log_level / log_format | HTTP 端口、日志级别（debug~error）、日志格式（text/json） |
 | database | dsn / auto_migrate / retry_* | PG 连接串；启动自动迁移 |
 | worker | concurrency / lease_seconds / poll_interval_ms / recovery_interval_ms / reconcile_limit | 持久化流程任务协程池；单实例默认并发 6，可由 `REQFLOW_WORKER_*` 覆盖 |
-| llm | base_url / api_key / model / temperature / max_tokens / timeout_ms / agent_max_iterations | OpenAI 兼容协议（DeepSeek/GLM/Qwen/Kimi 适用）；流程中的模型节点统一运行 Agent loop，agent_max_iterations 是每个 Agent 运行的迭代安全阀 |
+| llm | base_url / api_key / model / temperature / max_tokens / timeout_ms / agent_max_iterations | OpenAI 兼容协议（DeepSeek/GLM/Qwen/Kimi 适用）；抽取与分析节点统一运行 Agent loop，agent_max_iterations 是迭代安全阀 |
 | embedding | base_url / api_key / model / dimensions / batch_size / rerank_* | 语义向量与 SiliconFlow rerank 共用供应商凭证；默认 bge-m3 1024 维 + bge-reranker-v2-m3 |
-| opensearch | base_url / username / password / index_prefix / timeout_ms | BM25 索引与检索；Hybrid 模式的词法检索后端 |
-| match | duplicate_threshold / project_top_n | 查重阈值（默认 0.75）与项目推荐数 |
-| fts | ts_config | PG 全文检索分词配置（默认 simple；中文全文检索需安装 zhparser/pg_jieba 扩展后改配置） |
-| parser | max_file_mb / mineru.* | 上传上限与 MinerU 云端 PDF 解析 |
-| security | encryption_key | 第二波敏感字段入库加密密钥（64 hex） |
-| workspace | name / blob_dir | 工作区名与内容寻址 Blob 根目录 |
+| opensearch | base_url / username / password / index_prefix / timeout_ms | BM25 索引与检索；混合模式的词法检索后端 |
+| parser | max_file_mb / mineru.* | 上传上限与 MinerU 云端 PDF 解析（docx / txt / md 走内置解析，无需配置） |
+| security | encryption_key / encryption_key_file | 敏感字段入库加密密钥（64 hex，留空自动生成本机密钥） |
+| workspace | name / upload_dir / demand_dir | 工作区名与上传、存档目录 |
 
-## HTTP API
+## 开发简介
 
-### V2（当前重构入口）
+### 架构（四层，依赖只允许向内）
 
-`/api/v2` 已提供不可变 Schema、追加型 Dataset/Batch、TaskDefinition DAG 和持久化 Task 运行时：
+```
+cmd/reqflow      组装点：读配置 → 构造 infra 各实现 → 注入 app 用例 → 挂 httpgin
 
-- `GET|POST /api/v2/agent/sessions`、`GET /api/v2/agent/sessions/:id`
-- `POST /api/v2/agent/sessions/:id/messages`（SSE：回答增量、工具轨迹和终态会话）
-- `POST /api/v2/schemas`、`POST /api/v2/datasets`
-- `POST /api/v2/datasets/:id/batches`、`POST /api/v2/batches/:id/commit`
-- `GET /api/v2/datasets/:id/items?after_seq=&through_seq=`
-- `POST /api/v2/assets`（multipart `file`）、`POST /api/v2/asset-sets`
-- `GET /api/v2/asset-sets/:id`、`GET /api/v2/parsed-document-sets/:id`
-- `GET /api/v2/parsed-documents/:id/blocks?after_ordinal=&limit=`
-- `POST /api/v2/extraction-profiles`、`GET /api/v2/extraction-profiles/:id`
-- `GET /api/v2/record-draft-sets/:id`
-- `GET /api/v2/transformed-record-sets/:id`、`GET /api/v2/validation-result-sets/:id`
-- `GET /api/v2/approved-record-sets/:id`
-- `POST /api/v2/task-definitions`、`POST /api/v2/tasks`
-- `POST /api/v2/tasks/:id/start|pause|resume`
-- `POST /api/v2/tasks/:id/steps/:step_id/retry|approve`
-- `GET /api/v2/tasks/:id`、`GET /api/v2/tasks/:id/events`
+internal/infra   外层一体（基建 + 三方客户端 + 仓储 + HTTP 路由）
+  config/ database/ log/ crypto/ repository/ llm/ embedding/ opensearch/ parser/ httpgin/
 
-V2 Schema/Profile 不提供 PUT/PATCH；结构或抽取合同变化必须创建新资源。`source.parse` 将内容寻址 Asset 解析为带逐文件状态的 `ParsedDocumentSet`；`document.extract` 和 `knowledge.analyze` 都通过 `internal/app/agent` 的统一运行壳执行，领域包只提供工具和领域状态。结构化结果必须通过完成工具校验后显式提交，工具或 Schema 错误会作为可纠正反馈返回模型。任务详情的“模型运行面板”读取通用 `agent_runs`，通过 SSE 实时展示思考、输出和工具链，默认折叠。`data.transform` 和 `data.validate` 完成确定性转换、业务规则与冲突校验。人工审核端点只接受对 ValidationResult 的逐条 approve/edit/exclude 决定，服务端生成不可变 `ApprovedRecordSet`，不接受客户端提供资源 UUID；`data.publish` 只消费该审核资源，并通过带 attempt fencing 的 Dataset Batch 事务原子发布。
-Task 输入绑定接受具体 `resource_id`；Dataset 也可传 `resource_alias`，创建时会解析为具体 Dataset，并为 `dataset_boundary` 固化当时的 `through_seq`。
-
-## V2 前端操作模型
-
-```text
-从空白手动编排 ─┐
-                 ├─→ 发布 TaskDefinition（可复用流程蓝图）
-可编辑模板起点 ─┘                  │
-                                   ├─→ 选择流程 + 绑定本次资源 → 创建 Task
-                                   └─→ 一个流程可派生多个互相独立的 Task
-                                                      │
-                                                      └─→ 运行 / 暂停 / 继续 / 审核 / 重试
+internal/app     V2 用例编排：platformagent / pipeline / orchestrator / retrieval / catalog
+internal/port    出站接口契约：仓储 / LLM / embedding / rerank / parser / BlobStore
+internal/domain  实体模型 + 纯领域逻辑（Schema、Dataset、DAG、资源边界、检索）
 ```
 
-- `/agent`：默认首页和 ReqFlow 数字大脑；会话持久化，支持停止/续聊；流程、任务、数据和 Skill 工具可独立启停，并支持用 `/` 调用纯文本 Skill。
-- `/definitions`：流程定义目录；草稿与已发布流程统一展示，可进入详情、复制并编辑、创建任务或归档流程。
-- `/definitions/new`：从空白自由编排、选择五种模板作为**可修改起点**，或复制现有流程形成独立草稿；发布动作只创建 `TaskDefinition`，不隐式创建任务。
-- `/tasks/new?definition_id=...`：选择已发布流程、按输入端口绑定本次资源，选择“仅创建”或“创建并运行”。
-- `/tasks`：任务运行目录；展示来源流程、状态和执行入口，进入详情后操作 StepRun、人工审核和重试。
-- `/datasets`：数据集目录和条目详情；Schema、字段索引规则和混合检索参数在使用处就地选择或创建。
+**依赖白名单**（`make lint-arch` 强制）：`infra/httpgin → app`；其余 infra 实现包 → `port / domain / infra 基建`；`app → port / domain`；`port → domain`；`domain → 仅标准库`。越层 import 直接报错。
 
-`TaskDefinition` 定义“怎么执行”，`Task` 表示“一次具体执行”。Task 只能从 `active` Definition 派生；创建时冻结完整 Definition Snapshot、资源绑定和 Dataset/Retrieval 读取边界，后续复制、修改或归档流程定义不会改变已经创建的任务。归档流程会转为 `retired`，可从归档管理恢复后继续派生新任务。
-
-旧 `/api/tasks` 运行时、`AnalyzeService` 单发/降级路径及其前端入口已删除；TaskDefinition + StepRun 是唯一任务执行模型。
-| POST | `/api/match/duplicates` | 同项目查重（标题精确 / 语义阈值） |
-| GET | `/api/datasets` `/api/datasets/:id` | 数据集与条目浏览 |
-| GET | `/api/datasets/schemas` | 数据集类型模板目录（新建数据集时带出字段定义） |
-| GET | `/api/datasets/:id/items` | 条目查询：`q=` 语义检索 + `f[字段]=值`（`|` 分隔为 in）筛选叠加 |
-| GET/POST/PUT/DELETE | `/api/platform-configs/...` | LLM、向量化、重排序、MinerU 多配置管理与单配置激活；`config.yaml` 作为只读兜底 |
-
-## Legacy 通用数据集（已退出 V2 产品模型）
-
-- **字段定义归属数据集**（`datasets.schema`，JSONB）：数据集是字段定义的真相源——创建任务即绑定目标数据集，字段元数据自动带出，分析提示词、写入校验、门内表格、查询过滤全按数据集自身的字段执行。类型级定义（`model/dataset_schema.go` + 元数据页）是「数据集类型模板」：新建数据集时带出初始形状，实例可受控编辑独立演进（兼容守卫防打穿存量条目）。字段可标记 `fts`（全文检索）/ `filterable`（筛选下推）/ `in_vector`（向量角色）/ `in_key`（条目主键）。
-- **动态索引随 schema**：FTS 字段建表达式 GIN 索引（`to_tsvector(cfg, fields->>'k')`，中文需 zhparser/pg_jieba）、filterable 字段建表达式 btree——随 schema 受控编辑自动建删，归档回收、恢复重建。
-- **条目身份**：`item_key`（schema 主键字段归一化拼接，同 key = 同一条目）+ `fingerprint`（内容哈希，相同则跳过更新与重嵌）。字段袋为原生 JSONB。
-- **写入策略**（`POST /api/tasks/:id/dataset` 的 `mode`，目标 = 绑定数据集）：
-  - `merge` 并入（默认）：仅插入新条目，已存在跳过
-  - `upsert` 并入并更新：新条目插入，已存在按内容更新
-  - `replace` 覆盖本任务此前写入的条目（同源重跑；其他来源数据不动）
-- **终态可重写**：已完成的任务停留在数据集步骤时可换策略再次写入（幂等，不产生重复条目）。
-- **统一查询**：字段过滤（filterable 字段 SQL 下推）+ 语义检索 / 全文检索（`/search`，tsvector 相关度排序）叠加，数据集浏览、agent 工具、后续任务输入共用。
-- **归档**：任务与数据集的删除不是物理删除，而是事务性搬入独立归档表（`archived_*`，与主表同构直搬，不带索引不占检索成本）。已归档数据物理离开主表——列表、查重语料、语义检索、统计自动不再触达；归档页可查看、可原样恢复（数据集条目向量原生保留，动态索引随行内 schema 重建，任务含步骤/明细快照，恢复后可继续未走完的流程）。运行中任务与被进行中任务引用的数据集拒绝归档。
-
-## 开发命令
+### 常用命令
 
 ```bash
 make setup          # clone 后执行一次：启用 git 钩子（密钥护栏 pre-commit）
+make start          # 业务一键启动：依赖容器 → 等待就绪 → 构建 → 运行 :8080
+make dev            # 开发模式：后端 :8080（另开终端 make frontend 起 Vite :5173 代理 /api）
+make build          # 前端构建 + embed 单二进制 → bin/reqflow
 make test           # go vet + go test + 架构围栏 + 密钥扫描
-make lint-arch      # 依赖方向白名单校验
-make check-secrets  # 扫描 git 追踪文件中的疑似密钥
-make build          # 前端构建 + embed 单二进制
+make clean          # 清理 bin 与前端产物
 ```
 
-## 密钥安全护栏（四道防线）
+### 开发须知
 
-真实密钥**只**放两处：本地 `config.yaml`（已 gitignore）或 `REQFLOW_*` 环境变量。防止密钥随代码分享的机制：
+- 数据库迁移内嵌于二进制（`internal/infra/database/migrations`），`auto_migrate: true` 时启动自动执行；Schema/Profile 为不可变资源，不提供 PUT/PATCH，合同变化必须创建新资源。
+- 人工审核只接受对校验结果的逐条 approve/edit/exclude 决定，服务端生成不可变审核集；发布通过带 attempt fencing 的 Dataset Batch 事务原子完成。
+- 任务创建时冻结完整定义快照与资源边界；抽取 / 索引规则通过 `step_configs` 在任务级注入，运行期校验。
+- 密钥安全护栏（四道防线）：真实密钥只放本地 `config.yaml`（已 gitignore）或环境变量；pre-commit 扫描、`make check-secrets` 仓库扫描、启动自检兜底，详见下表。
 
 | 防线 | 机制 |
 |------|------|
-| 1. gitignore | `config.yaml` / `config.*.yaml` 全部变体不入库（example 模板除外） |
-| 2. pre-commit 钩子 | 暂存内容密钥扫描 + 真实配置文件名直接拦截；钩子在 `.githooks/` 入库分享，`make setup` 启用（`git commit --no-verify` 为误报逃生通道） |
+| 1. gitignore | `config.yaml` 及变体不入库（example 模板除外） |
+| 2. pre-commit 钩子 | 暂存内容密钥扫描；`make setup` 启用（`--no-verify` 为误报逃生通道） |
 | 3. `make check-secrets` | 仓库级扫描（敏感字段非空值 / 带密码 DSN），纳入 `make test` |
-| 4. 启动自检 | 后端启动时若发现 `config.example.yaml` 被填入真实密钥会 ERROR 告警并提示轮换；日志只打印已加载密钥的**名称**，绝不打印值 |
+| 4. 启动自检 | 模板被填入真实密钥时 ERROR 告警；日志只打印密钥名称，绝不打印值 |
 
-检测规则与白名单（环境变量名引用、代码标识符、占位符、用户名=密码的本地 DSN）见 `scripts/secret-check.sh`。**一旦密钥已提交**：立即在对应平台轮换密钥，再用 `git filter-repo` 清理历史。
+更多实现细节（代码地图、执行器语义、踩坑记录）见 [交接文档](./docs/HANDOVER.md)。
