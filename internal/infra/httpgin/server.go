@@ -11,6 +11,7 @@ import (
 	appplatformagent "reqflow/internal/app/platformagent"
 	appplatformconfig "reqflow/internal/app/platformconfig"
 	appretrieval "reqflow/internal/app/retrieval"
+	appworkflow "reqflow/internal/app/workflow"
 )
 
 // Services 组装点注入的全部业务用例（cmd 负责构造）。
@@ -31,6 +32,7 @@ type Services struct {
 	V2Artifacts     *appanalysis.ArtifactService
 	V2Catalog       *appcatalog.Service
 	V2Agent         *appplatformagent.Service
+	Workflows       *appworkflow.DraftService
 
 	MaxFileMB int64 // 上传大小上限
 }
@@ -44,6 +46,14 @@ func New(svc Services) *gin.Engine {
 	h := &handlers{svc: svc}
 	api := r.Group("/api")
 	api.GET("/health", h.health)
+	if svc.Workflows != nil {
+		api.GET("/capabilities", h.workflowCapabilities)
+		api.POST("/workflows", h.createWorkflow)
+		api.GET("/workflows", h.listWorkflows)
+		api.GET("/workflows/:id", h.getWorkflow)
+		api.POST("/workflows/:id/commands", h.executeWorkflowCommand)
+		api.POST("/workflows/:id/validate", h.validateWorkflow)
+	}
 
 	v2 := api.Group("/v2")
 	if svc.PlatformConfigs != nil {

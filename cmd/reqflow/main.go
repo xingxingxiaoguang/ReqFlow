@@ -24,6 +24,7 @@ import (
 	appplatformagent "reqflow/internal/app/platformagent"
 	appplatformconfig "reqflow/internal/app/platformconfig"
 	appretrieval "reqflow/internal/app/retrieval"
+	appworkflow "reqflow/internal/app/workflow"
 	"reqflow/internal/infra/blobstore"
 	"reqflow/internal/infra/config"
 	secretcrypto "reqflow/internal/infra/crypto"
@@ -136,6 +137,7 @@ func main() {
 	}
 
 	pipelineRepo := repository.NewPipelineRepo(db)
+	workflowRepo := repository.NewWorkflowRepo(db)
 	agentSessionRepo := repository.NewAgentSessionRepo(db)
 	agentConfigRepo := repository.NewAgentConfigRepo(db)
 
@@ -286,6 +288,16 @@ func main() {
 		logger.Error("V2 Catalog 初始化失败", "err", err)
 		os.Exit(1)
 	}
+	workflowCatalog, err := appworkflow.BuiltinCatalog()
+	if err != nil {
+		logger.Error("Workflow Capability Catalog 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	workflowService, err := appworkflow.NewDraftService(workflowRepo, workflowCatalog)
+	if err != nil {
+		logger.Error("Workflow Draft 服务初始化失败", "err", err)
+		os.Exit(1)
+	}
 	v2Review, err := apppipeline.NewReviewService(pipelineRepo, v2Runtime)
 	if err != nil {
 		logger.Error("V2 Review Pipeline 初始化失败", "err", err)
@@ -314,12 +326,13 @@ func main() {
 	/* ---- HTTP ---- */
 	engine := httpgin.New(httpgin.Services{
 		PlatformConfigs: platformConfigs,
-		V2Definitions: v2Definitions, V2TaskBatches: v2TaskBatches,
+		V2Definitions:   v2Definitions, V2TaskBatches: v2TaskBatches,
 		V2Runtime: v2Runtime, V2TaskQueries: v2TaskQueries,
 		V2Datasets: v2Datasets, V2QueryDatasets: v2QueryDatasets,
 		V2Assets: v2Assets, V2Extractions: v2Extractions, V2Cleaning: v2Cleaning, V2Review: v2Review,
 		V2Retrieval: v2Retrieval, V2Analysis: v2Analysis, V2Artifacts: v2Artifacts,
 		V2Catalog: v2Catalog, V2Agent: v2Agent,
+		Workflows: workflowService,
 		MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})
 	mountStatic(engine)
