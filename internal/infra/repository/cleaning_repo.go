@@ -98,14 +98,17 @@ func (r *PipelineRepo) getTransformedRecordSet(ctx context.Context, query string
 }
 
 func (r *PipelineRepo) SaveTransformedRecord(ctx context.Context, setID string, producerAttempt int, record *model.TransformedRecord) error {
-	if record == nil || !json.Valid(record.Fields) {
-		return fmt.Errorf("TransformedRecord fields 非法")
+	if record == nil {
+		return fmt.Errorf("TransformedRecord 不能为空")
 	}
-	changes, err := json.Marshal(record.Changes)
+	if err := requireJSONBObject("fields", record.Fields); err != nil {
+		return fmt.Errorf("TransformedRecord: %w", err)
+	}
+	changes, err := marshalJSONBArray(record.Changes)
 	if err != nil {
 		return fmt.Errorf("序列化转换差异: %w", err)
 	}
-	issues, err := json.Marshal(record.Issues)
+	issues, err := marshalJSONBArray(record.Issues)
 	if err != nil {
 		return fmt.Errorf("序列化转换问题: %w", err)
 	}
@@ -271,13 +274,16 @@ func (r *PipelineRepo) getValidationResultSet(ctx context.Context, query string,
 }
 
 func (r *PipelineRepo) SaveValidationResult(ctx context.Context, setID string, producerAttempt int, result *model.ValidationResult) error {
-	if result == nil || !json.Valid(result.Fields) {
-		return fmt.Errorf("ValidationResult fields 非法")
+	if result == nil {
+		return fmt.Errorf("ValidationResult 不能为空")
+	}
+	if err := requireJSONBObject("fields", result.Fields); err != nil {
+		return fmt.Errorf("ValidationResult: %w", err)
 	}
 	if !validValidationRecordStatus(result.Status) {
 		return fmt.Errorf("ValidationResult status 非法: %s", result.Status)
 	}
-	issues, err := json.Marshal(result.Issues)
+	issues, err := marshalJSONBArray(result.Issues)
 	if err != nil {
 		return fmt.Errorf("序列化校验问题: %w", err)
 	}

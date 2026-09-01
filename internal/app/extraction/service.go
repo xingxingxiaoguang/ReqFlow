@@ -561,17 +561,27 @@ func extractionCandidateDraft(candidate extractionCandidate, plan plannedExtract
 		references[i] = model.SourceReference{AssetID: plan.assetID, BlockID: reference.BlockID,
 			PageNo: matched.PageNo, Quote: quote}
 	}
-	fields, err := json.Marshal(candidate.Fields)
+	fields, err := marshalExtractionObject(candidate.Fields)
 	if err != nil {
 		return model.RecordDraft{}, err
 	}
-	confidence, err := json.Marshal(candidate.FieldConfidence)
+	confidence, err := marshalExtractionObject(candidate.FieldConfidence)
 	if err != nil {
 		return model.RecordDraft{}, err
 	}
 	return model.RecordDraft{Fields: fields, FieldConfidence: confidence,
 		Provenance: model.ItemProvenance{SourceRefs: references, ExtractionProfileID: profile.ID,
 			Model: modelName, PromptHash: promptHash, QualityStatus: "candidate"}}, nil
+}
+
+// marshalExtractionObject 把候选字段 map 序列化为 JSON object；nil/空 map 输出 {}，
+// 而不是 json.Marshal(nil) 的 null。record_drafts 的约束是 jsonb_typeof='object'，
+// "缺失"的存储语义是空对象——尤其让旧 checkpoint 里不带置信度的已完成草稿重试时能直接入库。
+func marshalExtractionObject[V any](value map[string]V) (json.RawMessage, error) {
+	if len(value) == 0 {
+		return json.RawMessage(`{}`), nil
+	}
+	return json.Marshal(value)
 }
 
 func decodeExtractionCheckpoint(raw json.RawMessage) (extractionCheckpoint, error) {

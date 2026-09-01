@@ -126,7 +126,7 @@ func TestExtractionAgentResumesCheckpointWithoutDoubleCountingUsage(t *testing.T
 
 	secondClient := &extractionAgentScript{responses: []*port.Message{
 		extractionToolMessage("c2", "read_source_blocks", `{"offset":0,"limit":6}`, "继续读取"),
-		extractionToolMessage("c3", "upsert_record_drafts", `{"records":[{"draft_key":"sku:A-100","fields":{"sku":"A-100"},"source_refs":[{"block_id":"block-1","quote":"SKU: A-100"}]}]}`, "写入草稿"),
+		extractionToolMessage("c3", "upsert_record_drafts", `{"records":[{"draft_key":"sku:A-100","fields":{"sku":"A-100"},"field_confidence":{"sku":0.95},"source_refs":[{"block_id":"block-1","quote":"SKU: A-100"}]}]}`, "写入草稿"),
 		extractionToolMessage("c4", "validate_record_drafts", `{}`, "校验"),
 		extractionToolMessage("c5", "finish_extraction_unit", `{"outcome":"records"}`, "完成"),
 	}}
@@ -141,6 +141,67 @@ func TestExtractionAgentResumesCheckpointWithoutDoubleCountingUsage(t *testing.T
 	}
 	if checkpoint.AgentRuns[0].RequestCount != 5 {
 		t.Fatalf("live trace must retain all turns across attempts: %+v", checkpoint.AgentRuns[0])
+	}
+}
+
+func TestValidateExtractionCandidateRequiresFieldConfidence(t *testing.T) {
+	schemaJSON := json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"sku":{"type":"string"}},"required":["sku"]}`)
+	blocks := []extractionBlock{{SegmentID: "block-1:0:10", ID: "block-1", Text: "SKU: A-100"}}
+	fields := map[string]struct{}{"sku": {}}
+	base := extractionCandidate{DraftKey: "sku:A-100", Fields: map[string]any{"sku": "A-100"},
+		SourceRefs: []extractionSourceRef{{BlockID: "block-1", Quote: "SKU: A-100"}}}
+
+	if code, _, _ := validateExtractionCandidate(base, fields, schemaJSON, blocks); code != "MISSING_FIELD_CONFIDENCE" {
+		t.Fatalf("missing field_confidence must be rejected as recoverable feedback, got %q", code)
+	}
+	base.FieldConfidence = map[string]float64{"sku": 0.95}
+	if code, _, _ := validateExtractionCandidate(base, fields, schemaJSON, blocks); code != "" {
+		t.Fatalf("candidate with confidence must pass, got %q", code)
+	}
+}
+
+func TestExtractionCandidateDraftNormalizesMissingConfidenceToObject(t *testing.T) {
+	blockText := "SKU: A-100"
+	plan := plannedExtractionUnit{assetID: "asset-1", blocks: []extractionBlock{{SegmentID: "block-1:0:9",
+		ID: "block-1", Text: blockText, fullText: blockText}}}
+	candidate := extractionCandidate{DraftKey: "sku:A-100", Fields: map[string]any{"sku": "A-100"},
+		SourceRefs: []extractionSourceRef{{BlockID: "block-1", Quote: "SKU: A-100"}}}
+	draft, err := extractionCandidateDraft(candidate, plan, model.ExtractionProfile{ID: "p1", ProfileHash: "h1"},
+		"test-model", "prompt-hash")
+	if err != nil {
+		t.Fatalf("extractionCandidateDraft: %v", err)
+	}
+	if string(draft.FieldConfidence) != `{}` {
+		t.Fatalf("missing confidence must serialize as {} (record_drafts requires jsonb object), got %s", draft.FieldConfidence)
+	}
+}
+
+func TestExtractionWriteSchemaRequiresFieldConfidence(t *testing.T) {
+	parameters, err := extractionAgentWriteSchema(json.RawMessage(
+		`{"type":"object","properties":{"sku":{"type":"string"}},"required":["sku"]}`))
+	if err != nil {
+		t.Fatalf("extractionAgentWriteSchema: %v", err)
+	}
+	var root struct {
+		Properties struct {
+			Records struct {
+				Items struct {
+					Required []string `json:"required"`
+				} `json:"items"`
+			} `json:"records"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal(parameters, &root); err != nil {
+		t.Fatalf("unmarshal write schema: %v", err)
+	}
+	required := map[string]bool{}
+	for _, name := range root.Properties.Records.Items.Required {
+		required[name] = true
+	}
+	for _, name := range []string{"draft_key", "fields", "field_confidence", "source_refs"} {
+		if !required[name] {
+			t.Fatalf("write schema must require %s, got %v", name, root.Properties.Records.Items.Required)
+		}
 	}
 }
 

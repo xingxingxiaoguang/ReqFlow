@@ -89,12 +89,14 @@ func (r *PipelineRepo) CreateApprovedRecordSet(ctx context.Context, set *model.A
 		seen := make(map[string]bool, len(decisions))
 		for i := range decisions {
 			decision := &decisions[i]
-			if seen[decision.ValidationResultID] || !validReviewAction(decision.Action) ||
-				!json.Valid(decision.Fields) {
+			if seen[decision.ValidationResultID] || !validReviewAction(decision.Action) {
 				return fmt.Errorf("第 %d 条审核决定非法", i+1)
 			}
+			if err := requireJSONBObject("fields", decision.Fields); err != nil {
+				return fmt.Errorf("第 %d 条审核决定: %w", i+1, err)
+			}
 			seen[decision.ValidationResultID] = true
-			issues, err := json.Marshal(decision.Issues)
+			issues, err := marshalJSONBArray(decision.Issues)
 			if err != nil {
 				return fmt.Errorf("序列化第 %d 条审核问题: %w", i+1, err)
 			}

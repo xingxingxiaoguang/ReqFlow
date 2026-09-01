@@ -220,8 +220,14 @@ func (r *PipelineRepo) CompleteExtractionUnit(ctx context.Context, setID string,
 		now := time.Now()
 		for i := range drafts {
 			draft := &drafts[i]
-			if !json.Valid(draft.Fields) || !json.Valid(draft.FieldConfidence) {
-				return fmt.Errorf("抽取单元 %s 的第 %d 条草稿 JSON 非法", unitKey, i+1)
+			// 与 record_drafts 的 jsonb_typeof='object' CHECK 对齐：非法值在这里报可归因的
+			// 应用层错误，而不是等 INSERT 撞数据库约束后炸出 SQLSTATE 23514。
+			for _, column := range []struct{ name string; value json.RawMessage }{
+				{"fields", draft.Fields}, {"field_confidence", draft.FieldConfidence},
+			} {
+				if err := requireJSONBObject(column.name, column.value); err != nil {
+					return fmt.Errorf("抽取单元 %s 的第 %d 条草稿: %w", unitKey, i+1, err)
+				}
 			}
 			provenance, err := json.Marshal(draft.Provenance)
 			if err != nil {

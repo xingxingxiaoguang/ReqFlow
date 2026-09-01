@@ -503,6 +503,10 @@ func validateExtractionCandidate(candidate extractionCandidate, fields map[strin
 			return "UNKNOWN_FIELD", fmt.Sprintf("目标 Schema 未声明字段 %s", field), "删除该字段或改用 Schema 中的字段名"
 		}
 	}
+	if candidate.FieldConfidence == nil {
+		return "MISSING_FIELD_CONFIDENCE", "field_confidence 缺失",
+			"为已提取字段给出 0..1 的置信度，不确定的用低值"
+	}
 	for field, confidence := range candidate.FieldConfidence {
 		if _, ok := candidate.Fields[field]; !ok {
 			return "UNKNOWN_CONFIDENCE_FIELD", fmt.Sprintf("字段置信度引用了未提取字段 %s", field), "删除该置信度或补充对应字段"
@@ -573,7 +577,7 @@ func extractionAgentWriteSchema(target json.RawMessage) (json.RawMessage, error)
 		"required": []string{"records"}, "properties": map[string]any{"records": map[string]any{
 			"type": "array", "minItems": 1, "maxItems": extractionWriteMax,
 			"items": map[string]any{"type": "object", "additionalProperties": false,
-				"required": []string{"draft_key", "fields", "source_refs"}, "properties": map[string]any{
+				"required": []string{"draft_key", "fields", "field_confidence", "source_refs"}, "properties": map[string]any{
 					"draft_key": map[string]any{"type": "string", "minLength": 1, "maxLength": 200},
 					"fields":    fieldSchema,
 					"field_confidence": map[string]any{"type": "object",

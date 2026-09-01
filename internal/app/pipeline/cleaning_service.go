@@ -180,7 +180,12 @@ func (s *CleaningService) Validate(ctx context.Context, in ValidateInput, progre
 		if validateErr != nil {
 			return nil, fmt.Errorf("校验第 %d 条 TransformedRecord: %w", i+1, validateErr)
 		}
-		issues = append(append([]model.RecordIssue(nil), record.Issues...), issues...)
+		// 非 nil 空 slice 起步：记录完全干净时 issues 也要序列化为 [] 而不是 null
+		// （validation_results.issues 的 jsonb_typeof='array' 约束）。
+		merged := make([]model.RecordIssue, 0, len(record.Issues)+len(issues))
+		merged = append(merged, record.Issues...)
+		merged = append(merged, issues...)
+		issues = merged
 		plan := validationPlan{record: record, fields: fields, issues: issues}
 		if !hasErrorIssues(issues) {
 			plan.itemKey, plan.fingerprint, err = logic.DatasetItemIdentity(schema.SchemaHash, dataset.KeyFields, fields)
