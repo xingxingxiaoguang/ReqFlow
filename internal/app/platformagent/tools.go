@@ -210,7 +210,7 @@ func (*listTasksTool) PromptGuidelines() []string {
 type queryDataTool struct{ platformTool }
 
 func (*queryDataTool) Spec() port.ToolSpec {
-	return port.ToolSpec{Name: "query_data", Description: "查询数据集与可用索引，或在指定数据集的激活快照上执行关键词、语义或混合检索。",
+	return port.ToolSpec{Name: "query_data", Description: "查询数据集与可用索引，或在数据集的激活快照上执行关键词、语义或混合检索。带 query 检索未指定数据集时：唯一活动数据集自动锁定，多个数据集会返回可选清单。",
 		Parameters: json.RawMessage(`{"type":"object","properties":{"dataset_id":{"type":"string"},"retrieval_snapshot_id":{"type":"string"},"query":{"type":"string"},"filters":{"type":"object","additionalProperties":{"type":"array","items":{"type":"string"}}},"mode":{"type":"string","enum":["lexical","semantic","hybrid"]},"top_k":{"type":"integer","minimum":1,"maximum":50},"rerank_enabled":{"type":"boolean"}},"additionalProperties":false}`)}
 }
 
@@ -246,9 +246,29 @@ func (t *queryDataTool) Execute(ctx context.Context, call port.ToolCall, _ func(
 		return toolJSON(map[string]any{"datasets": datasets, "active_snapshots": snapshots},
 			fmt.Sprintf("查到 %d 个数据集、%d 个可查询索引", len(datasets), len(snapshots)))
 	}
+	autoDataset := ""
 	if args.SnapshotID == "" {
-		if args.DatasetID == "" {
-			return toolError(fmt.Errorf("执行数据检索前必须提供 dataset_id 或 retrieval_snapshot_id；可先不传 query 查询可用数据集"))
+		datasets, err := t.deps.Catalog.ListDatasets(ctx, appcatalog.Query{
+			WorkspaceID: t.workspaceID, Status: model.DatasetStatusActive, Limit: 100,
+		})
+		if err != nil {
+			return toolError(err)
+		}
+		if specified := args.DatasetID != ""; specified {
+			datasets = filterDatasets(datasets, args.DatasetID)
+			if len(datasets) == 0 {
+				return toolError(fmt.Errorf("活动数据集中不存在 %s；可先以空 query 调用本工具查看可用数据集", args.DatasetID))
+			}
+		} else {
+			switch {
+			case len(datasets) == 0:
+				return toolError(fmt.Errorf("平台当前没有活动数据集，无法执行检索；可先指导用户在数据管理页发布数据集"))
+			case len(datasets) > 1:
+				return toolError(fmt.Errorf("平台有多个活动数据集，检索前必须用 dataset_id 指定其一；可选：%s", datasetChoices(datasets)))
+			default:
+				autoDataset = datasets[0].Name
+				args.DatasetID = datasets[0].ID
+			}
 		}
 		snapshots, err := t.deps.Retrieval.ListSnapshotViews(ctx, args.DatasetID, "", model.RetrievalSnapshotActive, 20)
 		if err != nil {
@@ -282,8 +302,11 @@ func (t *queryDataTool) Execute(ctx context.Context, call port.ToolCall, _ func(
 	if err != nil {
 		return toolError(err)
 	}
-	return toolJSON(map[string]any{"search": result},
-		fmt.Sprintf("数据检索命中 %d 条，耗时 %dms", len(result.Hits), result.TookMS))
+	details := fmt.Sprintf("数据检索命中 %d 条，耗时 %dms", len(result.Hits), result.TookMS)
+	if autoDataset != "" {
+		details = fmt.Sprintf("已自动选择唯一活动数据集「%s」；%s", autoDataset, details)
+	}
+	return toolJSON(map[string]any{"search": result}, details)
 }
 
 func (*queryDataTool) PromptSnippet() string {
@@ -291,10 +314,21 @@ func (*queryDataTool) PromptSnippet() string {
 }
 func (*queryDataTool) PromptGuidelines() []string {
 	return []string{
-		"首次查询或不知道 dataset_id 时先以空 query 调用，查看数据集和 active snapshot",
+		"检索尽量携带 dataset_id；漏传时唯一活动数据集会自动锁定，多数据集则从错误返回的可选清单里取 ID 重试",
 		"精确编号和专有名词用 lexical，自然语言含义用 semantic，一般问题默认 hybrid",
 		"回答数据问题时引用命中的 dataset_item_id、fields 与 provenance，不得超出证据推断",
 	}
+}
+
+func datasetChoices(datasets []appcatalog.DatasetView) string {
+	choices := make([]string, 0, len(datasets))
+	for _, dataset := range datasets {
+		choices = append(choices, fmt.Sprintf("%s(%s)", dataset.Name, dataset.ID))
+	}
+	if len(choices) > 20 {
+		choices = append(choices[:20], fmt.Sprintf("…共 %d 个", len(datasets)))
+	}
+	return strings.Join(choices, "、")
 }
 
 func filterDatasets(items []appcatalog.DatasetView, id string) []appcatalog.DatasetView {

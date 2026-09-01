@@ -207,7 +207,9 @@ func (*blockingLLM) Ping(context.Context) error { return nil }
 
 type fakePlatform struct {
 	datasets    []appcatalog.DatasetView
+	snapshots   []appretrieval.SnapshotView
 	definitions []model.TaskDefinition
+	searched    *appretrieval.SearchAPIRequest
 }
 
 func (*fakePlatform) ListViews(context.Context, apporchestrator.TaskQuery) ([]apporchestrator.TaskView, error) {
@@ -222,12 +224,13 @@ func (f *fakePlatform) ListDatasets(context.Context, appcatalog.Query) ([]appcat
 	return f.datasets, nil
 }
 
-func (*fakePlatform) ListSnapshotViews(context.Context, string, string, string, int) ([]appretrieval.SnapshotView, error) {
-	return []appretrieval.SnapshotView{}, nil
+func (f *fakePlatform) ListSnapshotViews(context.Context, string, string, string, int) ([]appretrieval.SnapshotView, error) {
+	return f.snapshots, nil
 }
 
-func (*fakePlatform) SearchAPI(context.Context, appretrieval.SearchAPIRequest) (*appretrieval.SearchResponse, error) {
-	return &appretrieval.SearchResponse{}, nil
+func (f *fakePlatform) SearchAPI(_ context.Context, request appretrieval.SearchAPIRequest) (*appretrieval.SearchResponse, error) {
+	f.searched = &request
+	return &appretrieval.SearchResponse{TookMS: 3}, nil
 }
 
 func testDeps(platform *fakePlatform) Dependencies {
@@ -352,6 +355,41 @@ func TestSlashSkillInjectsPromptAndDisabledToolIsRemoved(t *testing.T) {
 	if _, err := service.RunMessage(context.Background(), session.ID, "/three-points 再总结", nil); err == nil ||
 		!strings.Contains(err.Error(), "没有可用的 Skill") {
 		t.Fatalf("停用 Skill 后错误 = %v", err)
+	}
+}
+
+func TestQueryDataAutoSelectsSingleActiveDataset(t *testing.T) {
+	platform := &fakePlatform{
+		datasets:  []appcatalog.DatasetView{{ID: "dataset-1", Name: "DH1知识库", Status: model.DatasetStatusActive}},
+		snapshots: []appretrieval.SnapshotView{{ID: "snapshot-1", DatasetID: "dataset-1", Status: model.RetrievalSnapshotActive}},
+	}
+	tool := &queryDataTool{platformTool{deps: testDeps(platform), workspaceID: "default"}}
+	output := tool.Execute(context.Background(), port.ToolCall{ID: "call-1", Name: "query_data",
+		Arguments: json.RawMessage(`{"query":"FA卡片","mode":"hybrid"}`)}, nil)
+	if output.IsError {
+		t.Fatalf("query_data: %s", output.Output)
+	}
+	if platform.searched == nil || platform.searched.RetrievalSnapshotID != "snapshot-1" ||
+		platform.searched.Query != "FA卡片" {
+		t.Fatalf("未按唯一活动数据集执行检索: %+v", platform.searched)
+	}
+	if !strings.Contains(output.Details, "DH1知识库") {
+		t.Fatalf("结果未说明自动选择的数据集: %q", output.Details)
+	}
+}
+
+func TestQueryDataWithMultipleDatasetsReturnsChoices(t *testing.T) {
+	platform := &fakePlatform{
+		datasets: []appcatalog.DatasetView{
+			{ID: "dataset-1", Name: "DH1知识库", Status: model.DatasetStatusActive},
+			{ID: "dataset-2", Name: "Bug库", Status: model.DatasetStatusActive},
+		},
+	}
+	tool := &queryDataTool{platformTool{deps: testDeps(platform), workspaceID: "default"}}
+	output := tool.Execute(context.Background(), port.ToolCall{ID: "call-1", Name: "query_data",
+		Arguments: json.RawMessage(`{"query":"FA卡片"}`)}, nil)
+	if !output.IsError || !strings.Contains(output.Output, "dataset-1") || !strings.Contains(output.Output, "Bug库") {
+		t.Fatalf("多数据集未返回可选清单: is_error=%v output=%s", output.IsError, output.Output)
 	}
 }
 
