@@ -3,17 +3,17 @@ package model
 import "time"
 
 type Artifact struct {
-	ID              string
-	WorkspaceID     string
-	Kind            string
-	Name            string
-	BlobURI         string
-	ContentHash     string
-	SourceTaskID    string
-	SourceStepRunID string
-	ProducerAttempt int
-	Metadata        string
-	CreatedAt       time.Time
+	ID                    string
+	WorkspaceID           string
+	Kind                  string
+	Name                  string
+	BlobURI               string
+	ContentHash           string
+	ProducerWorkflowRunID string
+	ProducerNodeRunID     string
+	ProducerAttempt       int
+	Metadata              string
+	CreatedAt             time.Time
 }
 
 const (

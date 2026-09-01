@@ -46,7 +46,7 @@ func (*analysisMemoryRepo) CompleteAnalysisResult(context.Context, *model.Analys
 func (*analysisMemoryRepo) FailAnalysisResult(context.Context, string, string, int, string) error {
 	return errors.New("not implemented")
 }
-func (*analysisMemoryRepo) CreateArtifactForStep(context.Context, *model.Artifact, int) (*model.Artifact, error) {
+func (*analysisMemoryRepo) CreateArtifactForNode(context.Context, *model.Artifact, int) (*model.Artifact, error) {
 	return nil, errors.New("not implemented")
 }
 func (*analysisMemoryRepo) GetArtifact(context.Context, string) (*model.Artifact, error) {

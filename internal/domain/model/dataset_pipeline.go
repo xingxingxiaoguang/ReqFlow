@@ -37,18 +37,18 @@ const (
 
 // DatasetBatch 是一次任务对 Dataset 的原子追加单元。
 type DatasetBatch struct {
-	ID              string
-	DatasetID       string
-	SourceTaskID    string
-	SourceStepRunID string
-	Status          string
-	ItemCount       int
-	FromSeq         int64
-	ToSeq           int64
-	PayloadHash     string
-	ErrorMessage    string
-	CreatedAt       time.Time
-	CommittedAt     time.Time
+	ID                    string
+	DatasetID             string
+	ProducerWorkflowRunID string
+	ProducerNodeRunID     string
+	Status                string
+	ItemCount             int
+	FromSeq               int64
+	ToSeq                 int64
+	PayloadHash           string
+	ErrorMessage          string
+	CreatedAt             time.Time
+	CommittedAt           time.Time
 }
 
 const (
@@ -101,7 +101,7 @@ type PipelineCursor struct {
 	SourceDatasetID     string
 	TargetDatasetID     string
 	ProcessedThroughSeq int64
-	LastSuccessTaskID   string
+	LastSuccessRunID    string
 	UpdatedAt           time.Time
 }
 
@@ -127,7 +127,7 @@ type RecordDraftSet struct {
 	ID                  string
 	ParsedDocumentSetID string
 	ExtractionProfileID string
-	SourceStepRunID     string
+	ProducerNodeRunID   string
 	Status              string
 	ProducerAttempt     int
 	Model               string
@@ -233,7 +233,7 @@ type TransformedRecordSet struct {
 	RecordDraftSetID    string
 	ExtractionProfileID string
 	TargetSchemaID      string
-	SourceStepRunID     string
+	ProducerNodeRunID   string
 	Status              string
 	ProducerAttempt     int
 	EngineVersion       string
@@ -268,7 +268,7 @@ type ValidationResultSet struct {
 	TransformedRecordSetID string
 	TargetDatasetID        string
 	TargetSchemaID         string
-	SourceStepRunID        string
+	ProducerNodeRunID      string
 	Status                 string
 	ProducerAttempt        int
 	EngineVersion          string
@@ -314,7 +314,7 @@ type ApprovedRecordSet struct {
 	ValidationResultSetID string
 	TargetDatasetID       string
 	TargetSchemaID        string
-	SourceStepRunID       string
+	ProducerNodeRunID     string
 	Reviewer              string
 	Rationale             string
 	ReviewHash            string

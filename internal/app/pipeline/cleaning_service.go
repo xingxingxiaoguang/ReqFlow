@@ -29,7 +29,7 @@ func NewCleaningService(repo port.CleaningPipelineRepo) (*CleaningService, error
 
 type TransformInput struct {
 	RecordDraftSetID   string
-	SourceStepRunID    string
+	ProducerNodeRunID  string
 	ProducerAttempt    int
 	NormalizationRules json.RawMessage
 }
@@ -43,7 +43,7 @@ type WorkflowTransformInput struct {
 
 func (s *CleaningService) TransformWorkflow(ctx context.Context, input WorkflowTransformInput,
 	progress func(CleaningProgress) error) (*model.TransformedRecordSet, error) {
-	return s.Transform(ctx, TransformInput{RecordDraftSetID: input.ResourceID, SourceStepRunID: input.ExecutionID,
+	return s.Transform(ctx, TransformInput{RecordDraftSetID: input.ResourceID, ProducerNodeRunID: input.ExecutionID,
 		ProducerAttempt: input.Attempt, NormalizationRules: input.NormalizationRules}, progress)
 }
 
@@ -85,7 +85,7 @@ func (s *CleaningService) Transform(ctx context.Context, in TransformInput, prog
 	}
 	manifest, err := s.repo.BeginTransformedRecordSet(ctx, &model.TransformedRecordSet{
 		RecordDraftSetID: draftSet.ID, ExtractionProfileID: profile.ID,
-		TargetSchemaID: schema.ID, SourceStepRunID: strings.TrimSpace(in.SourceStepRunID),
+		TargetSchemaID: schema.ID, ProducerNodeRunID: strings.TrimSpace(in.ProducerNodeRunID),
 		ProducerAttempt: in.ProducerAttempt, EngineVersion: TransformEngineVersion,
 		DraftCount: len(drafts),
 	})
@@ -132,7 +132,7 @@ func (s *CleaningService) Transform(ctx context.Context, in TransformInput, prog
 type ValidateInput struct {
 	TransformedRecordSetID string
 	TargetDatasetID        string
-	SourceStepRunID        string
+	ProducerNodeRunID      string
 	ProducerAttempt        int
 	ValidationRules        json.RawMessage
 }
@@ -148,7 +148,7 @@ type WorkflowValidateInput struct {
 func (s *CleaningService) ValidateWorkflow(ctx context.Context, input WorkflowValidateInput,
 	progress func(CleaningProgress) error) (*model.ValidationResultSet, error) {
 	return s.Validate(ctx, ValidateInput{TransformedRecordSetID: input.RecordsID, TargetDatasetID: input.DatasetID,
-		SourceStepRunID: input.ExecutionID, ProducerAttempt: input.Attempt,
+		ProducerNodeRunID: input.ExecutionID, ProducerAttempt: input.Attempt,
 		ValidationRules: input.ValidationRules}, progress)
 }
 
@@ -199,7 +199,7 @@ func (s *CleaningService) Validate(ctx context.Context, in ValidateInput, progre
 	}
 	manifest, err := s.repo.BeginValidationResultSet(ctx, &model.ValidationResultSet{
 		TransformedRecordSetID: transformedSet.ID, TargetDatasetID: dataset.ID,
-		TargetSchemaID: schema.ID, SourceStepRunID: strings.TrimSpace(in.SourceStepRunID),
+		TargetSchemaID: schema.ID, ProducerNodeRunID: strings.TrimSpace(in.ProducerNodeRunID),
 		ProducerAttempt: in.ProducerAttempt, EngineVersion: ValidationEngineVersion,
 		ValidatedThroughSeq: dataset.CurrentSeq, RecordCount: len(records),
 	})

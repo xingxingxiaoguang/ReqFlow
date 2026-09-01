@@ -5,7 +5,7 @@
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE EXTENSION IF NOT EXISTS vector;
 
-/* ---- 不可变 Schema 与流程定义 ---- */
+/* ---- 不可变数据合同 ---- */
 
 CREATE TABLE dataset_schemas (
     id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -19,20 +19,6 @@ CREATE TABLE dataset_schemas (
 );
 CREATE INDEX idx_dataset_schemas_workspace ON dataset_schemas (workspace_id, created_at DESC);
 CREATE INDEX idx_dataset_schemas_hash ON dataset_schemas (schema_hash);
-
-CREATE TABLE task_definitions (
-    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id    TEXT NOT NULL DEFAULT 'default',
-    key             TEXT NOT NULL,
-    name            TEXT NOT NULL,
-    description     TEXT NOT NULL DEFAULT '',
-    status          TEXT NOT NULL DEFAULT 'draft',
-    definition      JSONB NOT NULL,
-    definition_hash TEXT NOT NULL,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (workspace_id, key)
-);
 
 /* ---- 原始资产 ---- */
 
@@ -63,87 +49,6 @@ CREATE TABLE asset_set_members (
     PRIMARY KEY (asset_set_id, asset_id),
     UNIQUE (asset_set_id, ordinal)
 );
-
-/* ---- 任务（执行实例；步骤级事实在 step_runs） ---- */
-
-CREATE TABLE tasks (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id        TEXT NOT NULL DEFAULT 'default',
-    definition_id       UUID NOT NULL REFERENCES task_definitions (id),
-    definition_snapshot JSONB NOT NULL,
-    type                TEXT NOT NULL DEFAULT '',
-    title               TEXT NOT NULL,
-    batch_id            UUID,
-    batch_ordinal       INT NOT NULL DEFAULT 0,
-    batch_size          INT NOT NULL DEFAULT 0,
-    source_asset_id     UUID REFERENCES assets (id),
-    source_filename     TEXT NOT NULL DEFAULT '',
-    status              TEXT NOT NULL DEFAULT 'pending'
-                        CHECK (status IN ('pending', 'running', 'pausing', 'awaiting', 'paused', 'succeeded', 'failed')),
-    error_message       TEXT NOT NULL DEFAULT '',
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
-    started_at          TIMESTAMPTZ,
-    finished_at         TIMESTAMPTZ,
-    archived_at         TIMESTAMPTZ,
-    CHECK (
-        (batch_id IS NULL AND batch_ordinal = 0 AND batch_size = 0 AND source_asset_id IS NULL)
-        OR
-        (batch_id IS NOT NULL AND batch_ordinal > 0 AND batch_size >= batch_ordinal AND source_asset_id IS NOT NULL)
-    )
-);
-CREATE INDEX idx_tasks_batch ON tasks (batch_id, batch_ordinal) WHERE batch_id IS NOT NULL;
-CREATE INDEX idx_tasks_v2_catalog
-    ON tasks (workspace_id, archived_at, created_at DESC)
-    WHERE definition_id IS NOT NULL;
-
-CREATE TABLE step_runs (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    task_id       UUID NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
-    step_id       TEXT NOT NULL,
-    ordinal       INT NOT NULL,
-    kind          TEXT NOT NULL,
-    status        TEXT NOT NULL DEFAULT 'pending',
-    attempt       INT NOT NULL DEFAULT 0,
-    input_hash    TEXT NOT NULL DEFAULT '',
-    config_hash   TEXT NOT NULL DEFAULT '',
-    checkpoint    JSONB NOT NULL DEFAULT '{}'::jsonb,
-    progress      JSONB NOT NULL DEFAULT '{}'::jsonb,
-    error_code    TEXT NOT NULL DEFAULT '',
-    error_message TEXT NOT NULL DEFAULT '',
-    lease_owner   TEXT NOT NULL DEFAULT '',
-    lease_until   TIMESTAMPTZ,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    started_at    TIMESTAMPTZ,
-    finished_at   TIMESTAMPTZ,
-    UNIQUE (task_id, step_id)
-);
-CREATE INDEX idx_step_runs_queue ON step_runs (status, lease_until, created_at);
-
-CREATE TABLE step_resource_bindings (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    step_run_id   UUID NOT NULL REFERENCES step_runs (id) ON DELETE CASCADE,
-    port_name     TEXT NOT NULL,
-    resource_type TEXT NOT NULL,
-    resource_id   UUID NOT NULL,
-    boundary      JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (step_run_id, port_name)
-);
-CREATE INDEX idx_step_resource_target ON step_resource_bindings (resource_type, resource_id);
-
-CREATE TABLE task_resource_bindings (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    task_id       UUID NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
-    port_name     TEXT NOT NULL,
-    direction     TEXT NOT NULL CHECK (direction IN ('input', 'output')),
-    resource_type TEXT NOT NULL,
-    resource_id   UUID NOT NULL,
-    boundary      JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (task_id, direction, port_name)
-);
-CREATE INDEX idx_task_resource_target ON task_resource_bindings (resource_type, resource_id);
 
 /* ---- Dataset（不可变 Schema + 只追加 Batch） ---- */
 
@@ -177,8 +82,8 @@ CREATE TABLE dataset_aliases (
 CREATE TABLE dataset_batches (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     dataset_id         UUID NOT NULL REFERENCES datasets (id) ON DELETE CASCADE,
-    source_task_id     UUID REFERENCES tasks (id),
-    source_step_run_id UUID REFERENCES step_runs (id),
+    producer_workflow_run_id UUID,
+    producer_node_run_id     UUID,
     status             TEXT NOT NULL DEFAULT 'staging',
     item_count         INT NOT NULL DEFAULT 0,
     from_seq           BIGINT NOT NULL DEFAULT 0,
@@ -191,7 +96,7 @@ CREATE TABLE dataset_batches (
 );
 CREATE INDEX idx_dataset_batches_dataset ON dataset_batches (dataset_id, created_at DESC);
 CREATE UNIQUE INDEX uq_dataset_batches_source_step
-    ON dataset_batches (source_step_run_id) WHERE source_step_run_id IS NOT NULL;
+    ON dataset_batches (producer_node_run_id) WHERE producer_node_run_id IS NOT NULL;
 
 CREATE TABLE dataset_items (
     id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -238,7 +143,7 @@ CREATE INDEX idx_document_blocks_document ON document_blocks (parsed_document_id
 CREATE TABLE parsed_document_sets (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     asset_set_id       UUID NOT NULL REFERENCES asset_sets (id),
-    source_step_run_id UUID NOT NULL REFERENCES step_runs (id) ON DELETE CASCADE,
+    producer_node_run_id UUID NOT NULL,
     parser_name        TEXT NOT NULL,
     parser_version     TEXT NOT NULL,
     status             TEXT NOT NULL DEFAULT 'running',
@@ -248,7 +153,7 @@ CREATE TABLE parsed_document_sets (
     failed_count       INT NOT NULL DEFAULT 0 CHECK (failed_count >= 0),
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at        TIMESTAMPTZ,
-    UNIQUE (source_step_run_id)
+    UNIQUE (producer_node_run_id)
 );
 CREATE INDEX idx_parsed_document_sets_asset_set
     ON parsed_document_sets (asset_set_id, created_at DESC);
@@ -285,7 +190,7 @@ CREATE TABLE record_draft_sets (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     parsed_document_set_id UUID NOT NULL REFERENCES parsed_document_sets (id),
     extraction_profile_id  UUID NOT NULL REFERENCES extraction_profiles (id),
-    source_step_run_id     UUID NOT NULL REFERENCES step_runs (id) ON DELETE CASCADE,
+    producer_node_run_id     UUID NOT NULL,
     status                 TEXT NOT NULL DEFAULT 'running',
     producer_attempt       INT NOT NULL CHECK (producer_attempt > 0),
     model                  TEXT NOT NULL CHECK (model <> ''),
@@ -300,7 +205,7 @@ CREATE TABLE record_draft_sets (
     cache_write_tokens     BIGINT NOT NULL DEFAULT 0 CHECK (cache_write_tokens >= 0),
     created_at             TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at            TIMESTAMPTZ,
-    UNIQUE (source_step_run_id),
+    UNIQUE (producer_node_run_id),
     CHECK (status IN ('running', 'succeeded', 'partial', 'failed')),
     CHECK (succeeded_unit_count + failed_unit_count <= unit_count)
 );
@@ -362,7 +267,7 @@ CREATE TABLE transformed_record_sets (
     record_draft_set_id   UUID NOT NULL REFERENCES record_draft_sets (id) ON DELETE CASCADE,
     extraction_profile_id UUID NOT NULL REFERENCES extraction_profiles (id),
     target_schema_id      UUID NOT NULL REFERENCES dataset_schemas (id),
-    source_step_run_id    UUID NOT NULL REFERENCES step_runs (id) ON DELETE CASCADE,
+    producer_node_run_id    UUID NOT NULL,
     status                TEXT NOT NULL DEFAULT 'running',
     producer_attempt      INT NOT NULL CHECK (producer_attempt > 0),
     engine_version        TEXT NOT NULL CHECK (engine_version <> ''),
@@ -372,7 +277,7 @@ CREATE TABLE transformed_record_sets (
     issue_count           INT NOT NULL DEFAULT 0 CHECK (issue_count >= 0),
     created_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at           TIMESTAMPTZ,
-    UNIQUE (source_step_run_id),
+    UNIQUE (producer_node_run_id),
     CHECK (status IN ('running', 'succeeded')),
     CHECK (transformed_count <= draft_count AND changed_record_count <= transformed_count)
 );
@@ -402,7 +307,7 @@ CREATE TABLE validation_result_sets (
     transformed_record_set_id UUID NOT NULL REFERENCES transformed_record_sets (id) ON DELETE CASCADE,
     target_dataset_id         UUID NOT NULL REFERENCES datasets (id),
     target_schema_id          UUID NOT NULL REFERENCES dataset_schemas (id),
-    source_step_run_id        UUID NOT NULL REFERENCES step_runs (id) ON DELETE CASCADE,
+    producer_node_run_id        UUID NOT NULL,
     status                    TEXT NOT NULL DEFAULT 'running',
     producer_attempt          INT NOT NULL CHECK (producer_attempt > 0),
     engine_version            TEXT NOT NULL CHECK (engine_version <> ''),
@@ -415,7 +320,7 @@ CREATE TABLE validation_result_sets (
     conflict_count            INT NOT NULL DEFAULT 0 CHECK (conflict_count >= 0),
     created_at                TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at               TIMESTAMPTZ,
-    UNIQUE (source_step_run_id),
+    UNIQUE (producer_node_run_id),
     CHECK (status IN ('running', 'succeeded')),
     CHECK (valid_count + warning_count + invalid_count + duplicate_count + conflict_count <= record_count)
 );
@@ -449,7 +354,7 @@ CREATE TABLE approved_record_sets (
     validation_result_set_id UUID NOT NULL REFERENCES validation_result_sets (id),
     target_dataset_id        UUID NOT NULL REFERENCES datasets (id),
     target_schema_id         UUID NOT NULL REFERENCES dataset_schemas (id),
-    source_step_run_id       UUID NOT NULL REFERENCES step_runs (id) ON DELETE CASCADE,
+    producer_node_run_id       UUID NOT NULL,
     reviewer                 TEXT NOT NULL CHECK (reviewer <> ''),
     rationale                TEXT NOT NULL CHECK (rationale <> ''),
     review_hash              TEXT NOT NULL CHECK (review_hash <> ''),
@@ -459,7 +364,7 @@ CREATE TABLE approved_record_sets (
     edited_count             INT NOT NULL CHECK (edited_count >= 0),
     excluded_count           INT NOT NULL CHECK (excluded_count >= 0),
     created_at               TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (source_step_run_id),
+    UNIQUE (producer_node_run_id),
     CHECK (approved_count + edited_count + excluded_count = record_count),
     CHECK (approved_count + edited_count > 0)
 );
@@ -510,7 +415,7 @@ CREATE TABLE retrieval_snapshots (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     dataset_id           UUID NOT NULL REFERENCES datasets (id) ON DELETE CASCADE,
     retrieval_profile_id UUID NOT NULL REFERENCES retrieval_profiles (id),
-    source_step_run_id   UUID REFERENCES step_runs (id),
+    producer_node_run_id   UUID,
     producer_attempt     INT NOT NULL DEFAULT 0,
     source_seq           BIGINT NOT NULL,
     status               TEXT NOT NULL DEFAULT 'building'
@@ -526,8 +431,8 @@ CREATE TABLE retrieval_snapshots (
 CREATE INDEX idx_retrieval_snapshots_lookup
     ON retrieval_snapshots (dataset_id, retrieval_profile_id, status, source_seq DESC);
 CREATE UNIQUE INDEX uq_retrieval_snapshots_step_run
-    ON retrieval_snapshots (source_step_run_id)
-    WHERE source_step_run_id IS NOT NULL;
+    ON retrieval_snapshots (producer_node_run_id)
+    WHERE producer_node_run_id IS NOT NULL;
 
 CREATE TABLE retrieval_chunks (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -557,7 +462,7 @@ CREATE TABLE pipeline_cursors (
     source_dataset_id     UUID NOT NULL REFERENCES datasets (id) ON DELETE CASCADE,
     target_dataset_id     UUID NOT NULL REFERENCES datasets (id) ON DELETE CASCADE,
     processed_through_seq BIGINT NOT NULL DEFAULT 0,
-    last_success_task_id  UUID REFERENCES tasks (id),
+    last_success_run_id    UUID,
     updated_at            TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (pipeline_key, source_dataset_id, target_dataset_id)
 );
@@ -594,8 +499,8 @@ CREATE TABLE analysis_results (
     id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     workspace_id        TEXT NOT NULL DEFAULT 'default',
     analysis_profile_id UUID NOT NULL REFERENCES analysis_profiles (id),
-    source_task_id      UUID NOT NULL REFERENCES tasks (id) ON DELETE CASCADE,
-    source_step_run_id  UUID NOT NULL REFERENCES step_runs (id) ON DELETE CASCADE,
+    producer_workflow_run_id UUID NOT NULL,
+    producer_node_run_id     UUID NOT NULL,
     producer_attempt    INT NOT NULL,
     status              TEXT NOT NULL CHECK (status IN ('running', 'succeeded', 'failed')),
     output              JSONB NOT NULL DEFAULT '{}'::jsonb,
@@ -608,10 +513,10 @@ CREATE TABLE analysis_results (
     error_message       TEXT NOT NULL DEFAULT '',
     created_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
     finished_at         TIMESTAMPTZ,
-    UNIQUE (source_step_run_id)
+    UNIQUE (producer_node_run_id)
 );
 CREATE INDEX idx_analysis_results_task
-    ON analysis_results (source_task_id, created_at DESC);
+    ON analysis_results (producer_workflow_run_id, created_at DESC);
 
 CREATE TABLE artifacts (
     id                 UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -620,15 +525,15 @@ CREATE TABLE artifacts (
     name               TEXT NOT NULL,
     blob_uri           TEXT NOT NULL,
     content_hash       TEXT NOT NULL,
-    source_task_id     UUID REFERENCES tasks (id),
-    source_step_run_id UUID REFERENCES step_runs (id),
+    producer_workflow_run_id UUID,
+    producer_node_run_id     UUID,
     producer_attempt   INT NOT NULL DEFAULT 0,
     metadata           JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE UNIQUE INDEX uq_artifacts_source_step
-    ON artifacts (source_step_run_id)
-    WHERE source_step_run_id IS NOT NULL;
+    ON artifacts (producer_node_run_id)
+    WHERE producer_node_run_id IS NOT NULL;
 
 /* ---- Agent 知识工具审计 ---- */
 
@@ -646,45 +551,6 @@ CREATE TABLE knowledge_tool_audits (
 );
 CREATE INDEX idx_knowledge_tool_audits_scope
     ON knowledge_tool_audits (scope_id, created_at DESC);
-
-/* ---- ReqFlow 数字大脑（会话 / Skill / 工具开关） ---- */
-
-CREATE TABLE agent_sessions (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id TEXT NOT NULL DEFAULT 'default',
-    title        TEXT NOT NULL DEFAULT '新会话',
-    status       TEXT NOT NULL DEFAULT 'idle' CHECK (status IN ('idle', 'running', 'error')),
-    context      JSONB NOT NULL DEFAULT '{"messages":[]}'::jsonb,
-    last_error   TEXT NOT NULL DEFAULT '',
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_agent_sessions_workspace
-    ON agent_sessions (workspace_id, updated_at DESC);
-
-CREATE TABLE agent_skills (
-    id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id TEXT NOT NULL DEFAULT 'default',
-    slug         TEXT NOT NULL CHECK (slug ~ '^[a-z][a-z0-9-]{0,47}$'),
-    title        TEXT NOT NULL CHECK (char_length(title) BETWEEN 1 AND 80),
-    description  TEXT NOT NULL DEFAULT '' CHECK (char_length(description) <= 500),
-    prompt       TEXT NOT NULL CHECK (char_length(prompt) BETWEEN 1 AND 30000),
-    enabled      BOOLEAN NOT NULL DEFAULT TRUE,
-    builtin      BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (workspace_id, slug)
-);
-CREATE INDEX idx_agent_skills_workspace
-    ON agent_skills (workspace_id, enabled, updated_at DESC);
-
-CREATE TABLE agent_tool_settings (
-    workspace_id TEXT NOT NULL DEFAULT 'default',
-    tool_name     TEXT NOT NULL,
-    enabled       BOOLEAN NOT NULL DEFAULT TRUE,
-    updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (workspace_id, tool_name)
-);
 
 /* ---- 平台外部能力配置（config.yaml 只作只读兜底） ---- */
 

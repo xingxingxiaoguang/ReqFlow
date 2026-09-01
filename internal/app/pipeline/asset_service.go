@@ -140,9 +140,9 @@ func (s *AssetService) CreateSingleAssetSet(ctx context.Context, workspaceID, na
 }
 
 type ParseAssetSetInput struct {
-	AssetSetID      string
-	SourceStepRunID string
-	ProducerAttempt int
+	AssetSetID        string
+	ProducerNodeRunID string
+	ProducerAttempt   int
 }
 
 type WorkflowParseInput struct {
@@ -153,7 +153,7 @@ type WorkflowParseInput struct {
 
 func (s *AssetService) ParseWorkflowAssetSet(ctx context.Context, input WorkflowParseInput, onItem func(ParseAssetSetProgress) error) (*model.ParsedDocumentSet, error) {
 	return s.ParseAssetSet(ctx, ParseAssetSetInput{AssetSetID: input.ResourceID,
-		SourceStepRunID: input.ExecutionID, ProducerAttempt: input.Attempt}, onItem)
+		ProducerNodeRunID: input.ExecutionID, ProducerAttempt: input.Attempt}, onItem)
 }
 
 type ParseAssetSetProgress struct {
@@ -168,8 +168,8 @@ type ParseAssetSetProgress struct {
 }
 
 func (s *AssetService) ParseAssetSet(ctx context.Context, in ParseAssetSetInput, onItem func(ParseAssetSetProgress) error) (*model.ParsedDocumentSet, error) {
-	if strings.TrimSpace(in.SourceStepRunID) == "" || in.ProducerAttempt <= 0 {
-		return nil, fmt.Errorf("source_step_run_id 和 producer_attempt 必须有效")
+	if strings.TrimSpace(in.ProducerNodeRunID) == "" || in.ProducerAttempt <= 0 {
+		return nil, fmt.Errorf("producer_node_run_id 和 producer_attempt 必须有效")
 	}
 	if _, err := s.repo.GetAssetSet(ctx, in.AssetSetID); err != nil {
 		return nil, fmt.Errorf("读取 AssetSet: %w", err)
@@ -187,7 +187,7 @@ func (s *AssetService) ParseAssetSet(ctx context.Context, in ParseAssetSetInput,
 			Status: model.ParsedDocumentPending}
 	}
 	manifest, err := s.repo.BeginParsedDocumentSet(ctx, &model.ParsedDocumentSet{
-		AssetSetID: in.AssetSetID, SourceStepRunID: in.SourceStepRunID,
+		AssetSetID: in.AssetSetID, ProducerNodeRunID: in.ProducerNodeRunID,
 		ParserName: s.parser.ParserName(), ParserVersion: s.parser.ParserVersion(),
 		Status: model.ParsedDocumentSetRunning, ProducerAttempt: in.ProducerAttempt,
 	}, members)

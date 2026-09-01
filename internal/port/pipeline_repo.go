@@ -22,10 +22,10 @@ type DatasetPipelineRepo interface {
 	GetAppendDataset(ctx context.Context, id string) (*model.Dataset, error)
 
 	CreateDatasetBatch(ctx context.Context, batch *model.DatasetBatch) error
-	GetOrCreateDatasetBatchForStep(ctx context.Context, batch *model.DatasetBatch, producerAttempt int) (*model.DatasetBatch, error)
+	GetOrCreateDatasetBatchForNode(ctx context.Context, batch *model.DatasetBatch, producerAttempt int) (*model.DatasetBatch, error)
 	GetDatasetBatch(ctx context.Context, id string) (*model.DatasetBatch, error)
 	CommitDatasetBatch(ctx context.Context, batchID, payloadHash string, items []model.DatasetItem) (*model.DatasetBatch, error)
-	CommitDatasetBatchForStep(ctx context.Context, batchID, sourceStepRunID string, producerAttempt int,
+	CommitDatasetBatchForNode(ctx context.Context, batchID, producerNodeRunID string, producerAttempt int,
 		payloadHash string, items []model.DatasetItem) (*model.DatasetBatch, error)
 	ListDatasetItemsAfter(ctx context.Context, datasetID string, afterSeq, throughSeq int64, limit int) ([]model.DatasetItem, error)
 }
@@ -36,11 +36,11 @@ type QueryDatasetPipelineRepo interface {
 	GetAppendDataset(ctx context.Context, id string) (*model.Dataset, error)
 	GetDatasetSchema(ctx context.Context, id string) (*model.DatasetSchemaDefinition, error)
 	ListDatasetItemsAfter(ctx context.Context, datasetID string, afterSeq, throughSeq int64, limit int) ([]model.DatasetItem, error)
-	GetOrCreateDatasetBatchForStep(ctx context.Context, batch *model.DatasetBatch, producerAttempt int) (*model.DatasetBatch, error)
+	GetOrCreateDatasetBatchForNode(ctx context.Context, batch *model.DatasetBatch, producerAttempt int) (*model.DatasetBatch, error)
 
 	GetPipelineCursor(ctx context.Context, pipelineKey, sourceDatasetID, targetDatasetID string) (*model.PipelineCursor, error)
 	GetOrCreatePipelineCursor(ctx context.Context, pipelineKey, sourceDatasetID, targetDatasetID string) (*model.PipelineCursor, error)
-	CommitQueryDatasetBatchForStep(ctx context.Context, batchID, sourceStepRunID string, producerAttempt int,
+	CommitQueryDatasetBatchForNode(ctx context.Context, batchID, producerNodeRunID string, producerAttempt int,
 		payloadHash string, items []model.DatasetItem, cursorID string, expectedThroughSeq, advanceThroughSeq int64,
 		lastSuccessTaskID string) (*model.DatasetBatch, *model.PipelineCursor, error)
 }

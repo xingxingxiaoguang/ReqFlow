@@ -1,8 +1,5 @@
 -- 0001 down：按依赖逆序整体回收（未上线，无数据迁移义务）。
 DROP TABLE IF EXISTS platform_configs;
-DROP TABLE IF EXISTS agent_tool_settings;
-DROP TABLE IF EXISTS agent_skills;
-DROP TABLE IF EXISTS agent_sessions;
 DROP TABLE IF EXISTS knowledge_tool_audits;
 DROP TABLE IF EXISTS artifacts;
 DROP TABLE IF EXISTS analysis_results;
@@ -30,12 +27,7 @@ DROP TABLE IF EXISTS dataset_items;
 DROP TABLE IF EXISTS dataset_batches;
 DROP TABLE IF EXISTS dataset_aliases;
 DROP TABLE IF EXISTS datasets;
-DROP TABLE IF EXISTS task_resource_bindings;
-DROP TABLE IF EXISTS step_resource_bindings;
-DROP TABLE IF EXISTS step_runs;
-DROP TABLE IF EXISTS tasks;
 DROP TABLE IF EXISTS asset_set_members;
 DROP TABLE IF EXISTS asset_sets;
 DROP TABLE IF EXISTS assets;
-DROP TABLE IF EXISTS task_definitions;
 DROP TABLE IF EXISTS dataset_schemas;

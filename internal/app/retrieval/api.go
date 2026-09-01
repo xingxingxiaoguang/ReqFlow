@@ -81,7 +81,7 @@ type SnapshotView struct {
 	ID                 string    `json:"id"`
 	DatasetID          string    `json:"dataset_id"`
 	RetrievalProfileID string    `json:"retrieval_profile_id"`
-	SourceStepRunID    string    `json:"source_step_run_id,omitempty"`
+	ProducerNodeRunID  string    `json:"producer_node_run_id,omitempty"`
 	SourceSeq          int64     `json:"source_seq"`
 	Status             string    `json:"status"`
 	LexicalRef         string    `json:"lexical_ref,omitempty"`
@@ -135,7 +135,7 @@ func profileView(profile *model.RetrievalProfile) ProfileView {
 
 func snapshotView(snapshot *model.RetrievalSnapshot) SnapshotView {
 	return SnapshotView{ID: snapshot.ID, DatasetID: snapshot.DatasetID,
-		RetrievalProfileID: snapshot.RetrievalProfileID, SourceStepRunID: snapshot.SourceStepRunID,
+		RetrievalProfileID: snapshot.RetrievalProfileID, ProducerNodeRunID: snapshot.ProducerNodeRunID,
 		SourceSeq: snapshot.SourceSeq, Status: snapshot.Status, LexicalRef: snapshot.LexicalRef,
 		VectorRef: snapshot.VectorRef, LexicalCount: snapshot.LexicalCount,
 		VectorCount: snapshot.VectorCount, FailureReason: snapshot.FailureReason,

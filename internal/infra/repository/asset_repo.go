@@ -227,16 +227,16 @@ func (r *PipelineRepo) BeginParsedDocumentSet(ctx context.Context, set *model.Pa
 			Status     string
 			LeaseUntil *time.Time
 		}
-		if err := tx.Raw(`SELECT attempt, status, lease_until FROM step_runs
-			WHERE id = ? FOR UPDATE`, set.SourceStepRunID).Scan(&producer).Error; err != nil {
+		if err := tx.Raw(`SELECT attempt, status, lease_until FROM workflow_node_runs
+			WHERE id = ? FOR UPDATE`, set.ProducerNodeRunID).Scan(&producer).Error; err != nil {
 			return err
 		}
-		if producer.Attempt != set.ProducerAttempt || producer.Status != model.StepRunRunning ||
+		if producer.Attempt != set.ProducerAttempt || producer.Status != "running" ||
 			producer.LeaseUntil == nil || !producer.LeaseUntil.After(time.Now()) {
 			return port.ErrStaleResourceExecution
 		}
 		var row parsedDocumentSetV2Row
-		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("source_step_run_id = ?", set.SourceStepRunID).Limit(1).Find(&row).Error
+		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("producer_node_run_id = ?", set.ProducerNodeRunID).Limit(1).Find(&row).Error
 		switch {
 		case err == nil && row.ID == "":
 			if set.ID == "" {
@@ -246,15 +246,15 @@ func (r *PipelineRepo) BeginParsedDocumentSet(ctx context.Context, set *model.Pa
 				set.CreatedAt = time.Now()
 			}
 			if err := tx.Exec(`INSERT INTO parsed_document_sets
-				(id, asset_set_id, source_step_run_id, parser_name, parser_version, status,
+				(id, asset_set_id, producer_node_run_id, parser_name, parser_version, status,
 				 producer_attempt, total_count, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, set.ID, set.AssetSetID, set.SourceStepRunID,
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, set.ID, set.AssetSetID, set.ProducerNodeRunID,
 				set.ParserName, set.ParserVersion, model.ParsedDocumentSetRunning,
 				set.ProducerAttempt, len(members), set.CreatedAt).Error; err != nil {
 				return err
 			}
 			row = parsedDocumentSetV2Row{ID: set.ID, AssetSetID: set.AssetSetID,
-				SourceStepRunID: set.SourceStepRunID, ParserName: set.ParserName,
+				ProducerNodeRunID: set.ProducerNodeRunID, ParserName: set.ParserName,
 				ParserVersion: set.ParserVersion, Status: model.ParsedDocumentSetRunning,
 				ProducerAttempt: set.ProducerAttempt, TotalCount: len(members), CreatedAt: set.CreatedAt}
 		case err != nil:
@@ -264,7 +264,7 @@ func (r *PipelineRepo) BeginParsedDocumentSet(ctx context.Context, set *model.Pa
 				return port.ErrStaleResourceExecution
 			}
 			if row.AssetSetID != set.AssetSetID || row.ParserName != set.ParserName || row.ParserVersion != set.ParserVersion {
-				return fmt.Errorf("StepRun %s 的解析输入或 Parser 身份发生变化", set.SourceStepRunID)
+				return fmt.Errorf("NodeRun %s 的解析输入或 Parser 身份发生变化", set.ProducerNodeRunID)
 			}
 			if row.ProducerAttempt < set.ProducerAttempt {
 				if err := tx.Model(&parsedDocumentSetV2Row{}).Where("id = ?", row.ID).Updates(map[string]any{
@@ -298,12 +298,12 @@ func (r *PipelineRepo) BeginParsedDocumentSet(ctx context.Context, set *model.Pa
 func (r *PipelineRepo) RecordParsedDocumentSetItem(ctx context.Context, setID string, producerAttempt int, item model.ParsedDocumentSetItem) error {
 	result := r.db.WithContext(ctx).Exec(`UPDATE parsed_document_set_items AS i
 		SET parsed_document_id = ?, status = ?, error_message = ?
-		FROM parsed_document_sets AS s, step_runs AS sr
+		FROM parsed_document_sets AS s, workflow_node_runs AS sr
 		WHERE i.parsed_document_set_id = s.id AND s.id = ? AND i.asset_id = ?
-		  AND sr.id = s.source_step_run_id AND s.producer_attempt = ? AND s.status = ?
+		  AND sr.id = s.producer_node_run_id AND s.producer_attempt = ? AND s.status = ?
 		  AND sr.attempt = ? AND sr.status = ? AND sr.lease_until > ?`, nullableUUID(item.ParsedDocumentID),
 		item.Status, item.ErrorMessage, setID, item.AssetID, producerAttempt, model.ParsedDocumentSetRunning,
-		producerAttempt, model.StepRunRunning, time.Now())
+		producerAttempt, "running", time.Now())
 	if result.Error != nil {
 		return result.Error
 	}
@@ -324,9 +324,9 @@ func (r *PipelineRepo) FinalizeParsedDocumentSet(ctx context.Context, setID stri
 			return port.ErrStaleResourceExecution
 		}
 		var validProducer int64
-		if err := tx.Raw(`SELECT count(*) FROM step_runs WHERE id = ? AND attempt = ?
-			AND status = ? AND lease_until > ?`, row.SourceStepRunID, producerAttempt,
-			model.StepRunRunning, time.Now()).Scan(&validProducer).Error; err != nil {
+		if err := tx.Raw(`SELECT count(*) FROM workflow_node_runs WHERE id = ? AND attempt = ?
+			AND status = ? AND lease_until > ?`, row.ProducerNodeRunID, producerAttempt,
+			"running", time.Now()).Scan(&validProducer).Error; err != nil {
 			return err
 		}
 		if validProducer != 1 {
@@ -478,24 +478,24 @@ func (row documentBlockV2Row) toModel() model.DocumentBlock {
 }
 
 type parsedDocumentSetV2Row struct {
-	ID              string     `gorm:"column:id;primaryKey"`
-	AssetSetID      string     `gorm:"column:asset_set_id"`
-	SourceStepRunID string     `gorm:"column:source_step_run_id"`
-	ParserName      string     `gorm:"column:parser_name"`
-	ParserVersion   string     `gorm:"column:parser_version"`
-	Status          string     `gorm:"column:status"`
-	ProducerAttempt int        `gorm:"column:producer_attempt"`
-	TotalCount      int        `gorm:"column:total_count"`
-	SucceededCount  int        `gorm:"column:succeeded_count"`
-	FailedCount     int        `gorm:"column:failed_count"`
-	CreatedAt       time.Time  `gorm:"column:created_at"`
-	FinishedAt      *time.Time `gorm:"column:finished_at"`
+	ID                string     `gorm:"column:id;primaryKey"`
+	AssetSetID        string     `gorm:"column:asset_set_id"`
+	ProducerNodeRunID string     `gorm:"column:producer_node_run_id"`
+	ParserName        string     `gorm:"column:parser_name"`
+	ParserVersion     string     `gorm:"column:parser_version"`
+	Status            string     `gorm:"column:status"`
+	ProducerAttempt   int        `gorm:"column:producer_attempt"`
+	TotalCount        int        `gorm:"column:total_count"`
+	SucceededCount    int        `gorm:"column:succeeded_count"`
+	FailedCount       int        `gorm:"column:failed_count"`
+	CreatedAt         time.Time  `gorm:"column:created_at"`
+	FinishedAt        *time.Time `gorm:"column:finished_at"`
 }
 
 func (parsedDocumentSetV2Row) TableName() string { return "parsed_document_sets" }
 func (row parsedDocumentSetV2Row) toModel() model.ParsedDocumentSet {
 	set := model.ParsedDocumentSet{ID: row.ID, AssetSetID: row.AssetSetID,
-		SourceStepRunID: row.SourceStepRunID, ParserName: row.ParserName,
+		ProducerNodeRunID: row.ProducerNodeRunID, ParserName: row.ParserName,
 		ParserVersion: row.ParserVersion, Status: row.Status, ProducerAttempt: row.ProducerAttempt,
 		TotalCount: row.TotalCount, SucceededCount: row.SucceededCount,
 		FailedCount: row.FailedCount, CreatedAt: row.CreatedAt}

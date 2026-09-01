@@ -61,7 +61,7 @@ type VectorSearchRequest struct {
 }
 
 // RetrievalRepo 同时保存不可变 Profile、Snapshot 状态机和 pgvector Chunk。
-// Snapshot 终态写入带 StepRun attempt fencing，外部索引调用不进入数据库事务。
+// Snapshot 终态写入带 NodeRun attempt fencing，外部索引调用不进入数据库事务。
 type RetrievalRepo interface {
 	GetAppendDataset(ctx context.Context, id string) (*model.Dataset, error)
 	GetDatasetSchema(ctx context.Context, id string) (*model.DatasetSchemaDefinition, error)
@@ -71,12 +71,12 @@ type RetrievalRepo interface {
 	GetRetrievalProfile(ctx context.Context, id string) (*model.RetrievalProfile, error)
 	ListRetrievalProfiles(ctx context.Context, workspaceID, datasetSchemaID string, limit int) ([]model.RetrievalProfile, error)
 
-	GetOrCreateRetrievalSnapshotForStep(ctx context.Context, snapshot *model.RetrievalSnapshot, producerAttempt int) (*model.RetrievalSnapshot, error)
+	GetOrCreateRetrievalSnapshotForNode(ctx context.Context, snapshot *model.RetrievalSnapshot, producerAttempt int) (*model.RetrievalSnapshot, error)
 	GetRetrievalSnapshot(ctx context.Context, id string) (*model.RetrievalSnapshot, error)
 	ListRetrievalSnapshots(ctx context.Context, datasetID, profileID, status string, limit int) ([]model.RetrievalSnapshot, error)
 	GetLatestActiveRetrievalSnapshot(ctx context.Context, datasetID, profileID string, throughSeq int64) (*model.RetrievalSnapshot, error)
-	SetRetrievalSnapshotStatusForStep(ctx context.Context, snapshotID, stepRunID string, producerAttempt int, status, failureReason string) error
-	ActivateRetrievalSnapshotForStep(ctx context.Context, snapshotID, stepRunID string, producerAttempt int,
+	SetRetrievalSnapshotStatusForNode(ctx context.Context, snapshotID, nodeRunID string, producerAttempt int, status, failureReason string) error
+	ActivateRetrievalSnapshotForNode(ctx context.Context, snapshotID, nodeRunID string, producerAttempt int,
 		lexicalRef, vectorRef string, lexicalCount, vectorCount int) (*model.RetrievalSnapshot, error)
 
 	UpsertRetrievalChunks(ctx context.Context, chunks []model.RetrievalChunk) error

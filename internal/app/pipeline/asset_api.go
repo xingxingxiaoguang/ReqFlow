@@ -84,18 +84,18 @@ type ParsedDocumentSetItemView struct {
 }
 
 type ParsedDocumentSetView struct {
-	ID              string                      `json:"id"`
-	AssetSetID      string                      `json:"asset_set_id"`
-	SourceStepRunID string                      `json:"source_step_run_id"`
-	ParserName      string                      `json:"parser_name"`
-	ParserVersion   string                      `json:"parser_version"`
-	Status          string                      `json:"status"`
-	TotalCount      int                         `json:"total_count"`
-	SucceededCount  int                         `json:"succeeded_count"`
-	FailedCount     int                         `json:"failed_count"`
-	Items           []ParsedDocumentSetItemView `json:"items"`
-	CreatedAt       time.Time                   `json:"created_at"`
-	FinishedAt      time.Time                   `json:"finished_at,omitempty"`
+	ID                string                      `json:"id"`
+	AssetSetID        string                      `json:"asset_set_id"`
+	ProducerNodeRunID string                      `json:"producer_node_run_id"`
+	ParserName        string                      `json:"parser_name"`
+	ParserVersion     string                      `json:"parser_version"`
+	Status            string                      `json:"status"`
+	TotalCount        int                         `json:"total_count"`
+	SucceededCount    int                         `json:"succeeded_count"`
+	FailedCount       int                         `json:"failed_count"`
+	Items             []ParsedDocumentSetItemView `json:"items"`
+	CreatedAt         time.Time                   `json:"created_at"`
+	FinishedAt        time.Time                   `json:"finished_at,omitempty"`
 }
 
 func (s *AssetService) ViewParsedDocumentSet(ctx context.Context, id string) (*ParsedDocumentSetView, error) {
@@ -113,7 +113,7 @@ func (s *AssetService) ViewParsedDocumentSet(ctx context.Context, id string) (*P
 			Status: item.Status, ParsedDocumentID: item.ParsedDocumentID, ErrorMessage: item.ErrorMessage}
 	}
 	return &ParsedDocumentSetView{ID: set.ID, AssetSetID: set.AssetSetID,
-		SourceStepRunID: set.SourceStepRunID, ParserName: set.ParserName,
+		ProducerNodeRunID: set.ProducerNodeRunID, ParserName: set.ParserName,
 		ParserVersion: set.ParserVersion, Status: set.Status, TotalCount: set.TotalCount,
 		SucceededCount: set.SucceededCount, FailedCount: set.FailedCount, Items: views,
 		CreatedAt: set.CreatedAt, FinishedAt: set.FinishedAt}, nil

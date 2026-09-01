@@ -65,15 +65,6 @@ func TestIntegrationFreshMigration(t *testing.T) {
 	if reviewTables != 2 {
 		t.Fatalf("review tables=%d want=2", reviewTables)
 	}
-	var agentTables int64
-	if err := target.Raw(`SELECT count(*) FROM information_schema.tables
-		WHERE table_schema = 'public' AND table_name IN
-		('agent_skills','agent_tool_settings')`).Scan(&agentTables).Error; err != nil {
-		t.Fatal(err)
-	}
-	if agentTables != 2 {
-		t.Fatalf("agent config tables=%d want=2", agentTables)
-	}
 	var platformConfigTables int64
 	if err := target.Raw(`SELECT count(*) FROM information_schema.tables
 		WHERE table_schema = 'public' AND table_name = 'platform_configs'`).Scan(&platformConfigTables).Error; err != nil {
@@ -111,6 +102,8 @@ func TestIntegrationFreshMigration(t *testing.T) {
 	if err := target.Raw(`SELECT count(*) FROM information_schema.tables
 		WHERE table_schema = 'public' AND table_name IN
 		('projects', 'work_items', 'import_records', 'task_steps', 'task_items',
+		 'task_definitions', 'tasks', 'step_runs', 'task_resource_bindings', 'step_resource_bindings',
+		 'agent_sessions', 'agent_skills', 'agent_tool_settings',
 		 'metadata_registry', 'metadata_audit',
 		 'archived_tasks', 'archived_datasets', 'archived_dataset_items')`).Scan(&legacyTables).Error; err != nil {
 		t.Fatal(err)

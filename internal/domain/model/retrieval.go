@@ -43,7 +43,7 @@ type RetrievalSnapshot struct {
 	ID                 string
 	DatasetID          string
 	RetrievalProfileID string
-	SourceStepRunID    string
+	ProducerNodeRunID  string
 	SourceSeq          int64
 	Status             string
 	LexicalRef         string

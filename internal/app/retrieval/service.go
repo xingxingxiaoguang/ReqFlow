@@ -109,7 +109,7 @@ type BuildInput struct {
 	RetrievalProfileID string
 	SourceSeq          int64
 	TaskID             string
-	StepRunID          string
+	ProducerNodeRunID  string
 	ProducerAttempt    int
 }
 
@@ -139,8 +139,8 @@ func (s *Service) BuildSnapshot(ctx context.Context, input BuildInput,
 		return nil, err
 	}
 	indexRef := retrievalIndexRef(dataset.ID, profile.ID)
-	snapshot, err = s.repo.GetOrCreateRetrievalSnapshotForStep(ctx, &model.RetrievalSnapshot{
-		DatasetID: dataset.ID, RetrievalProfileID: profile.ID, SourceStepRunID: input.StepRunID,
+	snapshot, err = s.repo.GetOrCreateRetrievalSnapshotForNode(ctx, &model.RetrievalSnapshot{
+		DatasetID: dataset.ID, RetrievalProfileID: profile.ID, ProducerNodeRunID: input.ProducerNodeRunID,
 		SourceSeq: input.SourceSeq, Status: model.RetrievalSnapshotBuilding,
 	}, input.ProducerAttempt)
 	if err != nil {
@@ -152,8 +152,8 @@ func (s *Service) BuildSnapshot(ctx context.Context, input BuildInput,
 	snapshotID := snapshot.ID
 	defer func() {
 		if err != nil {
-			_ = s.repo.SetRetrievalSnapshotStatusForStep(context.WithoutCancel(ctx), snapshotID,
-				input.StepRunID, input.ProducerAttempt, model.RetrievalSnapshotFailed, truncateError(err.Error(), 4000))
+			_ = s.repo.SetRetrievalSnapshotStatusForNode(context.WithoutCancel(ctx), snapshotID,
+				input.ProducerNodeRunID, input.ProducerAttempt, model.RetrievalSnapshotFailed, truncateError(err.Error(), 4000))
 		}
 	}()
 
@@ -222,7 +222,7 @@ func (s *Service) BuildSnapshot(ctx context.Context, input BuildInput,
 			}
 		}
 	}
-	if err = s.repo.SetRetrievalSnapshotStatusForStep(ctx, snapshot.ID, input.StepRunID,
+	if err = s.repo.SetRetrievalSnapshotStatusForNode(ctx, snapshot.ID, input.ProducerNodeRunID,
 		input.ProducerAttempt, model.RetrievalSnapshotValidating, ""); err != nil {
 		return nil, err
 	}
@@ -239,7 +239,7 @@ func (s *Service) BuildSnapshot(ctx context.Context, input BuildInput,
 			input.SourceSeq, lexicalCount, vectorItems)
 	}
 	vectorRef := "pgvector:" + dataset.ID + ":" + profile.ID
-	snapshot, err = s.repo.ActivateRetrievalSnapshotForStep(ctx, snapshot.ID, input.StepRunID,
+	snapshot, err = s.repo.ActivateRetrievalSnapshotForNode(ctx, snapshot.ID, input.ProducerNodeRunID,
 		input.ProducerAttempt, indexRef, vectorRef, lexicalCount, vectorCount)
 	if err != nil {
 		return nil, err
@@ -256,8 +256,8 @@ func (s *Service) BuildSnapshot(ctx context.Context, input BuildInput,
 }
 
 func (s *Service) validateBuildInput(ctx context.Context, input BuildInput) (*model.Dataset, *model.RetrievalProfile, error) {
-	if strings.TrimSpace(input.StepRunID) == "" || input.ProducerAttempt <= 0 {
-		return nil, nil, fmt.Errorf("retrieval.build 必须由有效 StepRun attempt 执行")
+	if strings.TrimSpace(input.ProducerNodeRunID) == "" || input.ProducerAttempt <= 0 {
+		return nil, nil, fmt.Errorf("retrieval.build 必须由有效 NodeRun attempt 执行")
 	}
 	dataset, err := s.repo.GetAppendDataset(ctx, strings.TrimSpace(input.DatasetID))
 	if err != nil {

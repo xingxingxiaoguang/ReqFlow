@@ -90,28 +90,28 @@ func (s *DatasetService) GetDatasetView(ctx context.Context, id string) (*Datase
 }
 
 type CreateBatchRequest struct {
-	SourceTaskID    string `json:"source_task_id,omitempty"`
-	SourceStepRunID string `json:"source_step_run_id,omitempty"`
+	ProducerWorkflowRunID string `json:"producer_workflow_run_id,omitempty"`
+	ProducerNodeRunID     string `json:"producer_node_run_id,omitempty"`
 }
 
 type BatchView struct {
-	ID              string    `json:"id"`
-	DatasetID       string    `json:"dataset_id"`
-	SourceTaskID    string    `json:"source_task_id,omitempty"`
-	SourceStepRunID string    `json:"source_step_run_id,omitempty"`
-	Status          string    `json:"status"`
-	ItemCount       int       `json:"item_count"`
-	FromSeq         int64     `json:"from_seq"`
-	ToSeq           int64     `json:"to_seq"`
-	PayloadHash     string    `json:"payload_hash,omitempty"`
-	ErrorMessage    string    `json:"error_message,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	CommittedAt     time.Time `json:"committed_at,omitempty"`
+	ID                    string    `json:"id"`
+	DatasetID             string    `json:"dataset_id"`
+	ProducerWorkflowRunID string    `json:"producer_workflow_run_id,omitempty"`
+	ProducerNodeRunID     string    `json:"producer_node_run_id,omitempty"`
+	Status                string    `json:"status"`
+	ItemCount             int       `json:"item_count"`
+	FromSeq               int64     `json:"from_seq"`
+	ToSeq                 int64     `json:"to_seq"`
+	PayloadHash           string    `json:"payload_hash,omitempty"`
+	ErrorMessage          string    `json:"error_message,omitempty"`
+	CreatedAt             time.Time `json:"created_at"`
+	CommittedAt           time.Time `json:"committed_at,omitempty"`
 }
 
 func (s *DatasetService) OpenBatch(ctx context.Context, datasetID string, request CreateBatchRequest) (*BatchView, error) {
 	batch, err := s.CreateBatch(ctx, CreateBatchInput{DatasetID: datasetID,
-		SourceTaskID: request.SourceTaskID, SourceStepRunID: request.SourceStepRunID})
+		ProducerWorkflowRunID: request.ProducerWorkflowRunID, ProducerNodeRunID: request.ProducerNodeRunID})
 	if err != nil {
 		return nil, err
 	}
@@ -213,8 +213,8 @@ func schemaView(schema *model.DatasetSchemaDefinition) SchemaView {
 }
 
 func batchView(batch *model.DatasetBatch) BatchView {
-	return BatchView{ID: batch.ID, DatasetID: batch.DatasetID, SourceTaskID: batch.SourceTaskID,
-		SourceStepRunID: batch.SourceStepRunID, Status: batch.Status, ItemCount: batch.ItemCount,
+	return BatchView{ID: batch.ID, DatasetID: batch.DatasetID, ProducerWorkflowRunID: batch.ProducerWorkflowRunID,
+		ProducerNodeRunID: batch.ProducerNodeRunID, Status: batch.Status, ItemCount: batch.ItemCount,
 		FromSeq: batch.FromSeq, ToSeq: batch.ToSeq, PayloadHash: batch.PayloadHash,
 		ErrorMessage: batch.ErrorMessage, CreatedAt: batch.CreatedAt, CommittedAt: batch.CommittedAt}
 }

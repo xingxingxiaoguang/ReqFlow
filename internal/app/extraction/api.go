@@ -87,7 +87,7 @@ type RecordDraftSetView struct {
 	ID                  string               `json:"id"`
 	ParsedDocumentSetID string               `json:"parsed_document_set_id"`
 	ExtractionProfileID string               `json:"extraction_profile_id"`
-	SourceStepRunID     string               `json:"source_step_run_id"`
+	ProducerNodeRunID   string               `json:"producer_node_run_id"`
 	Status              string               `json:"status"`
 	Model               string               `json:"model"`
 	UnitCount           int                  `json:"unit_count"`
@@ -128,7 +128,7 @@ func (s *Service) ViewRecordDraftSet(ctx context.Context, id string) (*RecordDra
 			Provenance: draft.Provenance, CreatedAt: draft.CreatedAt}
 	}
 	return &RecordDraftSetView{ID: set.ID, ParsedDocumentSetID: set.ParsedDocumentSetID,
-		ExtractionProfileID: set.ExtractionProfileID, SourceStepRunID: set.SourceStepRunID,
+		ExtractionProfileID: set.ExtractionProfileID, ProducerNodeRunID: set.ProducerNodeRunID,
 		Status: set.Status, Model: set.Model, UnitCount: set.UnitCount,
 		SucceededUnitCount: set.SucceededUnitCount, FailedUnitCount: set.FailedUnitCount,
 		DraftCount: set.DraftCount, LLMRequestCount: set.LLMRequestCount,

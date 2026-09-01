@@ -103,7 +103,7 @@ func (s *Service) GetProfile(ctx context.Context, id string) (*model.ExtractionP
 type ExtractInput struct {
 	ParsedDocumentSetID string
 	ExtractionProfileID string
-	SourceStepRunID     string
+	ProducerNodeRunID   string
 	ProducerAttempt     int
 	Checkpoint          json.RawMessage
 	SaveCheckpoint      func(json.RawMessage) error
@@ -155,8 +155,8 @@ type extractionBlock struct {
 func (s *Service) Extract(ctx context.Context, in ExtractInput,
 	onUnit func(Progress) error) (*model.RecordDraftSet, error) {
 	if strings.TrimSpace(in.ParsedDocumentSetID) == "" || strings.TrimSpace(in.ExtractionProfileID) == "" ||
-		strings.TrimSpace(in.SourceStepRunID) == "" || in.ProducerAttempt <= 0 {
-		return nil, fmt.Errorf("documents、extraction_profile_id、source_step_run_id 和 producer_attempt 必须有效")
+		strings.TrimSpace(in.ProducerNodeRunID) == "" || in.ProducerAttempt <= 0 {
+		return nil, fmt.Errorf("documents、extraction_profile_id、producer_node_run_id 和 producer_attempt 必须有效")
 	}
 	documentSet, members, err := s.repo.GetParsedDocumentSet(ctx, in.ParsedDocumentSetID)
 	if err != nil {
@@ -195,7 +195,7 @@ func (s *Service) Extract(ctx context.Context, in ExtractInput,
 	}
 	manifest, err := s.repo.BeginRecordDraftSet(ctx, &model.RecordDraftSet{
 		ParsedDocumentSetID: documentSet.ID, ExtractionProfileID: profile.ID,
-		SourceStepRunID: in.SourceStepRunID, ProducerAttempt: in.ProducerAttempt,
+		ProducerNodeRunID: in.ProducerNodeRunID, ProducerAttempt: in.ProducerAttempt,
 		Status: model.RecordDraftSetRunning, Model: modelName,
 	}, units)
 	if err != nil {
@@ -259,7 +259,7 @@ func (s *Service) Extract(ctx context.Context, in ExtractInput,
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			if errors.Is(extractErr, port.ErrStaleResourceExecution) || errors.Is(extractErr, port.ErrLeaseLost) {
+			if errors.Is(extractErr, port.ErrStaleResourceExecution) {
 				return nil, extractErr
 			}
 			status = model.ExtractionUnitFailed

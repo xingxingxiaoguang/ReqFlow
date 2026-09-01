@@ -14,7 +14,7 @@ type ExtractionProfileRepo interface {
 type RecordDraftRepo interface {
 	BeginRecordDraftSet(ctx context.Context, set *model.RecordDraftSet, units []model.ExtractionUnit) (*model.RecordDraftSet, error)
 	GetRecordDraftSet(ctx context.Context, id string) (*model.RecordDraftSet, []model.ExtractionUnit, error)
-	GetRecordDraftSetByStepRun(ctx context.Context, stepRunID string) (*model.RecordDraftSet, []model.ExtractionUnit, error)
+	GetRecordDraftSetByNodeRun(ctx context.Context, nodeRunID string) (*model.RecordDraftSet, []model.ExtractionUnit, error)
 	StartExtractionUnit(ctx context.Context, setID string, producerAttempt int, unitKey string) error
 	CompleteExtractionUnit(ctx context.Context, setID string, producerAttempt int, unitKey, responseHash string, usage model.LLMUsage, drafts []model.RecordDraft) error
 	FailExtractionUnit(ctx context.Context, setID string, producerAttempt int, unitKey, message string, usage model.LLMUsage) error

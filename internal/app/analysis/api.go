@@ -30,33 +30,33 @@ type ProfileView struct {
 }
 
 type ResultView struct {
-	ID                string          `json:"id"`
-	WorkspaceID       string          `json:"workspace_id"`
-	AnalysisProfileID string          `json:"analysis_profile_id"`
-	SourceTaskID      string          `json:"source_task_id"`
-	SourceStepRunID   string          `json:"source_step_run_id"`
-	Status            string          `json:"status"`
-	Output            json.RawMessage `json:"output"`
-	Model             string          `json:"model"`
-	InputTokens       int             `json:"input_tokens"`
-	OutputTokens      int             `json:"output_tokens"`
-	CacheReadTokens   int             `json:"cache_read_tokens"`
-	CacheWriteTokens  int             `json:"cache_write_tokens"`
-	ErrorMessage      string          `json:"error_message,omitempty"`
-	CreatedAt         time.Time       `json:"created_at"`
-	FinishedAt        time.Time       `json:"finished_at,omitempty"`
+	ID                    string          `json:"id"`
+	WorkspaceID           string          `json:"workspace_id"`
+	AnalysisProfileID     string          `json:"analysis_profile_id"`
+	ProducerWorkflowRunID string          `json:"producer_workflow_run_id"`
+	ProducerNodeRunID     string          `json:"producer_node_run_id"`
+	Status                string          `json:"status"`
+	Output                json.RawMessage `json:"output"`
+	Model                 string          `json:"model"`
+	InputTokens           int             `json:"input_tokens"`
+	OutputTokens          int             `json:"output_tokens"`
+	CacheReadTokens       int             `json:"cache_read_tokens"`
+	CacheWriteTokens      int             `json:"cache_write_tokens"`
+	ErrorMessage          string          `json:"error_message,omitempty"`
+	CreatedAt             time.Time       `json:"created_at"`
+	FinishedAt            time.Time       `json:"finished_at,omitempty"`
 }
 
 type ArtifactView struct {
-	ID              string          `json:"id"`
-	WorkspaceID     string          `json:"workspace_id"`
-	Kind            string          `json:"kind"`
-	Name            string          `json:"name"`
-	ContentHash     string          `json:"content_hash"`
-	SourceTaskID    string          `json:"source_task_id"`
-	SourceStepRunID string          `json:"source_step_run_id"`
-	Metadata        json.RawMessage `json:"metadata"`
-	CreatedAt       time.Time       `json:"created_at"`
+	ID                    string          `json:"id"`
+	WorkspaceID           string          `json:"workspace_id"`
+	Kind                  string          `json:"kind"`
+	Name                  string          `json:"name"`
+	ContentHash           string          `json:"content_hash"`
+	ProducerWorkflowRunID string          `json:"producer_workflow_run_id"`
+	ProducerNodeRunID     string          `json:"producer_node_run_id"`
+	Metadata              json.RawMessage `json:"metadata"`
+	CreatedAt             time.Time       `json:"created_at"`
 }
 
 func (s *Service) RegisterProfile(ctx context.Context, request CreateProfileRequest) (*ProfileView, error) {
@@ -136,8 +136,8 @@ func profileView(profile model.AnalysisProfile) ProfileView {
 
 func resultView(result model.AnalysisResult) ResultView {
 	return ResultView{ID: result.ID, WorkspaceID: result.WorkspaceID,
-		AnalysisProfileID: result.AnalysisProfileID, SourceTaskID: result.SourceTaskID,
-		SourceStepRunID: result.SourceStepRunID, Status: result.Status, Output: result.Output,
+		AnalysisProfileID: result.AnalysisProfileID, ProducerWorkflowRunID: result.ProducerWorkflowRunID,
+		ProducerNodeRunID: result.ProducerNodeRunID, Status: result.Status, Output: result.Output,
 		Model: result.Model, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
 		CacheReadTokens: result.CacheReadTokens, CacheWriteTokens: result.CacheWriteTokens,
 		ErrorMessage: result.ErrorMessage, CreatedAt: result.CreatedAt, FinishedAt: result.FinishedAt}
@@ -149,6 +149,6 @@ func artifactView(artifact model.Artifact) ArtifactView {
 		metadata = json.RawMessage(`{}`)
 	}
 	return ArtifactView{ID: artifact.ID, WorkspaceID: artifact.WorkspaceID, Kind: artifact.Kind,
-		Name: artifact.Name, ContentHash: artifact.ContentHash, SourceTaskID: artifact.SourceTaskID,
-		SourceStepRunID: artifact.SourceStepRunID, Metadata: metadata, CreatedAt: artifact.CreatedAt}
+		Name: artifact.Name, ContentHash: artifact.ContentHash, ProducerWorkflowRunID: artifact.ProducerWorkflowRunID,
+		ProducerNodeRunID: artifact.ProducerNodeRunID, Metadata: metadata, CreatedAt: artifact.CreatedAt}
 }

@@ -25,14 +25,14 @@ func NewArtifactService(repo port.AnalysisRepo, blobs port.BlobStore) (*Artifact
 }
 
 type PublishArtifactInput struct {
-	WorkspaceID     string
-	Kind            string
-	Name            string
-	Content         []byte
-	SourceTaskID    string
-	SourceStepRunID string
-	ProducerAttempt int
-	Metadata        map[string]any
+	WorkspaceID           string
+	Kind                  string
+	Name                  string
+	Content               []byte
+	ProducerWorkflowRunID string
+	ProducerNodeRunID     string
+	ProducerAttempt       int
+	Metadata              map[string]any
 }
 
 func (s *ArtifactService) Publish(ctx context.Context, input PublishArtifactInput) (*model.Artifact, error) {
@@ -57,9 +57,9 @@ func (s *ArtifactService) Publish(ctx context.Context, input PublishArtifactInpu
 		return nil, err
 	}
 	metadata, _ := json.Marshal(input.Metadata)
-	return s.repo.CreateArtifactForStep(ctx, &model.Artifact{WorkspaceID: input.WorkspaceID,
+	return s.repo.CreateArtifactForNode(ctx, &model.Artifact{WorkspaceID: input.WorkspaceID,
 		Kind: input.Kind, Name: input.Name, BlobURI: object.URI, ContentHash: object.SHA256,
-		SourceTaskID: input.SourceTaskID, SourceStepRunID: input.SourceStepRunID,
+		ProducerWorkflowRunID: input.ProducerWorkflowRunID, ProducerNodeRunID: input.ProducerNodeRunID,
 		ProducerAttempt: input.ProducerAttempt, Metadata: string(metadata)}, input.ProducerAttempt)
 }
 

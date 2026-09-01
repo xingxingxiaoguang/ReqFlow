@@ -31,7 +31,7 @@ func TestQueryDatasetServiceProcessesOnlyNewIncrementAndPreservesLineage(t *test
 	config := queryDerivationTestConfig()
 	first, err := queries.Derive(ctx, DeriveQueryDatasetInput{SourceDatasetID: source.ID,
 		SourceThroughSeq: 2, TargetDatasetID: target.ID, Config: config,
-		SourceTaskID: "task-1", SourceStepRunID: "step-1", ProducerAttempt: 1})
+		ProducerWorkflowRunID: "task-1", ProducerNodeRunID: "step-1", ProducerAttempt: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,14 +71,14 @@ func TestQueryDatasetServiceProcessesOnlyNewIncrementAndPreservesLineage(t *test
 	}
 	retried, err := queries.Derive(ctx, DeriveQueryDatasetInput{SourceDatasetID: source.ID,
 		SourceThroughSeq: 2, TargetDatasetID: target.ID, Config: config,
-		SourceTaskID: "task-1", SourceStepRunID: "step-1", ProducerAttempt: 2})
+		ProducerWorkflowRunID: "task-1", ProducerNodeRunID: "step-1", ProducerAttempt: 2})
 	if err != nil || retried.Batch.ID != first.Batch.ID || len(repo.items[target.ID]) != 2 {
 		t.Fatalf("提交后的同 Task attempt 必须复用原 Batch: result=%+v err=%v", retried, err)
 	}
 	batchCount := len(repo.batches)
 	_, err = queries.Derive(ctx, DeriveQueryDatasetInput{SourceDatasetID: source.ID,
 		SourceThroughSeq: 2, TargetDatasetID: target.ID, Config: config,
-		SourceTaskID: "task-noop", SourceStepRunID: "step-noop", ProducerAttempt: 1})
+		ProducerWorkflowRunID: "task-noop", ProducerNodeRunID: "step-noop", ProducerAttempt: 1})
 	if !errors.Is(err, ErrNoQueryDatasetIncrement) || len(repo.batches) != batchCount {
 		t.Fatalf("无增量 Task 应拒绝且不遗留 staging Batch: err=%v batches=%d", err, len(repo.batches))
 	}
@@ -89,7 +89,7 @@ func TestQueryDatasetServiceProcessesOnlyNewIncrementAndPreservesLineage(t *test
 	}})
 	second, err := queries.Derive(ctx, DeriveQueryDatasetInput{SourceDatasetID: source.ID,
 		SourceThroughSeq: 3, TargetDatasetID: target.ID, Config: config,
-		SourceTaskID: "task-2", SourceStepRunID: "step-2", ProducerAttempt: 1})
+		ProducerWorkflowRunID: "task-2", ProducerNodeRunID: "step-2", ProducerAttempt: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,8 +111,8 @@ func TestQueryDatasetServiceDoesNotAdvanceCursorWhenTargetCommitFails(t *testing
 	}})
 	repo.failQueryCommit = true
 	input := DeriveQueryDatasetInput{SourceDatasetID: source.ID, SourceThroughSeq: 1,
-		TargetDatasetID: target.ID, Config: queryDerivationTestConfig(), SourceTaskID: "task-fail",
-		SourceStepRunID: "step-fail", ProducerAttempt: 1}
+		TargetDatasetID: target.ID, Config: queryDerivationTestConfig(), ProducerWorkflowRunID: "task-fail",
+		ProducerNodeRunID: "step-fail", ProducerAttempt: 1}
 	if _, err := queries.Derive(ctx, input); err == nil {
 		t.Fatal("目标 Batch 失败应返回错误")
 	}
@@ -131,25 +131,7 @@ func TestQueryDatasetServiceDoesNotAdvanceCursorWhenTargetCommitFails(t *testing
 		t.Fatal(err)
 	}
 	if retried.Cursor.ProcessedThroughSeq != 1 || retried.Batch.ItemCount != 1 || len(repo.items[target.ID]) != 1 {
-		t.Fatalf("同一 StepRun 重试应复用 staging Batch 并成功推进: %+v", retried)
-	}
-}
-
-func TestQueryDatasetDeriveExecutorRejectsUnknownConfigAndWrongPorts(t *testing.T) {
-	repo := newMemoryPipelineRepo()
-	datasets := NewDatasetService(repo)
-	queries, _ := NewQueryDatasetService(repo, datasets)
-	executor, _ := NewQueryDatasetDeriveExecutor(queries)
-	valid := model.StepDefinition{ID: "derive", Kind: model.StepKindDataQueryDerive,
-		Inputs:  map[string]string{"source": "$task.source", "target": "$task.target"},
-		Outputs: map[string]model.ResourceType{"batch": model.ResourceDatasetBatch, "cursor": model.ResourcePipelineCursor},
-		Config:  mustJSON(queryDerivationTestConfig())}
-	if err := executor.ValidateDefinition(context.Background(), valid); err != nil {
-		t.Fatal(err)
-	}
-	valid.Config = json.RawMessage(`{"pipeline_key":"spec_query_v1","title_field":"name","definition_fields":["description"],"typo":true}`)
-	if err := executor.ValidateDefinition(context.Background(), valid); err == nil {
-		t.Fatal("未知配置字段必须被拒绝，避免定义拼写错误静默生效")
+		t.Fatalf("同一 NodeRun 重试应复用 staging Batch 并成功推进: %+v", retried)
 	}
 }
 
@@ -282,7 +264,7 @@ func (r *memoryPipelineRepo) GetOrCreatePipelineCursor(_ context.Context, pipeli
 	return &clone, nil
 }
 
-func (r *memoryPipelineRepo) CommitQueryDatasetBatchForStep(ctx context.Context, batchID, _ string, _ int,
+func (r *memoryPipelineRepo) CommitQueryDatasetBatchForNode(ctx context.Context, batchID, _ string, _ int,
 	payloadHash string, items []model.DatasetItem, cursorID string, expectedThroughSeq, advanceThroughSeq int64,
 	lastSuccessTaskID string) (*model.DatasetBatch, *model.PipelineCursor, error) {
 	if r.failQueryCommit {
@@ -303,7 +285,7 @@ func (r *memoryPipelineRepo) CommitQueryDatasetBatchForStep(ctx context.Context,
 		return nil, nil, err
 	}
 	cursor.ProcessedThroughSeq = advanceThroughSeq
-	cursor.LastSuccessTaskID = lastSuccessTaskID
+	cursor.LastSuccessRunID = lastSuccessTaskID
 	clone := *cursor
 	return batch, &clone, nil
 }

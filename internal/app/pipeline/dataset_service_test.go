@@ -169,10 +169,10 @@ func (r *memoryPipelineRepo) CreateDatasetBatch(_ context.Context, batch *model.
 	return nil
 }
 
-func (r *memoryPipelineRepo) GetOrCreateDatasetBatchForStep(ctx context.Context, batch *model.DatasetBatch,
+func (r *memoryPipelineRepo) GetOrCreateDatasetBatchForNode(ctx context.Context, batch *model.DatasetBatch,
 	_ int) (*model.DatasetBatch, error) {
 	for _, stored := range r.batches {
-		if stored.SourceStepRunID == batch.SourceStepRunID {
+		if stored.ProducerNodeRunID == batch.ProducerNodeRunID {
 			clone := *stored
 			return &clone, nil
 		}
@@ -234,7 +234,7 @@ func (r *memoryPipelineRepo) CommitDatasetBatch(_ context.Context, batchID, payl
 	return &clone, nil
 }
 
-func (r *memoryPipelineRepo) CommitDatasetBatchForStep(ctx context.Context, batchID, _ string, _ int,
+func (r *memoryPipelineRepo) CommitDatasetBatchForNode(ctx context.Context, batchID, _ string, _ int,
 	payloadHash string, items []model.DatasetItem) (*model.DatasetBatch, error) {
 	return r.CommitDatasetBatch(ctx, batchID, payloadHash, items)
 }

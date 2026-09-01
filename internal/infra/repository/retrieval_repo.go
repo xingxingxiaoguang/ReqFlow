@@ -77,10 +77,10 @@ func (r *PipelineRepo) ListRetrievalProfiles(ctx context.Context, workspaceID, d
 	return out, nil
 }
 
-func (r *PipelineRepo) GetOrCreateRetrievalSnapshotForStep(ctx context.Context, snapshot *model.RetrievalSnapshot,
+func (r *PipelineRepo) GetOrCreateRetrievalSnapshotForNode(ctx context.Context, snapshot *model.RetrievalSnapshot,
 	producerAttempt int) (*model.RetrievalSnapshot, error) {
 	if snapshot == nil || strings.TrimSpace(snapshot.DatasetID) == "" || strings.TrimSpace(snapshot.RetrievalProfileID) == "" ||
-		strings.TrimSpace(snapshot.SourceStepRunID) == "" {
+		strings.TrimSpace(snapshot.ProducerNodeRunID) == "" {
 		return nil, fmt.Errorf("幂等 RetrievalSnapshot 必须提供 dataset/profile/source_step_run")
 	}
 	if snapshot.ID == "" {
@@ -94,25 +94,25 @@ func (r *PipelineRepo) GetOrCreateRetrievalSnapshotForStep(ctx context.Context, 
 	}
 	var stored *model.RetrievalSnapshot
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := assertActiveStepProducer(tx, snapshot.SourceStepRunID, producerAttempt); err != nil {
+		if err := assertActiveNodeProducer(tx, snapshot.ProducerNodeRunID, producerAttempt); err != nil {
 			return err
 		}
 		if err := tx.Exec(`INSERT INTO retrieval_snapshots
-			(id, dataset_id, retrieval_profile_id, source_step_run_id, producer_attempt,
+			(id, dataset_id, retrieval_profile_id, producer_node_run_id, producer_attempt,
 			 source_seq, status, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-			ON CONFLICT (source_step_run_id) WHERE source_step_run_id IS NOT NULL DO NOTHING`,
-			snapshot.ID, snapshot.DatasetID, snapshot.RetrievalProfileID, snapshot.SourceStepRunID,
+			ON CONFLICT (producer_node_run_id) WHERE producer_node_run_id IS NOT NULL DO NOTHING`,
+			snapshot.ID, snapshot.DatasetID, snapshot.RetrievalProfileID, snapshot.ProducerNodeRunID,
 			producerAttempt, snapshot.SourceSeq, snapshot.Status, snapshot.CreatedAt).Error; err != nil {
 			return err
 		}
 		var row retrievalSnapshotRow
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("source_step_run_id = ?", snapshot.SourceStepRunID).
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("producer_node_run_id = ?", snapshot.ProducerNodeRunID).
 			First(&row).Error; err != nil {
 			return err
 		}
 		if row.DatasetID != snapshot.DatasetID || row.RetrievalProfileID != snapshot.RetrievalProfileID || row.SourceSeq != snapshot.SourceSeq {
-			return fmt.Errorf("StepRun %s 已绑定到不同的 RetrievalSnapshot", snapshot.SourceStepRunID)
+			return fmt.Errorf("NodeRun %s 已绑定到不同的 RetrievalSnapshot", snapshot.ProducerNodeRunID)
 		}
 		if row.Status != model.RetrievalSnapshotActive {
 			if err := tx.Model(&retrievalSnapshotRow{}).Where("id = ?", row.ID).Updates(map[string]any{
@@ -185,15 +185,15 @@ func (r *PipelineRepo) GetLatestActiveRetrievalSnapshot(ctx context.Context, dat
 	return row.toModel()
 }
 
-func (r *PipelineRepo) SetRetrievalSnapshotStatusForStep(ctx context.Context, snapshotID, stepRunID string,
+func (r *PipelineRepo) SetRetrievalSnapshotStatusForNode(ctx context.Context, snapshotID, nodeRunID string,
 	producerAttempt int, status, failureReason string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := assertActiveStepProducer(tx, stepRunID, producerAttempt); err != nil {
+		if err := assertActiveNodeProducer(tx, nodeRunID, producerAttempt); err != nil {
 			return err
 		}
 		result := tx.Model(&retrievalSnapshotRow{}).
-			Where("id = ? AND source_step_run_id = ? AND producer_attempt = ? AND status <> ?",
-				snapshotID, stepRunID, producerAttempt, model.RetrievalSnapshotActive).
+			Where("id = ? AND producer_node_run_id = ? AND producer_attempt = ? AND status <> ?",
+				snapshotID, nodeRunID, producerAttempt, model.RetrievalSnapshotActive).
 			Updates(map[string]any{"status": status, "failure_reason": failureReason})
 		if result.Error != nil {
 			return result.Error
@@ -205,19 +205,19 @@ func (r *PipelineRepo) SetRetrievalSnapshotStatusForStep(ctx context.Context, sn
 	})
 }
 
-func (r *PipelineRepo) ActivateRetrievalSnapshotForStep(ctx context.Context, snapshotID, stepRunID string,
+func (r *PipelineRepo) ActivateRetrievalSnapshotForNode(ctx context.Context, snapshotID, nodeRunID string,
 	producerAttempt int, lexicalRef, vectorRef string, lexicalCount, vectorCount int) (*model.RetrievalSnapshot, error) {
 	var activated *model.RetrievalSnapshot
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := assertActiveStepProducer(tx, stepRunID, producerAttempt); err != nil {
+		if err := assertActiveNodeProducer(tx, nodeRunID, producerAttempt); err != nil {
 			return err
 		}
 		var row retrievalSnapshotRow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", snapshotID).First(&row).Error; err != nil {
 			return err
 		}
-		if row.SourceStepRunID != stepRunID {
-			return fmt.Errorf("RetrievalSnapshot 不属于当前 StepRun")
+		if row.ProducerNodeRunID != nodeRunID {
+			return fmt.Errorf("RetrievalSnapshot 不属于当前 NodeRun")
 		}
 		if row.Status == model.RetrievalSnapshotActive {
 			var err error
@@ -419,7 +419,7 @@ type retrievalSnapshotRow struct {
 	ID                 string     `gorm:"column:id;primaryKey"`
 	DatasetID          string     `gorm:"column:dataset_id"`
 	RetrievalProfileID string     `gorm:"column:retrieval_profile_id"`
-	SourceStepRunID    string     `gorm:"column:source_step_run_id"`
+	ProducerNodeRunID  string     `gorm:"column:producer_node_run_id"`
 	ProducerAttempt    int        `gorm:"column:producer_attempt"`
 	SourceSeq          int64      `gorm:"column:source_seq"`
 	Status             string     `gorm:"column:status"`
@@ -436,7 +436,7 @@ func (retrievalSnapshotRow) TableName() string { return "retrieval_snapshots" }
 
 func (row retrievalSnapshotRow) toModel() (*model.RetrievalSnapshot, error) {
 	snapshot := &model.RetrievalSnapshot{ID: row.ID, DatasetID: row.DatasetID,
-		RetrievalProfileID: row.RetrievalProfileID, SourceStepRunID: row.SourceStepRunID,
+		RetrievalProfileID: row.RetrievalProfileID, ProducerNodeRunID: row.ProducerNodeRunID,
 		SourceSeq: row.SourceSeq, Status: row.Status, LexicalRef: row.LexicalRef,
 		VectorRef: row.VectorRef, LexicalCount: row.LexicalCount, VectorCount: row.VectorCount,
 		FailureReason: row.FailureReason, CreatedAt: row.CreatedAt}

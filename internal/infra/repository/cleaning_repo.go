@@ -22,11 +22,11 @@ func (r *PipelineRepo) BeginTransformedRecordSet(ctx context.Context, set *model
 	}
 	var stored model.TransformedRecordSet
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := assertActiveStepProducer(tx, set.SourceStepRunID, set.ProducerAttempt); err != nil {
+		if err := assertActiveNodeProducer(tx, set.ProducerNodeRunID, set.ProducerAttempt); err != nil {
 			return err
 		}
 		var row transformedRecordSetRow
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("source_step_run_id = ?", set.SourceStepRunID).
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("producer_node_run_id = ?", set.ProducerNodeRunID).
 			Limit(1).Find(&row).Error; err != nil {
 			return err
 		}
@@ -39,23 +39,23 @@ func (r *PipelineRepo) BeginTransformedRecordSet(ctx context.Context, set *model
 			}
 			if err := tx.Exec(`INSERT INTO transformed_record_sets
 				(id, record_draft_set_id, extraction_profile_id, target_schema_id,
-				 source_step_run_id, status, producer_attempt, engine_version, draft_count, created_at)
+				 producer_node_run_id, status, producer_attempt, engine_version, draft_count, created_at)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, set.ID, set.RecordDraftSetID,
-				set.ExtractionProfileID, set.TargetSchemaID, set.SourceStepRunID,
+				set.ExtractionProfileID, set.TargetSchemaID, set.ProducerNodeRunID,
 				model.TransformedRecordSetRunning, set.ProducerAttempt, set.EngineVersion,
 				set.DraftCount, set.CreatedAt).Error; err != nil {
 				return err
 			}
 			row = transformedRecordSetRow{ID: set.ID, RecordDraftSetID: set.RecordDraftSetID,
 				ExtractionProfileID: set.ExtractionProfileID, TargetSchemaID: set.TargetSchemaID,
-				SourceStepRunID: set.SourceStepRunID, Status: model.TransformedRecordSetRunning,
+				ProducerNodeRunID: set.ProducerNodeRunID, Status: model.TransformedRecordSetRunning,
 				ProducerAttempt: set.ProducerAttempt, EngineVersion: set.EngineVersion,
 				DraftCount: set.DraftCount, CreatedAt: set.CreatedAt}
 		} else {
 			if row.RecordDraftSetID != set.RecordDraftSetID || row.ExtractionProfileID != set.ExtractionProfileID ||
 				row.TargetSchemaID != set.TargetSchemaID || row.EngineVersion != set.EngineVersion ||
 				row.DraftCount != set.DraftCount {
-				return fmt.Errorf("StepRun %s 的转换输入、Profile、Schema 或引擎版本发生变化", set.SourceStepRunID)
+				return fmt.Errorf("NodeRun %s 的转换输入、Profile、Schema 或引擎版本发生变化", set.ProducerNodeRunID)
 			}
 			if row.ProducerAttempt > set.ProducerAttempt {
 				return port.ErrStaleResourceExecution
@@ -84,8 +84,8 @@ func (r *PipelineRepo) GetTransformedRecordSet(ctx context.Context, id string) (
 	return r.getTransformedRecordSet(ctx, "id = ?", id)
 }
 
-func (r *PipelineRepo) GetTransformedRecordSetByStepRun(ctx context.Context, stepRunID string) (*model.TransformedRecordSet, error) {
-	return r.getTransformedRecordSet(ctx, "source_step_run_id = ?", stepRunID)
+func (r *PipelineRepo) GetTransformedRecordSetByNodeRun(ctx context.Context, nodeRunID string) (*model.TransformedRecordSet, error) {
+	return r.getTransformedRecordSet(ctx, "producer_node_run_id = ?", nodeRunID)
 }
 
 func (r *PipelineRepo) getTransformedRecordSet(ctx context.Context, query string, value any) (*model.TransformedRecordSet, error) {
@@ -196,11 +196,11 @@ func (r *PipelineRepo) BeginValidationResultSet(ctx context.Context, set *model.
 	}
 	var stored model.ValidationResultSet
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := assertActiveStepProducer(tx, set.SourceStepRunID, set.ProducerAttempt); err != nil {
+		if err := assertActiveNodeProducer(tx, set.ProducerNodeRunID, set.ProducerAttempt); err != nil {
 			return err
 		}
 		var row validationResultSetRow
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("source_step_run_id = ?", set.SourceStepRunID).
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("producer_node_run_id = ?", set.ProducerNodeRunID).
 			Limit(1).Find(&row).Error; err != nil {
 			return err
 		}
@@ -213,17 +213,17 @@ func (r *PipelineRepo) BeginValidationResultSet(ctx context.Context, set *model.
 			}
 			if err := tx.Exec(`INSERT INTO validation_result_sets
 				(id, transformed_record_set_id, target_dataset_id, target_schema_id,
-				 source_step_run_id, status, producer_attempt, engine_version,
+				 producer_node_run_id, status, producer_attempt, engine_version,
 				 validated_through_seq, record_count, created_at)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, set.ID, set.TransformedRecordSetID,
-				set.TargetDatasetID, set.TargetSchemaID, set.SourceStepRunID,
+				set.TargetDatasetID, set.TargetSchemaID, set.ProducerNodeRunID,
 				model.ValidationResultSetRunning, set.ProducerAttempt, set.EngineVersion,
 				set.ValidatedThroughSeq, set.RecordCount, set.CreatedAt).Error; err != nil {
 				return err
 			}
 			row = validationResultSetRow{ID: set.ID, TransformedRecordSetID: set.TransformedRecordSetID,
 				TargetDatasetID: set.TargetDatasetID, TargetSchemaID: set.TargetSchemaID,
-				SourceStepRunID: set.SourceStepRunID, Status: model.ValidationResultSetRunning,
+				ProducerNodeRunID: set.ProducerNodeRunID, Status: model.ValidationResultSetRunning,
 				ProducerAttempt: set.ProducerAttempt, EngineVersion: set.EngineVersion,
 				ValidatedThroughSeq: set.ValidatedThroughSeq, RecordCount: set.RecordCount,
 				CreatedAt: set.CreatedAt}
@@ -231,7 +231,7 @@ func (r *PipelineRepo) BeginValidationResultSet(ctx context.Context, set *model.
 			if row.TransformedRecordSetID != set.TransformedRecordSetID || row.TargetDatasetID != set.TargetDatasetID ||
 				row.TargetSchemaID != set.TargetSchemaID || row.EngineVersion != set.EngineVersion ||
 				row.RecordCount != set.RecordCount {
-				return fmt.Errorf("StepRun %s 的校验输入、Dataset 边界、Schema 或引擎版本发生变化", set.SourceStepRunID)
+				return fmt.Errorf("NodeRun %s 的校验输入、Dataset 边界、Schema 或引擎版本发生变化", set.ProducerNodeRunID)
 			}
 			if row.ProducerAttempt > set.ProducerAttempt {
 				return port.ErrStaleResourceExecution
@@ -260,8 +260,8 @@ func (r *PipelineRepo) GetValidationResultSet(ctx context.Context, id string) (*
 	return r.getValidationResultSet(ctx, "id = ?", id)
 }
 
-func (r *PipelineRepo) GetValidationResultSetByStepRun(ctx context.Context, stepRunID string) (*model.ValidationResultSet, error) {
-	return r.getValidationResultSet(ctx, "source_step_run_id = ?", stepRunID)
+func (r *PipelineRepo) GetValidationResultSetByNodeRun(ctx context.Context, nodeRunID string) (*model.ValidationResultSet, error) {
+	return r.getValidationResultSet(ctx, "producer_node_run_id = ?", nodeRunID)
 }
 
 func (r *PipelineRepo) getValidationResultSet(ctx context.Context, query string, value any) (*model.ValidationResultSet, error) {
@@ -397,36 +397,36 @@ func (r *PipelineRepo) FindExistingDatasetItemKeys(ctx context.Context, datasetI
 }
 
 func lockWritableTransformedRecordSet(tx *gorm.DB, setID string, attempt int) (*transformedRecordSetRow, error) {
-	var identity struct{ SourceStepRunID string }
-	if err := tx.Model(&transformedRecordSetRow{}).Select("source_step_run_id").Where("id = ?", setID).Take(&identity).Error; err != nil {
+	var identity struct{ ProducerNodeRunID string }
+	if err := tx.Model(&transformedRecordSetRow{}).Select("producer_node_run_id").Where("id = ?", setID).Take(&identity).Error; err != nil {
 		return nil, err
 	}
-	if err := assertActiveStepProducer(tx, identity.SourceStepRunID, attempt); err != nil {
+	if err := assertActiveNodeProducer(tx, identity.ProducerNodeRunID, attempt); err != nil {
 		return nil, err
 	}
 	var row transformedRecordSetRow
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", setID).First(&row).Error; err != nil {
 		return nil, err
 	}
-	if row.SourceStepRunID != identity.SourceStepRunID || row.ProducerAttempt != attempt || row.Status != model.TransformedRecordSetRunning {
+	if row.ProducerNodeRunID != identity.ProducerNodeRunID || row.ProducerAttempt != attempt || row.Status != model.TransformedRecordSetRunning {
 		return nil, port.ErrStaleResourceExecution
 	}
 	return &row, nil
 }
 
 func lockWritableValidationResultSet(tx *gorm.DB, setID string, attempt int) (*validationResultSetRow, error) {
-	var identity struct{ SourceStepRunID string }
-	if err := tx.Model(&validationResultSetRow{}).Select("source_step_run_id").Where("id = ?", setID).Take(&identity).Error; err != nil {
+	var identity struct{ ProducerNodeRunID string }
+	if err := tx.Model(&validationResultSetRow{}).Select("producer_node_run_id").Where("id = ?", setID).Take(&identity).Error; err != nil {
 		return nil, err
 	}
-	if err := assertActiveStepProducer(tx, identity.SourceStepRunID, attempt); err != nil {
+	if err := assertActiveNodeProducer(tx, identity.ProducerNodeRunID, attempt); err != nil {
 		return nil, err
 	}
 	var row validationResultSetRow
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", setID).First(&row).Error; err != nil {
 		return nil, err
 	}
-	if row.SourceStepRunID != identity.SourceStepRunID || row.ProducerAttempt != attempt || row.Status != model.ValidationResultSetRunning {
+	if row.ProducerNodeRunID != identity.ProducerNodeRunID || row.ProducerAttempt != attempt || row.Status != model.ValidationResultSetRunning {
 		return nil, port.ErrStaleResourceExecution
 	}
 	return &row, nil
@@ -514,7 +514,7 @@ type transformedRecordSetRow struct {
 	RecordDraftSetID    string     `gorm:"column:record_draft_set_id"`
 	ExtractionProfileID string     `gorm:"column:extraction_profile_id"`
 	TargetSchemaID      string     `gorm:"column:target_schema_id"`
-	SourceStepRunID     string     `gorm:"column:source_step_run_id"`
+	ProducerNodeRunID   string     `gorm:"column:producer_node_run_id"`
 	Status              string     `gorm:"column:status"`
 	ProducerAttempt     int        `gorm:"column:producer_attempt"`
 	EngineVersion       string     `gorm:"column:engine_version"`
@@ -530,7 +530,7 @@ func (transformedRecordSetRow) TableName() string { return "transformed_record_s
 func (row transformedRecordSetRow) toModel() model.TransformedRecordSet {
 	set := model.TransformedRecordSet{ID: row.ID, RecordDraftSetID: row.RecordDraftSetID,
 		ExtractionProfileID: row.ExtractionProfileID, TargetSchemaID: row.TargetSchemaID,
-		SourceStepRunID: row.SourceStepRunID, Status: row.Status, ProducerAttempt: row.ProducerAttempt,
+		ProducerNodeRunID: row.ProducerNodeRunID, Status: row.Status, ProducerAttempt: row.ProducerAttempt,
 		EngineVersion: row.EngineVersion, DraftCount: row.DraftCount, TransformedCount: row.TransformedCount,
 		ChangedRecordCount: row.ChangedRecordCount, IssueCount: row.IssueCount, CreatedAt: row.CreatedAt}
 	if row.FinishedAt != nil {
@@ -570,7 +570,7 @@ type validationResultSetRow struct {
 	TransformedRecordSetID string     `gorm:"column:transformed_record_set_id"`
 	TargetDatasetID        string     `gorm:"column:target_dataset_id"`
 	TargetSchemaID         string     `gorm:"column:target_schema_id"`
-	SourceStepRunID        string     `gorm:"column:source_step_run_id"`
+	ProducerNodeRunID      string     `gorm:"column:producer_node_run_id"`
 	Status                 string     `gorm:"column:status"`
 	ProducerAttempt        int        `gorm:"column:producer_attempt"`
 	EngineVersion          string     `gorm:"column:engine_version"`
@@ -589,7 +589,7 @@ func (validationResultSetRow) TableName() string { return "validation_result_set
 func (row validationResultSetRow) toModel() model.ValidationResultSet {
 	set := model.ValidationResultSet{ID: row.ID, TransformedRecordSetID: row.TransformedRecordSetID,
 		TargetDatasetID: row.TargetDatasetID, TargetSchemaID: row.TargetSchemaID,
-		SourceStepRunID: row.SourceStepRunID, Status: row.Status, ProducerAttempt: row.ProducerAttempt,
+		ProducerNodeRunID: row.ProducerNodeRunID, Status: row.Status, ProducerAttempt: row.ProducerAttempt,
 		EngineVersion: row.EngineVersion, ValidatedThroughSeq: row.ValidatedThroughSeq,
 		RecordCount: row.RecordCount, ValidCount: row.ValidCount, WarningCount: row.WarningCount,
 		InvalidCount: row.InvalidCount, DuplicateCount: row.DuplicateCount,

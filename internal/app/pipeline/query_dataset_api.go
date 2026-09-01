@@ -11,7 +11,7 @@ type PipelineCursorView struct {
 	SourceDatasetID     string    `json:"source_dataset_id"`
 	TargetDatasetID     string    `json:"target_dataset_id"`
 	ProcessedThroughSeq int64     `json:"processed_through_seq"`
-	LastSuccessTaskID   string    `json:"last_success_task_id,omitempty"`
+	LastSuccessRunID    string    `json:"last_success_run_id,omitempty"`
 	UpdatedAt           time.Time `json:"updated_at"`
 }
 
@@ -23,6 +23,6 @@ func (s *QueryDatasetService) GetCursorView(ctx context.Context, pipelineKey, so
 	}
 	return &PipelineCursorView{ID: cursor.ID, PipelineKey: cursor.PipelineKey,
 		SourceDatasetID: cursor.SourceDatasetID, TargetDatasetID: cursor.TargetDatasetID,
-		ProcessedThroughSeq: cursor.ProcessedThroughSeq, LastSuccessTaskID: cursor.LastSuccessTaskID,
+		ProcessedThroughSeq: cursor.ProcessedThroughSeq, LastSuccessRunID: cursor.LastSuccessRunID,
 		UpdatedAt: cursor.UpdatedAt}, nil
 }

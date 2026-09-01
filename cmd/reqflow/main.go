@@ -1,5 +1,3 @@
-// ReqFlow 入口：全项目唯一知道所有具体实现的组装点。
-// 依赖方向在此收口：infra 实现 → 注入 app 用例 → 挂到 httpgin。
 package main
 
 import (
@@ -17,11 +15,8 @@ import (
 	"log/slog"
 
 	appanalysis "reqflow/internal/app/analysis"
-	appcatalog "reqflow/internal/app/catalog"
 	appextraction "reqflow/internal/app/extraction"
-	apporchestrator "reqflow/internal/app/orchestrator"
-	apppipeline "reqflow/internal/app/pipeline"
-	appplatformagent "reqflow/internal/app/platformagent"
+	"reqflow/internal/app/pipeline"
 	appplatformconfig "reqflow/internal/app/platformconfig"
 	appretrieval "reqflow/internal/app/retrieval"
 	appworkflow "reqflow/internal/app/workflow"
@@ -42,11 +37,10 @@ import (
 func main() {
 	configPath := flag.String("config", "", "配置文件路径（默认 $REQFLOW_CONFIG 或 ./config.yaml）")
 	flag.Parse()
-
 	cfg, err := config.Load(*configPath)
 	if errors.Is(err, config.ErrNoConfig) {
-		if werr := os.WriteFile("config.yaml", []byte(config.Example()), 0o644); werr != nil {
-			fmt.Fprintf(os.Stderr, "未找到配置文件且生成模板失败: %v\n", werr)
+		if writeErr := os.WriteFile("config.yaml", []byte(config.Example()), 0o644); writeErr != nil {
+			fmt.Fprintf(os.Stderr, "未找到配置文件且生成模板失败: %v\n", writeErr)
 			os.Exit(1)
 		}
 		fmt.Fprintln(os.Stderr, "未找到配置文件，已生成 ./config.yaml 模板。请填写后重新启动。")
@@ -56,38 +50,31 @@ func main() {
 		fmt.Fprintf(os.Stderr, "加载配置失败: %v\n", err)
 		os.Exit(1)
 	}
-
 	logger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: parseLevel(cfg.Server.LogLevel)}))
 	slog.SetDefault(logger)
-
 	if errs, warns := cfg.Validate(); len(errs) > 0 {
-		for _, e := range errs {
-			logger.Error("配置错误", "detail", e)
+		for _, item := range errs {
+			logger.Error("配置错误", "detail", item)
 		}
-		for _, w := range warns {
-			logger.Warn("配置提醒", "detail", w)
+		for _, item := range warns {
+			logger.Warn("配置提醒", "detail", item)
 		}
 		os.Exit(1)
 	} else {
-		for _, w := range warns {
-			logger.Warn("配置提醒", "detail", w)
+		for _, item := range warns {
+			logger.Warn("配置提醒", "detail", item)
 		}
 	}
-
-	// 密钥安全自检：已加载的密钥只打名单不打印值；example 模板被填入真实密钥时醒目告警
 	if filled := cfg.FilledSecrets(); len(filled) > 0 {
 		logger.Info("已加载密钥（仅显示名称）", "keys", strings.Join(filled, ", "))
 	}
-	if leaked := checkExampleTemplate(); len(leaked) > 0 {
-		logger.Error("⚠️ 检测到 config.example.yaml 中被填入了真实密钥（该文件会随代码分享！）",
-			"fields", strings.Join(leaked, ", "),
-			"处理", "请立即将值清空并轮换已暴露的密钥；真实密钥只放 config.yaml 或环境变量")
+	if leaked := config.CheckExampleLeak("config.example.yaml"); len(leaked) > 0 {
+		logger.Error("检测到示例配置中存在真实密钥", "fields", strings.Join(leaked, ", "))
 	}
 
-	/* ---- 数据库（Docker PG + pgvector，自动迁移） ---- */
 	db, err := database.Connect(cfg.Database.DSN, cfg.Database.RetryCount, cfg.Database.RetryIntervalMs)
 	if err != nil {
-		logger.Error("数据库连接失败（请先 docker compose up -d 启动 PG）", "err", err)
+		logger.Error("数据库连接失败", "err", err)
 		os.Exit(1)
 	}
 	if cfg.Database.AutoMigrate {
@@ -97,7 +84,6 @@ func main() {
 		}
 	}
 
-	/* ---- infra 实现 ---- */
 	platformConfigRepo := repository.NewPlatformConfigRepo(db)
 	secretCipher, err := secretcrypto.NewOrCreate(cfg.Security.EncryptionKey, cfg.Security.EncryptionKeyFile)
 	if err != nil {
@@ -106,12 +92,11 @@ func main() {
 	}
 	platformConfigs, err := appplatformconfig.NewService(platformConfigRepo, secretCipher, appplatformconfig.Fallbacks{
 		WorkspaceName: cfg.Workspace.Name,
-		LLM: port.LLMRuntimeConfig{Provider: cfg.LLM.Provider, BaseURL: cfg.LLM.BaseURL,
-			APIKey: cfg.LLM.APIKey, Model: cfg.LLM.Model, Temperature: cfg.LLM.Temperature,
-			MaxTokens: cfg.LLM.MaxTokens, TimeoutMs: cfg.LLM.TimeoutMs},
+		LLM: port.LLMRuntimeConfig{Provider: cfg.LLM.Provider, BaseURL: cfg.LLM.BaseURL, APIKey: cfg.LLM.APIKey,
+			Model: cfg.LLM.Model, Temperature: cfg.LLM.Temperature, MaxTokens: cfg.LLM.MaxTokens, TimeoutMs: cfg.LLM.TimeoutMs},
 		Embedding: port.EmbeddingRuntimeConfig{BaseURL: cfg.Embedding.BaseURL, APIKey: cfg.Embedding.APIKey,
-			Model: cfg.Embedding.Model, Dimensions: cfg.Embedding.Dimensions,
-			BatchSize: cfg.Embedding.BatchSize, TimeoutMs: cfg.Embedding.TimeoutMs},
+			Model: cfg.Embedding.Model, Dimensions: cfg.Embedding.Dimensions, BatchSize: cfg.Embedding.BatchSize,
+			TimeoutMs: cfg.Embedding.TimeoutMs},
 		Rerank: port.RerankRuntimeConfig{BaseURL: cfg.Embedding.BaseURL, APIKey: cfg.Embedding.APIKey,
 			Model: cfg.Embedding.RerankModel, TimeoutMs: cfg.Embedding.RerankTimeoutMs},
 		MinerU: port.MinerURuntimeConfig{Enabled: cfg.Parser.MinerU.Enabled, APIURL: cfg.Parser.MinerU.APIURL,
@@ -125,274 +110,152 @@ func main() {
 	llmClient := llm.NewDynamic(platformConfigs)
 	embedClient := embedding.NewDynamic(platformConfigs)
 	rerankClient := embedding.NewDynamicReranker(platformConfigs)
-	lexicalClient := opensearch.New(opensearch.Options{
-		BaseURL: cfg.OpenSearch.BaseURL, Username: cfg.OpenSearch.Username,
+	lexicalClient := opensearch.New(opensearch.Options{BaseURL: cfg.OpenSearch.BaseURL, Username: cfg.OpenSearch.Username,
 		Password: cfg.OpenSearch.Password, IndexPrefix: cfg.OpenSearch.IndexPrefix,
-		Timeout: time.Duration(cfg.OpenSearch.TimeoutMs) * time.Millisecond,
-	})
+		Timeout: time.Duration(cfg.OpenSearch.TimeoutMs) * time.Millisecond})
 	docParser := parser.NewDynamic(cfg.Parser.MaxFileMB, platformConfigs)
-	localBlobs, err := blobstore.NewLocal(cfg.Workspace.BlobDir)
+	blobs, err := blobstore.NewLocal(cfg.Workspace.BlobDir)
 	if err != nil {
-		logger.Error("V2 BlobStore 初始化失败", "err", err)
+		logger.Error("BlobStore 初始化失败", "err", err)
 		os.Exit(1)
 	}
 
 	pipelineRepo := repository.NewPipelineRepo(db)
 	workflowRepo := repository.NewWorkflowRepo(db)
-	agentSessionRepo := repository.NewAgentSessionRepo(db)
-	agentConfigRepo := repository.NewAgentConfigRepo(db)
-
-	/* ---- app 用例 ---- */
-	v2Assets, err := apppipeline.NewAssetService(pipelineRepo, localBlobs, docParser,
-		int64(cfg.Parser.MaxFileMB)<<20)
+	assets, err := pipeline.NewAssetService(pipelineRepo, blobs, docParser, int64(cfg.Parser.MaxFileMB)<<20)
 	if err != nil {
-		logger.Error("V2 Asset Pipeline 初始化失败", "err", err)
+		logger.Error("Asset 服务初始化失败", "err", err)
 		os.Exit(1)
 	}
-	sourceParseExecutor, err := apppipeline.NewSourceParseExecutor(v2Assets)
+	extractions, err := appextraction.NewService(pipelineRepo, llmClient, cfg.LLM.Model, appextraction.Options{
+		MaxIterations: cfg.LLM.AgentMaxIterations, ConfigResolver: platformConfigs})
 	if err != nil {
-		logger.Error("source.parse Executor 初始化失败", "err", err)
+		logger.Error("Extraction 服务初始化失败", "err", err)
 		os.Exit(1)
 	}
-	v2Extractions, err := appextraction.NewService(pipelineRepo, llmClient,
-		cfg.LLM.Model, appextraction.Options{MaxIterations: cfg.LLM.AgentMaxIterations,
-			ConfigResolver: platformConfigs})
+	cleaning, err := pipeline.NewCleaningService(pipelineRepo)
 	if err != nil {
-		logger.Error("V2 Extraction Pipeline 初始化失败", "err", err)
+		logger.Error("Cleaning 服务初始化失败", "err", err)
 		os.Exit(1)
 	}
-	documentExtractExecutor, err := appextraction.NewExecutor(v2Extractions)
+	datasets := pipeline.NewDatasetService(pipelineRepo)
+	queryDatasets, err := pipeline.NewQueryDatasetService(pipelineRepo, datasets)
 	if err != nil {
-		logger.Error("document.extract Executor 初始化失败", "err", err)
+		logger.Error("Query Dataset 服务初始化失败", "err", err)
 		os.Exit(1)
 	}
-	v2Cleaning, err := apppipeline.NewCleaningService(pipelineRepo)
-	if err != nil {
-		logger.Error("V2 Cleaning Pipeline 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	dataTransformExecutor, err := apppipeline.NewDataTransformExecutor(v2Cleaning)
-	if err != nil {
-		logger.Error("data.transform Executor 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	dataValidateExecutor, err := apppipeline.NewDataValidateExecutor(v2Cleaning)
-	if err != nil {
-		logger.Error("data.validate Executor 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	v2Datasets := apppipeline.NewDatasetService(pipelineRepo)
-	v2QueryDatasets, err := apppipeline.NewQueryDatasetService(pipelineRepo, v2Datasets)
-	if err != nil {
-		logger.Error("V2 Query Dataset 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	queryDatasetExecutor, err := apppipeline.NewQueryDatasetDeriveExecutor(v2QueryDatasets)
-	if err != nil {
-		logger.Error("data.query_derive Executor 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	v2Retrieval, err := appretrieval.NewService(pipelineRepo, lexicalClient, embedClient, rerankClient,
+	retrieval, err := appretrieval.NewService(pipelineRepo, lexicalClient, embedClient, rerankClient,
 		appretrieval.Options{EmbeddingModel: cfg.Embedding.Model, PageSize: cfg.Embedding.BatchSize,
 			ConfigResolver: platformConfigs})
 	if err != nil {
-		logger.Error("V2 Retrieval 初始化失败", "err", err)
+		logger.Error("Retrieval 服务初始化失败", "err", err)
 		os.Exit(1)
 	}
-	retrievalBuildExecutor, err := appretrieval.NewBuildExecutor(v2Retrieval)
-	if err != nil {
-		logger.Error("retrieval.build Executor 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	v2Analysis, err := appanalysis.NewService(pipelineRepo, v2Retrieval, llmClient,
+	analysis, err := appanalysis.NewService(pipelineRepo, retrieval, llmClient,
 		appanalysis.Options{Model: cfg.LLM.Model, MaxIterations: cfg.LLM.AgentMaxIterations,
 			ConfigResolver: platformConfigs})
 	if err != nil {
-		logger.Error("V2 Analysis 初始化失败", "err", err)
+		logger.Error("Analysis 服务初始化失败", "err", err)
 		os.Exit(1)
 	}
-	knowledgeAnalyzeExecutor, err := appanalysis.NewKnowledgeAnalyzeExecutor(v2Analysis)
+	artifacts, err := appanalysis.NewArtifactService(pipelineRepo, blobs)
 	if err != nil {
-		logger.Error("knowledge.analyze Executor 初始化失败", "err", err)
+		logger.Error("Artifact 服务初始化失败", "err", err)
 		os.Exit(1)
 	}
-	v2Artifacts, err := appanalysis.NewArtifactService(pipelineRepo, localBlobs)
+	publish, err := pipeline.NewPublishService(pipelineRepo, datasets)
 	if err != nil {
-		logger.Error("V2 Artifact 初始化失败", "err", err)
+		logger.Error("Publish 服务初始化失败", "err", err)
 		os.Exit(1)
 	}
-	analysisPublishExecutor, err := appanalysis.NewAnalysisPublishExecutor(v2Analysis, v2Datasets)
+
+	sourceParse, err := pipeline.NewWorkflowSourceParseExecutor(assets)
 	if err != nil {
-		logger.Error("data.analysis_publish Executor 初始化失败", "err", err)
+		logger.Error("source.parse 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	artifactRenderExecutor, err := appanalysis.NewArtifactRenderExecutor(v2Analysis, v2Artifacts)
+	transform, err := pipeline.NewWorkflowDataTransformExecutor(cleaning)
 	if err != nil {
-		logger.Error("artifact.render Executor 初始化失败", "err", err)
+		logger.Error("data.transform 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	graphBuildExecutor, err := appanalysis.NewGraphBuildExecutor(v2Analysis, v2Artifacts)
+	validate, err := pipeline.NewWorkflowDataValidateExecutor(cleaning)
 	if err != nil {
-		logger.Error("graph.build Executor 初始化失败", "err", err)
+		logger.Error("data.validate 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	v2Publish, err := apppipeline.NewPublishService(pipelineRepo, v2Datasets)
+	dataPublish, err := pipeline.NewWorkflowDataPublishExecutor(publish)
 	if err != nil {
-		logger.Error("V2 Publish Pipeline 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	dataPublishExecutor, err := apppipeline.NewDataPublishExecutor(v2Publish)
-	if err != nil {
-		logger.Error("data.publish Executor 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	// V2 Registry 只注册已经具备真实资源持久化与恢复语义的 Executor。
-	v2Registry, err := apporchestrator.NewRegistry(sourceParseExecutor, documentExtractExecutor,
-		dataTransformExecutor, dataValidateExecutor, dataPublishExecutor, queryDatasetExecutor,
-		retrievalBuildExecutor, knowledgeAnalyzeExecutor, analysisPublishExecutor, artifactRenderExecutor,
-		graphBuildExecutor)
-	if err != nil {
-		logger.Error("V2 Executor Registry 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	v2Definitions := apporchestrator.NewDefinitionService(pipelineRepo, v2Registry, pipelineRepo)
-	v2TaskBatches, err := apporchestrator.NewTaskBatchService(v2Definitions, v2Assets)
-	if err != nil {
-		logger.Error("V2 Task Batch 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	v2Scheduler := apporchestrator.NewScheduler(pipelineRepo)
-	v2Worker, err := apporchestrator.NewWorker(pipelineRepo, v2Registry, v2Scheduler, apporchestrator.WorkerOptions{
-		Concurrency: cfg.Worker.Concurrency, LeaseDuration: time.Duration(cfg.Worker.LeaseSeconds) * time.Second,
-		PollInterval:     time.Duration(cfg.Worker.PollIntervalMs) * time.Millisecond,
-		RecoveryInterval: time.Duration(cfg.Worker.RecoveryIntervalMs) * time.Millisecond,
-		ReconcileLimit:   cfg.Worker.ReconcileLimit,
-	})
-	if err != nil {
-		logger.Error("V2 Worker 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	logger.Info("V2 Worker 协程池已初始化", "concurrency", cfg.Worker.Concurrency,
-		"lease_seconds", cfg.Worker.LeaseSeconds)
-	v2Runtime, err := apporchestrator.NewRuntimeService(pipelineRepo, v2Scheduler, v2Worker)
-	if err != nil {
-		logger.Error("V2 Runtime 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	v2TaskQueries, err := apporchestrator.NewTaskQueryService(pipelineRepo)
-	if err != nil {
-		logger.Error("V2 Task Query 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	v2Catalog, err := appcatalog.NewService(pipelineRepo)
-	if err != nil {
-		logger.Error("V2 Catalog 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	workflowCatalog, err := appworkflow.BuiltinCatalog()
-	if err != nil {
-		logger.Error("Workflow Capability Catalog 初始化失败", "err", err)
-		os.Exit(1)
-	}
-	workflowService, err := appworkflow.NewDraftService(workflowRepo, workflowCatalog)
-	if err != nil {
-		logger.Error("Workflow Draft 服务初始化失败", "err", err)
-		os.Exit(1)
-	}
-	workflowPreviews, err := appworkflow.NewPreviewService(workflowRepo, workflowCatalog)
-	if err != nil {
-		logger.Error("Workflow Preview 服务初始化失败", "err", err)
-		os.Exit(1)
-	}
-	workflowPublications, err := appworkflow.NewPublicationService(workflowRepo, workflowCatalog)
-	if err != nil {
-		logger.Error("Workflow Publication 服务初始化失败", "err", err)
-		os.Exit(1)
-	}
-	workflowDesign, err := appworkflow.NewDesignService(workflowRepo, workflowService, llmClient, workflowCatalog)
-	if err != nil {
-		logger.Error("Workflow Design 服务初始化失败", "err", err)
+		logger.Error("data.publish 初始化失败", "err", err)
 		os.Exit(1)
 	}
 	humanReview, err := appworkflow.NewManualExecutor(domain.CapabilityRef{Kind: "human.review_records", Version: 1}, "人工审核记录")
 	if err != nil {
-		logger.Error("human.review_records Executor 初始化失败", "err", err)
+		logger.Error("人工审核 Executor 初始化失败", "err", err)
 		os.Exit(1)
 	}
 	humanAnalysis, err := appworkflow.NewManualExecutor(domain.CapabilityRef{Kind: "human.approve_analysis", Version: 1}, "人工确认分析")
 	if err != nil {
-		logger.Error("human.approve_analysis Executor 初始化失败", "err", err)
+		logger.Error("人工分析 Executor 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	workflowExecutors, err := appworkflow.NewNodeExecutorRegistry(humanReview, humanAnalysis)
+	registry, err := appworkflow.NewNodeExecutorRegistry(sourceParse, transform, validate, dataPublish, humanReview, humanAnalysis)
 	if err != nil {
-		logger.Error("Workflow Runtime Executor Registry 初始化失败", "err", err)
+		logger.Error("Workflow Executor Registry 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	workflowRuntime, err := appworkflow.NewRuntimeService(workflowRepo, workflowRepo, workflowExecutors,
+	runtime, err := appworkflow.NewRuntimeService(workflowRepo, workflowRepo, registry,
 		time.Duration(cfg.Worker.LeaseSeconds)*time.Second, 2)
 	if err != nil {
-		logger.Error("Workflow Runtime 服务初始化失败", "err", err)
+		logger.Error("Workflow Runtime 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	workflowWorker, err := appworkflow.NewRuntimeWorker(workflowRuntime, "", time.Duration(cfg.Worker.PollIntervalMs)*time.Millisecond)
+	worker, err := appworkflow.NewRuntimeWorker(runtime, "", time.Duration(cfg.Worker.PollIntervalMs)*time.Millisecond)
 	if err != nil {
-		logger.Error("Workflow Runtime Worker 初始化失败", "err", err)
+		logger.Error("Workflow Worker 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	v2Review, err := apppipeline.NewReviewService(pipelineRepo, v2Runtime)
+	catalog, err := appworkflow.BuiltinCatalog()
 	if err != nil {
-		logger.Error("V2 Review Pipeline 初始化失败", "err", err)
+		logger.Error("Capability Catalog 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	v2Agent, err := appplatformagent.NewService(agentSessionRepo, agentConfigRepo, llmClient, appplatformagent.Dependencies{
-		Definitions: v2Definitions, Runtime: v2Runtime, Tasks: v2TaskQueries,
-		Catalog: v2Catalog, Retrieval: v2Retrieval,
-	}, appplatformagent.Options{MaxIterations: cfg.LLM.AgentMaxIterations})
+	workflows, err := appworkflow.NewDraftService(workflowRepo, catalog)
 	if err != nil {
-		logger.Error("ReqFlow Agent 初始化失败", "err", err)
+		logger.Error("Workflow Draft 服务初始化失败", "err", err)
 		os.Exit(1)
 	}
-	if err := v2Agent.Recover(context.Background()); err != nil {
-		logger.Warn("ReqFlow Agent 会话恢复失败", "err", err)
+	previews, err := appworkflow.NewPreviewService(workflowRepo, catalog)
+	if err != nil {
+		logger.Error("Workflow Preview 服务初始化失败", "err", err)
+		os.Exit(1)
 	}
+	publications, err := appworkflow.NewPublicationService(workflowRepo, catalog)
+	if err != nil {
+		logger.Error("Workflow Publication 服务初始化失败", "err", err)
+		os.Exit(1)
+	}
+	design, err := appworkflow.NewDesignService(workflowRepo, workflows, llmClient, catalog)
+	if err != nil {
+		logger.Error("Workflow Design 服务初始化失败", "err", err)
+		os.Exit(1)
+	}
+
 	workerCtx, stopWorker := context.WithCancel(context.Background())
 	workerDone := make(chan struct{})
-	workflowWorkerDone := make(chan struct{})
 	go func() {
 		defer close(workerDone)
-		if err := v2Worker.Run(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error("V2 Worker 异常退出", "err", err)
-		}
-	}()
-	go func() {
-		defer close(workflowWorkerDone)
-		if err := workflowWorker.Run(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
-			logger.Error("Workflow Runtime Worker 异常退出", "err", err)
+		if err := worker.Run(workerCtx); err != nil && !errors.Is(err, context.Canceled) {
+			logger.Error("Workflow Worker 异常退出", "err", err)
 		}
 	}()
 
-	/* ---- HTTP ---- */
-	engine := httpgin.New(httpgin.Services{
-		PlatformConfigs: platformConfigs,
-		V2Definitions:   v2Definitions, V2TaskBatches: v2TaskBatches,
-		V2Runtime: v2Runtime, V2TaskQueries: v2TaskQueries,
-		V2Datasets: v2Datasets, V2QueryDatasets: v2QueryDatasets,
-		V2Assets: v2Assets, V2Extractions: v2Extractions, V2Cleaning: v2Cleaning, V2Review: v2Review,
-		V2Retrieval: v2Retrieval, V2Analysis: v2Analysis, V2Artifacts: v2Artifacts,
-		V2Catalog: v2Catalog, V2Agent: v2Agent,
-		Workflows:        workflowService,
-		WorkflowPreviews: workflowPreviews, WorkflowPublications: workflowPublications,
-		WorkflowDesign:  workflowDesign,
-		WorkflowRuntime: workflowRuntime,
-		MaxFileMB:       int64(cfg.Parser.MaxFileMB),
-	})
+	engine := httpgin.New(httpgin.Services{PlatformConfigs: platformConfigs, V2Assets: assets, V2Extractions: extractions,
+		V2Cleaning: cleaning, V2Datasets: datasets, V2QueryDatasets: queryDatasets, V2Retrieval: retrieval, V2Analysis: analysis,
+		V2Artifacts: artifacts, Workflows: workflows, WorkflowPreviews: previews, WorkflowPublications: publications,
+		WorkflowDesign: design, WorkflowRuntime: runtime, MaxFileMB: int64(cfg.Parser.MaxFileMB)})
 	mountStatic(engine)
-
-	srv := &http.Server{
-		Addr:    fmt.Sprintf(":%d", cfg.Server.Port),
-		Handler: engine,
-	}
+	srv := &http.Server{Addr: fmt.Sprintf(":%d", cfg.Server.Port), Handler: engine}
 	go func() {
 		logger.Info("ReqFlow 启动", "port", cfg.Server.Port, "workspace", cfg.Workspace.Name)
 		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -400,11 +263,9 @@ func main() {
 			os.Exit(1)
 		}
 	}()
-
 	quit := make(chan os.Signal, 1)
 	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 	<-quit
-	logger.Info("正在优雅关闭…")
 	stopWorker()
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -412,22 +273,12 @@ func main() {
 	select {
 	case <-workerDone:
 	case <-ctx.Done():
-		logger.Warn("V2 Worker 未在关闭窗口内退出")
-	}
-	select {
-	case <-workflowWorkerDone:
-	case <-ctx.Done():
-		logger.Warn("Workflow Runtime Worker 未在关闭窗口内退出")
+		logger.Warn("Workflow Worker 未在关闭窗口内退出")
 	}
 }
 
-// checkExampleTemplate 检查入库的示例模板是否被填入真实密钥（防止随代码分享泄漏）。
-func checkExampleTemplate() []string {
-	return config.CheckExampleLeak("config.example.yaml")
-}
-
-func parseLevel(s string) (lv slog.Level) {
-	switch s {
+func parseLevel(value string) slog.Level {
+	switch value {
 	case "debug":
 		return slog.LevelDebug
 	case "warn":

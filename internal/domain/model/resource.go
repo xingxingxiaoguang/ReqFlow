@@ -1,10 +1,5 @@
 package model
 
-import (
-	"encoding/json"
-	"time"
-)
-
 type ResourceType string
 
 const (
@@ -23,53 +18,7 @@ const (
 	ResourceArtifact           ResourceType = "artifact"
 )
 
-type ResourceDirection string
-
-const (
-	ResourceInput  ResourceDirection = "input"
-	ResourceOutput ResourceDirection = "output"
-)
-
-// PortDefinition 声明任务端口接受的资源类型。
-type PortDefinition struct {
-	ResourceType ResourceType `json:"resource_type"`
-	Required     bool         `json:"required,omitempty"`
-	Description  string       `json:"description,omitempty"`
-}
-
-// TaskResourceBinding 将一次任务的逻辑端口固化到具体资源及其读取边界。
-type TaskResourceBinding struct {
-	ID           string
-	TaskID       string
-	PortName     string
-	Direction    ResourceDirection
-	ResourceType ResourceType
-	ResourceID   string
-	Boundary     json.RawMessage
-	CreatedAt    time.Time
-}
-
-// ResourceRef 是 Executor 可消费或产出的稳定资源引用。Boundary 固化读取边界，
-// 例如 Dataset 的 through_seq；资源内容本身由对应应用服务/仓储读取。
-type ResourceRef struct {
-	ResourceType ResourceType    `json:"resource_type"`
-	ResourceID   string          `json:"resource_id"`
-	Boundary     json.RawMessage `json:"boundary,omitempty"`
-}
-
-// StepResourceBinding 保存一次 StepRun 的具名输出。下游步骤只通过它解析
-// $step.<step_id>.<port>，不从 progress/checkpoint 猜测业务资源。
-type StepResourceBinding struct {
-	ID           string
-	StepRunID    string
-	PortName     string
-	ResourceType ResourceType
-	ResourceID   string
-	Boundary     json.RawMessage
-	CreatedAt    time.Time
-}
-
-// DatasetBoundary 固化 Task 对追加型 Dataset 的读取上界。
+// DatasetBoundary 固化追加型 Dataset 的读取上界。
 type DatasetBoundary struct {
 	DatasetID  string `json:"dataset_id"`
 	ThroughSeq int64  `json:"through_seq"`
@@ -115,7 +64,7 @@ type RecordDraftsBoundary struct {
 }
 
 // TransformedRecordsBoundary 固化确定性转换所使用的草稿、Profile、Schema 与引擎版本。
-// 同一 StepRun 恢复时若引擎版本变化，必须拒绝混合新旧转换结果。
+// 同一 NodeRun 恢复时若引擎版本变化，必须拒绝混合新旧转换结果。
 type TransformedRecordsBoundary struct {
 	RecordDraftSetID       string `json:"record_draft_set_id"`
 	ExtractionProfileID    string `json:"extraction_profile_id"`

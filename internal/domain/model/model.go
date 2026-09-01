@@ -1,6 +1,5 @@
-// Package model 定义 ReqFlow 的领域实体与值。
-// 本包仅依赖标准库；V2 核心三态：Dataset（追加型数据容器）、DatasetItem（不可变
-// 条目）、Task（从 TaskDefinition 派生的执行实例，冻结定义快照与资源边界）。
+// Package model 定义数据能力复用层的领域实体与值。
+// 工作流设计与运行模型位于 internal/domain/workflow；本包不承载编排概念。
 package model
 
 import "time"
@@ -37,40 +36,3 @@ type DatasetItem struct {
 	Provenance  string
 	CreatedAt   time.Time
 }
-
-/* ---- Task（执行实例） ---- */
-
-// Task 从一个 active TaskDefinition 派生的一次执行：创建时冻结 DefinitionSnapshot
-// 与资源绑定，运行状态由 StepRun 承载（本结构只保留任务级生命周期）。
-// BatchID/BatchOrdinal/BatchSize/SourceAssetID/SourceFilename 来自 TaskBatchService
-// 的批量派生来源；单任务派生时为零值。
-type Task struct {
-	ID                 string
-	WorkspaceID        string
-	DefinitionID       string
-	DefinitionSnapshot string // JSON 文本：创建时的完整定义（步骤 DAG + 端口 + Executor 配置）
-	Type               string // 来源 Definition 的 key（目录展示用）
-	Title              string
-	BatchID            string
-	BatchOrdinal       int
-	BatchSize          int
-	SourceAssetID      string
-	SourceFilename     string
-	Status             string
-	ErrorMessage       string
-	CreatedAt          time.Time
-	UpdatedAt          time.Time
-	StartedAt          time.Time // 零值 = 未开始
-	FinishedAt         time.Time // 零值 = 未终态
-}
-
-// 任务状态机（StepRun 状态见 task_definition.go；本组只描述任务级生命周期）。
-const (
-	TaskStatusPending   = "pending"
-	TaskStatusRunning   = "running"
-	TaskStatusPausing   = "pausing"  // 已发出暂停请求，等待持有 lease 的 Worker 落检查点
-	TaskStatusAwaiting  = "awaiting" // 等待人工操作（Human Gate）
-	TaskStatusPaused    = "paused"   // 用户暂停 / 服务重启中断
-	TaskStatusSucceeded = "succeeded"
-	TaskStatusFailed    = "failed"
-)

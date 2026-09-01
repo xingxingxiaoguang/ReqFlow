@@ -38,7 +38,7 @@ func TestBuildSnapshotIncrementalAndCoverageGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := service.BuildSnapshot(ctx, BuildInput{DatasetID: dataset.ID,
-		RetrievalProfileID: profile.ID, SourceSeq: 2, StepRunID: "step-1", ProducerAttempt: 1}, nil)
+		RetrievalProfileID: profile.ID, SourceSeq: 2, ProducerNodeRunID: "node-1", ProducerAttempt: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestBuildSnapshotIncrementalAndCoverageGate(t *testing.T) {
 		retrievalTestItem("item-3", dataset.ID, 3, "Cherry thermal", "automatic shutdown"))
 	lexical.builtDocuments = 0
 	second, err := service.BuildSnapshot(ctx, BuildInput{DatasetID: dataset.ID,
-		RetrievalProfileID: profile.ID, SourceSeq: 3, StepRunID: "step-2", ProducerAttempt: 1}, nil)
+		RetrievalProfileID: profile.ID, SourceSeq: 3, ProducerNodeRunID: "node-2", ProducerAttempt: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,11 +70,11 @@ func TestBuildSnapshotIncrementalAndCoverageGate(t *testing.T) {
 	repo.items[dataset.ID] = append(repo.items[dataset.ID],
 		retrievalTestItem("item-4", dataset.ID, 4, "Date sensor", "sensor failure"))
 	failed, err := service.BuildSnapshot(ctx, BuildInput{DatasetID: dataset.ID,
-		RetrievalProfileID: profile.ID, SourceSeq: 4, StepRunID: "step-3", ProducerAttempt: 1}, nil)
+		RetrievalProfileID: profile.ID, SourceSeq: 4, ProducerNodeRunID: "node-3", ProducerAttempt: 1}, nil)
 	if err == nil || !strings.Contains(err.Error(), "覆盖不完整") {
 		t.Fatalf("覆盖不完整应失败，got snapshot=%+v err=%v", failed, err)
 	}
-	stored := repo.snapshotByStep("step-3")
+	stored := repo.snapshotByNode("node-3")
 	if stored == nil || stored.Status != model.RetrievalSnapshotFailed {
 		t.Fatalf("失败 Snapshot 未落 failed: %+v", stored)
 	}
@@ -394,8 +394,8 @@ func (r *retrievalMemoryRepo) ListRetrievalProfiles(_ context.Context, workspace
 	}
 	return out, nil
 }
-func (r *retrievalMemoryRepo) GetOrCreateRetrievalSnapshotForStep(_ context.Context, snapshot *model.RetrievalSnapshot, _ int) (*model.RetrievalSnapshot, error) {
-	if existing := r.snapshotByStep(snapshot.SourceStepRunID); existing != nil {
+func (r *retrievalMemoryRepo) GetOrCreateRetrievalSnapshotForNode(_ context.Context, snapshot *model.RetrievalSnapshot, _ int) (*model.RetrievalSnapshot, error) {
+	if existing := r.snapshotByNode(snapshot.ProducerNodeRunID); existing != nil {
 		clone := *existing
 		if clone.Status != model.RetrievalSnapshotActive {
 			clone.Status = model.RetrievalSnapshotBuilding
@@ -441,11 +441,11 @@ func (r *retrievalMemoryRepo) GetLatestActiveRetrievalSnapshot(_ context.Context
 	}
 	return found, nil
 }
-func (r *retrievalMemoryRepo) SetRetrievalSnapshotStatusForStep(_ context.Context, snapshotID, _ string, _ int, status, reason string) error {
+func (r *retrievalMemoryRepo) SetRetrievalSnapshotStatusForNode(_ context.Context, snapshotID, _ string, _ int, status, reason string) error {
 	r.snapshots[snapshotID].Status, r.snapshots[snapshotID].FailureReason = status, reason
 	return nil
 }
-func (r *retrievalMemoryRepo) ActivateRetrievalSnapshotForStep(_ context.Context, snapshotID, _ string, _ int, lexicalRef, vectorRef string, lexicalCount, vectorCount int) (*model.RetrievalSnapshot, error) {
+func (r *retrievalMemoryRepo) ActivateRetrievalSnapshotForNode(_ context.Context, snapshotID, _ string, _ int, lexicalRef, vectorRef string, lexicalCount, vectorCount int) (*model.RetrievalSnapshot, error) {
 	value := r.snapshots[snapshotID]
 	value.Status, value.LexicalRef, value.VectorRef = model.RetrievalSnapshotActive, lexicalRef, vectorRef
 	value.LexicalCount, value.VectorCount = lexicalCount, vectorCount
@@ -491,9 +491,9 @@ func (r *retrievalMemoryRepo) AppendKnowledgeToolAudit(_ context.Context, audit 
 	r.audits = append(r.audits, audit)
 	return nil
 }
-func (r *retrievalMemoryRepo) snapshotByStep(stepID string) *model.RetrievalSnapshot {
+func (r *retrievalMemoryRepo) snapshotByNode(nodeRunID string) *model.RetrievalSnapshot {
 	for _, snapshot := range r.snapshots {
-		if snapshot.SourceStepRunID == stepID {
+		if snapshot.ProducerNodeRunID == nodeRunID {
 			return snapshot
 		}
 	}

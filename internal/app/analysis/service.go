@@ -13,6 +13,7 @@ import (
 	appretrieval "reqflow/internal/app/retrieval"
 	"reqflow/internal/domain/logic"
 	"reqflow/internal/domain/model"
+	domain "reqflow/internal/domain/workflow"
 	"reqflow/internal/port"
 )
 
@@ -119,11 +120,11 @@ type KnowledgeSourceInput struct {
 type RunInput struct {
 	WorkspaceID       string
 	TaskID            string
-	StepRunID         string
+	NodeRunID         string
 	ProducerAttempt   int
 	AnalysisProfileID string
 	Knowledge         map[string]KnowledgeSourceInput
-	Inputs            map[string]model.ResourceRef
+	Inputs            map[string]domain.NodeResourceBinding
 	Checkpoint        json.RawMessage
 	SaveCheckpoint    func(json.RawMessage) error
 	ReportProgress    func(map[string]any) error
@@ -149,7 +150,7 @@ func (s *Service) Analyze(ctx context.Context, input RunInput) (result *model.An
 		return nil, fmt.Errorf("AnalysisProfile 不属于任务 workspace")
 	}
 	result, err = s.repo.BeginAnalysisResult(ctx, &model.AnalysisResult{WorkspaceID: input.WorkspaceID,
-		AnalysisProfileID: profile.ID, SourceTaskID: input.TaskID, SourceStepRunID: input.StepRunID},
+		AnalysisProfileID: profile.ID, ProducerWorkflowRunID: input.TaskID, ProducerNodeRunID: input.NodeRunID},
 		input.ProducerAttempt)
 	if err != nil {
 		return nil, err
@@ -171,7 +172,7 @@ func (s *Service) Analyze(ctx context.Context, input RunInput) (result *model.An
 	checkpoint.AnalysisResultID = result.ID
 	defer func() {
 		if err != nil {
-			_ = s.repo.FailAnalysisResult(context.WithoutCancel(ctx), result.ID, input.StepRunID,
+			_ = s.repo.FailAnalysisResult(context.WithoutCancel(ctx), result.ID, input.NodeRunID,
 				input.ProducerAttempt, truncate(err.Error(), 4000))
 		}
 	}()
@@ -180,7 +181,7 @@ func (s *Service) Analyze(ctx context.Context, input RunInput) (result *model.An
 		scopeSources := make(map[string]appretrieval.KnowledgeSource, len(input.Knowledge))
 		for portName, sourceInput := range input.Knowledge {
 			resource, ok := input.Inputs[portName]
-			if !ok || resource.ResourceType != model.ResourceRetrievalSnapshot {
+			if !ok || resource.ResourceType != domain.ResourceRetrievalSnapshot {
 				return nil, fmt.Errorf("知识源端口 %s 必须绑定 RetrievalSnapshot", portName)
 			}
 			name := strings.TrimSpace(sourceInput.Name)
@@ -191,7 +192,7 @@ func (s *Service) Analyze(ctx context.Context, input RunInput) (result *model.An
 				Description: strings.TrimSpace(sourceInput.Description), SnapshotID: resource.ResourceID}
 		}
 		tools, buildErr := s.retrieval.BuildKnowledgeTools(ctx, appretrieval.KnowledgeScope{
-			ID: input.StepRunID, WorkspaceID: input.WorkspaceID, Sources: scopeSources,
+			ID: input.NodeRunID, WorkspaceID: input.WorkspaceID, Sources: scopeSources,
 		})
 		if buildErr != nil {
 			return nil, buildErr
@@ -201,7 +202,7 @@ func (s *Service) Analyze(ctx context.Context, input RunInput) (result *model.An
 			checkpoint.Run.Context = analysisContext(profile, input.Knowledge, tools)
 		}
 		runErr := agent.Execute(ctx, s.llm, tools, &checkpoint.Run, &checkpoint.TraceEnvelope, agent.RunOptions{
-			ID: input.StepRunID, Label: "知识分析", Ordinal: 0,
+			ID: input.NodeRunID, Label: "知识分析", Ordinal: 0,
 			Loop: agent.Config{MaxIterations: s.maxTurns, RequireToolTermination: true,
 				NoToolCallReminder: "分析尚未提交。请继续使用知识工具核对事实，并通过 submit_analysis_result 提交符合 Schema 的最终结果。"},
 			Stats: func() map[string]int {

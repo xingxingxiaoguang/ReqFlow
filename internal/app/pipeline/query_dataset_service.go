@@ -22,7 +22,7 @@ var (
 
 const queryDatasetReadPageSize = 1000
 
-// QueryDerivationConfig 是固化在 TaskDefinition 快照中的确定性 Base → Query 映射合同。
+// QueryDerivationConfig 是固化在 WorkflowRevision 快照中的确定性 Base → Query 映射合同。
 // 字段都引用 Base Dataset 的顶层字段；目标 Query Dataset 使用平台统一字段合同。
 type QueryDerivationConfig struct {
 	PipelineKey        string            `json:"pipeline_key"`
@@ -136,13 +136,13 @@ func (s *QueryDatasetService) GetCursor(ctx context.Context, pipelineKey, source
 }
 
 type DeriveQueryDatasetInput struct {
-	SourceDatasetID  string
-	SourceThroughSeq int64
-	TargetDatasetID  string
-	Config           QueryDerivationConfig
-	SourceTaskID     string
-	SourceStepRunID  string
-	ProducerAttempt  int
+	SourceDatasetID       string
+	SourceThroughSeq      int64
+	TargetDatasetID       string
+	Config                QueryDerivationConfig
+	ProducerWorkflowRunID string
+	ProducerNodeRunID     string
+	ProducerAttempt       int
 }
 
 type QueryDatasetDerivation struct {
@@ -165,9 +165,9 @@ func (s *QueryDatasetService) Derive(ctx context.Context, in DeriveQueryDatasetI
 	if in.SourceThroughSeq <= 0 {
 		return nil, fmt.Errorf("source through_seq 必须大于 0")
 	}
-	if strings.TrimSpace(in.SourceTaskID) == "" || strings.TrimSpace(in.SourceStepRunID) == "" ||
+	if strings.TrimSpace(in.ProducerWorkflowRunID) == "" || strings.TrimSpace(in.ProducerNodeRunID) == "" ||
 		in.ProducerAttempt <= 0 {
-		return nil, fmt.Errorf("派生写入必须绑定有效 Task、StepRun 和 attempt")
+		return nil, fmt.Errorf("派生写入必须绑定有效 NodeRun 和 attempt")
 	}
 
 	source, err := s.repo.GetAppendDataset(ctx, in.SourceDatasetID)
@@ -208,9 +208,9 @@ func (s *QueryDatasetService) Derive(ctx context.Context, in DeriveQueryDatasetI
 	if cursor.ProcessedThroughSeq >= in.SourceThroughSeq {
 		// Batch 已提交但 Worker 在保存 progress/完成 Step 前失去 lease 时，同一 Task
 		// 的新 attempt 必须复用原 Batch；其他无增量或旧边界任务不创建 staging Batch。
-		if cursor.LastSuccessTaskID == strings.TrimSpace(in.SourceTaskID) {
+		if cursor.LastSuccessRunID == strings.TrimSpace(in.ProducerWorkflowRunID) {
 			batch, batchErr := s.datasets.GetOrCreateBatch(ctx, CreateBatchInput{DatasetID: target.ID,
-				SourceTaskID: strings.TrimSpace(in.SourceTaskID), SourceStepRunID: in.SourceStepRunID}, in.ProducerAttempt)
+				ProducerWorkflowRunID: strings.TrimSpace(in.ProducerWorkflowRunID), ProducerNodeRunID: in.ProducerNodeRunID}, in.ProducerAttempt)
 			if batchErr != nil {
 				return nil, batchErr
 			}
@@ -226,7 +226,7 @@ func (s *QueryDatasetService) Derive(ctx context.Context, in DeriveQueryDatasetI
 		return nil, fmt.Errorf("%w: through_seq=%d", ErrNoQueryDatasetIncrement, in.SourceThroughSeq)
 	}
 	batch, err := s.datasets.GetOrCreateBatch(ctx, CreateBatchInput{DatasetID: target.ID,
-		SourceTaskID: strings.TrimSpace(in.SourceTaskID), SourceStepRunID: in.SourceStepRunID}, in.ProducerAttempt)
+		ProducerWorkflowRunID: strings.TrimSpace(in.ProducerWorkflowRunID), ProducerNodeRunID: in.ProducerNodeRunID}, in.ProducerAttempt)
 	if err != nil {
 		return nil, err
 	}
@@ -254,9 +254,9 @@ func (s *QueryDatasetService) Derive(ctx context.Context, in DeriveQueryDatasetI
 		return nil, err
 	}
 	payloadHash := datasetBatchPayloadHash(prepared)
-	committed, advanced, err := s.repo.CommitQueryDatasetBatchForStep(ctx, storedBatch.ID,
-		in.SourceStepRunID, in.ProducerAttempt, payloadHash, prepared, cursor.ID,
-		cursor.ProcessedThroughSeq, in.SourceThroughSeq, strings.TrimSpace(in.SourceTaskID))
+	committed, advanced, err := s.repo.CommitQueryDatasetBatchForNode(ctx, storedBatch.ID,
+		in.ProducerNodeRunID, in.ProducerAttempt, payloadHash, prepared, cursor.ID,
+		cursor.ProcessedThroughSeq, in.SourceThroughSeq, strings.TrimSpace(in.ProducerWorkflowRunID))
 	if err != nil {
 		return nil, err
 	}

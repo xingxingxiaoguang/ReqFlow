@@ -54,3 +54,40 @@ CREATE TABLE node_resource_bindings (
     UNIQUE (node_run_id, direction, port)
 );
 CREATE INDEX idx_node_resource_bindings_resource ON node_resource_bindings (resource_type, resource_id);
+
+ALTER TABLE dataset_batches
+    ADD CONSTRAINT dataset_batches_producer_run_fk
+        FOREIGN KEY (producer_workflow_run_id) REFERENCES workflow_runs (id),
+    ADD CONSTRAINT dataset_batches_producer_node_fk
+        FOREIGN KEY (producer_node_run_id) REFERENCES workflow_node_runs (id);
+ALTER TABLE parsed_document_sets
+    ADD CONSTRAINT parsed_document_sets_producer_node_fk
+        FOREIGN KEY (producer_node_run_id) REFERENCES workflow_node_runs (id) ON DELETE CASCADE;
+ALTER TABLE record_draft_sets
+    ADD CONSTRAINT record_draft_sets_producer_node_fk
+        FOREIGN KEY (producer_node_run_id) REFERENCES workflow_node_runs (id) ON DELETE CASCADE;
+ALTER TABLE transformed_record_sets
+    ADD CONSTRAINT transformed_record_sets_producer_node_fk
+        FOREIGN KEY (producer_node_run_id) REFERENCES workflow_node_runs (id) ON DELETE CASCADE;
+ALTER TABLE validation_result_sets
+    ADD CONSTRAINT validation_result_sets_producer_node_fk
+        FOREIGN KEY (producer_node_run_id) REFERENCES workflow_node_runs (id) ON DELETE CASCADE;
+ALTER TABLE approved_record_sets
+    ADD CONSTRAINT approved_record_sets_producer_node_fk
+        FOREIGN KEY (producer_node_run_id) REFERENCES workflow_node_runs (id) ON DELETE CASCADE;
+ALTER TABLE retrieval_snapshots
+    ADD CONSTRAINT retrieval_snapshots_producer_node_fk
+        FOREIGN KEY (producer_node_run_id) REFERENCES workflow_node_runs (id);
+ALTER TABLE pipeline_cursors
+    ADD CONSTRAINT pipeline_cursors_last_success_run_fk
+        FOREIGN KEY (last_success_run_id) REFERENCES workflow_runs (id);
+ALTER TABLE analysis_results
+    ADD CONSTRAINT analysis_results_producer_run_fk
+        FOREIGN KEY (producer_workflow_run_id) REFERENCES workflow_runs (id) ON DELETE CASCADE,
+    ADD CONSTRAINT analysis_results_producer_node_fk
+        FOREIGN KEY (producer_node_run_id) REFERENCES workflow_node_runs (id) ON DELETE CASCADE;
+ALTER TABLE artifacts
+    ADD CONSTRAINT artifacts_producer_run_fk
+        FOREIGN KEY (producer_workflow_run_id) REFERENCES workflow_runs (id),
+    ADD CONSTRAINT artifacts_producer_node_fk
+        FOREIGN KEY (producer_node_run_id) REFERENCES workflow_node_runs (id);

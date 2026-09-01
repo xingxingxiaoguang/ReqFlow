@@ -12,12 +12,13 @@ import (
 	"gorm.io/gorm/clause"
 
 	"reqflow/internal/domain/model"
+	domain "reqflow/internal/domain/workflow"
 	"reqflow/internal/port"
 )
 
 func (r *PipelineRepo) CreateApprovedRecordSet(ctx context.Context, set *model.ApprovedRecordSet,
 	decisions []model.RecordReviewDecision) (*model.ApprovedRecordSet, error) {
-	if set == nil || strings.TrimSpace(set.SourceStepRunID) == "" || strings.TrimSpace(set.ValidationResultSetID) == "" ||
+	if set == nil || strings.TrimSpace(set.ProducerNodeRunID) == "" || strings.TrimSpace(set.ValidationResultSetID) == "" ||
 		strings.TrimSpace(set.Reviewer) == "" || strings.TrimSpace(set.Rationale) == "" || strings.TrimSpace(set.ReviewHash) == "" {
 		return nil, fmt.Errorf("ApprovedRecordSet 审核身份不完整")
 	}
@@ -31,27 +32,27 @@ func (r *PipelineRepo) CreateApprovedRecordSet(ctx context.Context, set *model.A
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var existing approvedRecordSetRow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("source_step_run_id = ?", set.SourceStepRunID).Limit(1).Find(&existing).Error; err != nil {
+			Where("producer_node_run_id = ?", set.ProducerNodeRunID).Limit(1).Find(&existing).Error; err != nil {
 			return err
 		}
 		if existing.ID != "" {
 			if existing.ReviewHash != set.ReviewHash {
-				return fmt.Errorf("人工 Gate %s 已存在不同内容的不可变审核结论", set.SourceStepRunID)
+				return fmt.Errorf("人工 Gate %s 已存在不同内容的不可变审核结论", set.ProducerNodeRunID)
 			}
 			stored = existing.toModel()
 			return nil
 		}
 
-		var step struct {
-			Kind   model.StepKind
-			Status string
+		var node struct {
+			CapabilityKind string
+			Status         domain.NodeRunStatus
 		}
-		if err := tx.Raw(`SELECT kind, status FROM step_runs WHERE id = ? FOR UPDATE`,
-			set.SourceStepRunID).Scan(&step).Error; err != nil {
+		if err := tx.Raw(`SELECT node #>> '{capability,ref,kind}' AS capability_kind, status
+			FROM workflow_node_runs WHERE id = ? FOR UPDATE`, set.ProducerNodeRunID).Scan(&node).Error; err != nil {
 			return err
 		}
-		if step.Kind != model.StepKindHumanReview || step.Status != model.StepRunAwaiting {
-			return fmt.Errorf("%w: 人工 Gate 不再处于 awaiting", port.ErrInvalidTransition)
+		if node.CapabilityKind != "human.review_records" || node.Status != domain.NodeAwaitingManualCompletion {
+			return fmt.Errorf("%w: 人工 Gate 不再处于 awaiting", port.ErrRunInvalidTransition)
 		}
 		var validation struct {
 			TargetDatasetID string
@@ -76,11 +77,11 @@ func (r *PipelineRepo) CreateApprovedRecordSet(ctx context.Context, set *model.A
 			set.CreatedAt = time.Now()
 		}
 		if err := tx.Exec(`INSERT INTO approved_record_sets
-			(id, validation_result_set_id, target_dataset_id, target_schema_id, source_step_run_id,
+			(id, validation_result_set_id, target_dataset_id, target_schema_id, producer_node_run_id,
 			 reviewer, rationale, review_hash, reviewed_through_seq, record_count,
 			 approved_count, edited_count, excluded_count, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, set.ID,
-			set.ValidationResultSetID, set.TargetDatasetID, set.TargetSchemaID, set.SourceStepRunID,
+			set.ValidationResultSetID, set.TargetDatasetID, set.TargetSchemaID, set.ProducerNodeRunID,
 			set.Reviewer, set.Rationale, set.ReviewHash, set.ReviewedThroughSeq, set.RecordCount,
 			set.ApprovedCount, set.EditedCount, set.ExcludedCount, set.CreatedAt).Error; err != nil {
 			return err
@@ -138,9 +139,9 @@ func (r *PipelineRepo) GetApprovedRecordSet(ctx context.Context, id string) (*mo
 	return r.getApprovedRecordSet(ctx, "id = ?", id)
 }
 
-func (r *PipelineRepo) FindApprovedRecordSetByStepRun(ctx context.Context, stepRunID string) (*model.ApprovedRecordSet, bool, error) {
+func (r *PipelineRepo) FindApprovedRecordSetByNodeRun(ctx context.Context, nodeRunID string) (*model.ApprovedRecordSet, bool, error) {
 	var row approvedRecordSetRow
-	if err := r.db.WithContext(ctx).Where("source_step_run_id = ?", stepRunID).Limit(1).Find(&row).Error; err != nil {
+	if err := r.db.WithContext(ctx).Where("producer_node_run_id = ?", nodeRunID).Limit(1).Find(&row).Error; err != nil {
 		return nil, false, err
 	}
 	if row.ID == "" {
@@ -185,7 +186,7 @@ type approvedRecordSetRow struct {
 	ValidationResultSetID string    `gorm:"column:validation_result_set_id"`
 	TargetDatasetID       string    `gorm:"column:target_dataset_id"`
 	TargetSchemaID        string    `gorm:"column:target_schema_id"`
-	SourceStepRunID       string    `gorm:"column:source_step_run_id"`
+	ProducerNodeRunID     string    `gorm:"column:producer_node_run_id"`
 	Reviewer              string    `gorm:"column:reviewer"`
 	Rationale             string    `gorm:"column:rationale"`
 	ReviewHash            string    `gorm:"column:review_hash"`
@@ -202,7 +203,7 @@ func (approvedRecordSetRow) TableName() string { return "approved_record_sets" }
 func (row approvedRecordSetRow) toModel() model.ApprovedRecordSet {
 	return model.ApprovedRecordSet{ID: row.ID, ValidationResultSetID: row.ValidationResultSetID,
 		TargetDatasetID: row.TargetDatasetID, TargetSchemaID: row.TargetSchemaID,
-		SourceStepRunID: row.SourceStepRunID, Reviewer: row.Reviewer, Rationale: row.Rationale,
+		ProducerNodeRunID: row.ProducerNodeRunID, Reviewer: row.Reviewer, Rationale: row.Rationale,
 		ReviewHash: row.ReviewHash, ReviewedThroughSeq: row.ReviewedThroughSeq,
 		RecordCount: row.RecordCount, ApprovedCount: row.ApprovedCount,
 		EditedCount: row.EditedCount, ExcludedCount: row.ExcludedCount, CreatedAt: row.CreatedAt}

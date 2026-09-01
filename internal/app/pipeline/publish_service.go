@@ -28,10 +28,10 @@ func NewPublishService(repo port.ReviewPipelineRepo, datasets *DatasetService) (
 }
 
 type PublishApprovedRecordsInput struct {
-	ApprovedRecordSetID string
-	SourceTaskID        string
-	SourceStepRunID     string
-	ProducerAttempt     int
+	ApprovedRecordSetID   string
+	ProducerWorkflowRunID string
+	ProducerNodeRunID     string
+	ProducerAttempt       int
 }
 
 type WorkflowPublishInput struct {
@@ -43,7 +43,7 @@ type WorkflowPublishInput struct {
 
 func (s *PublishService) PublishWorkflowApproved(ctx context.Context, input WorkflowPublishInput) (*model.DatasetBatch, error) {
 	return s.PublishApprovedRecords(ctx, PublishApprovedRecordsInput{ApprovedRecordSetID: input.ResourceID,
-		SourceTaskID: input.RunID, SourceStepRunID: input.ExecutionID, ProducerAttempt: input.Attempt})
+		ProducerWorkflowRunID: input.RunID, ProducerNodeRunID: input.ExecutionID, ProducerAttempt: input.Attempt})
 }
 
 func (s *PublishService) PublishApprovedRecords(ctx context.Context,
@@ -101,12 +101,12 @@ func (s *PublishService) PublishApprovedRecords(ctx context.Context,
 		return nil, fmt.Errorf("ApprovedRecordSet 没有完整的可发布记录")
 	}
 	batch, err := s.datasets.GetOrCreateBatch(ctx, CreateBatchInput{DatasetID: set.TargetDatasetID,
-		SourceTaskID: strings.TrimSpace(in.SourceTaskID), SourceStepRunID: strings.TrimSpace(in.SourceStepRunID)},
+		ProducerWorkflowRunID: strings.TrimSpace(in.ProducerWorkflowRunID), ProducerNodeRunID: strings.TrimSpace(in.ProducerNodeRunID)},
 		in.ProducerAttempt)
 	if err != nil {
 		return nil, err
 	}
-	return s.datasets.CommitBatchForStep(ctx, batch.ID, in.SourceStepRunID, in.ProducerAttempt, items)
+	return s.datasets.CommitBatchForNode(ctx, batch.ID, in.ProducerNodeRunID, in.ProducerAttempt, items)
 }
 
 func decodeFieldsMap(raw json.RawMessage) (map[string]any, error) {

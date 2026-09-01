@@ -18,23 +18,23 @@ type AnalysisProfile struct {
 }
 
 type AnalysisResult struct {
-	ID                string
-	WorkspaceID       string
-	AnalysisProfileID string
-	SourceTaskID      string
-	SourceStepRunID   string
-	ProducerAttempt   int
-	Status            string
-	Output            json.RawMessage
-	AgentContext      json.RawMessage
-	Model             string
-	InputTokens       int
-	OutputTokens      int
-	CacheReadTokens   int
-	CacheWriteTokens  int
-	ErrorMessage      string
-	CreatedAt         time.Time
-	FinishedAt        time.Time
+	ID                    string
+	WorkspaceID           string
+	AnalysisProfileID     string
+	ProducerWorkflowRunID string
+	ProducerNodeRunID     string
+	ProducerAttempt       int
+	Status                string
+	Output                json.RawMessage
+	AgentContext          json.RawMessage
+	Model                 string
+	InputTokens           int
+	OutputTokens          int
+	CacheReadTokens       int
+	CacheWriteTokens      int
+	ErrorMessage          string
+	CreatedAt             time.Time
+	FinishedAt            time.Time
 }
 
 const (

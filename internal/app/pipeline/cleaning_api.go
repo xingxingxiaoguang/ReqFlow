@@ -14,7 +14,7 @@ type TransformedRecordSetView struct {
 	RecordDraftSetID    string                  `json:"record_draft_set_id"`
 	ExtractionProfileID string                  `json:"extraction_profile_id"`
 	TargetSchemaID      string                  `json:"target_schema_id"`
-	SourceStepRunID     string                  `json:"source_step_run_id"`
+	ProducerNodeRunID   string                  `json:"producer_node_run_id"`
 	Status              string                  `json:"status"`
 	EngineVersion       string                  `json:"engine_version"`
 	DraftCount          int                     `json:"draft_count"`
@@ -43,7 +43,7 @@ func (s *CleaningService) TransformedRecordSetView(ctx context.Context, id strin
 	}
 	view := &TransformedRecordSetView{ID: set.ID, RecordDraftSetID: set.RecordDraftSetID,
 		ExtractionProfileID: set.ExtractionProfileID, TargetSchemaID: set.TargetSchemaID,
-		SourceStepRunID: set.SourceStepRunID, Status: set.Status, EngineVersion: set.EngineVersion,
+		ProducerNodeRunID: set.ProducerNodeRunID, Status: set.Status, EngineVersion: set.EngineVersion,
 		DraftCount: set.DraftCount, TransformedCount: set.TransformedCount,
 		ChangedRecordCount: set.ChangedRecordCount, IssueCount: set.IssueCount,
 		CreatedAt: set.CreatedAt, FinishedAt: set.FinishedAt,
@@ -61,7 +61,7 @@ type ValidationResultSetView struct {
 	TransformedRecordSetID string                 `json:"transformed_record_set_id"`
 	TargetDatasetID        string                 `json:"target_dataset_id"`
 	TargetSchemaID         string                 `json:"target_schema_id"`
-	SourceStepRunID        string                 `json:"source_step_run_id"`
+	ProducerNodeRunID      string                 `json:"producer_node_run_id"`
 	Status                 string                 `json:"status"`
 	EngineVersion          string                 `json:"engine_version"`
 	ValidatedThroughSeq    int64                  `json:"validated_through_seq"`
@@ -119,7 +119,7 @@ func (s *CleaningService) ValidationResultSetView(ctx context.Context, id string
 	}
 	view := &ValidationResultSetView{ID: set.ID, TransformedRecordSetID: set.TransformedRecordSetID,
 		TargetDatasetID: set.TargetDatasetID, TargetSchemaID: set.TargetSchemaID,
-		SourceStepRunID: set.SourceStepRunID, Status: set.Status, EngineVersion: set.EngineVersion,
+		ProducerNodeRunID: set.ProducerNodeRunID, Status: set.Status, EngineVersion: set.EngineVersion,
 		ValidatedThroughSeq: set.ValidatedThroughSeq, RecordCount: set.RecordCount,
 		ValidCount: set.ValidCount, WarningCount: set.WarningCount, InvalidCount: set.InvalidCount,
 		DuplicateCount: set.DuplicateCount, ConflictCount: set.ConflictCount,

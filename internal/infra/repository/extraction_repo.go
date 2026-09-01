@@ -44,13 +44,13 @@ func (r *PipelineRepo) GetExtractionProfile(ctx context.Context, id string) (*mo
 func (r *PipelineRepo) BeginRecordDraftSet(ctx context.Context, set *model.RecordDraftSet, units []model.ExtractionUnit) (*model.RecordDraftSet, error) {
 	var stored model.RecordDraftSet
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
-		if err := assertActiveStepProducer(tx, set.SourceStepRunID, set.ProducerAttempt); err != nil {
+		if err := assertActiveNodeProducer(tx, set.ProducerNodeRunID, set.ProducerAttempt); err != nil {
 			return err
 		}
 
 		var row recordDraftSetRow
 		err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
-			Where("source_step_run_id = ?", set.SourceStepRunID).Limit(1).Find(&row).Error
+			Where("producer_node_run_id = ?", set.ProducerNodeRunID).Limit(1).Find(&row).Error
 		switch {
 		case err != nil:
 			return err
@@ -62,15 +62,15 @@ func (r *PipelineRepo) BeginRecordDraftSet(ctx context.Context, set *model.Recor
 				set.CreatedAt = time.Now()
 			}
 			if err := tx.Exec(`INSERT INTO record_draft_sets
-				(id, parsed_document_set_id, extraction_profile_id, source_step_run_id, status,
+				(id, parsed_document_set_id, extraction_profile_id, producer_node_run_id, status,
 				 producer_attempt, model, unit_count, created_at)
 				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, set.ID, set.ParsedDocumentSetID,
-				set.ExtractionProfileID, set.SourceStepRunID, model.RecordDraftSetRunning,
+				set.ExtractionProfileID, set.ProducerNodeRunID, model.RecordDraftSetRunning,
 				set.ProducerAttempt, set.Model, len(units), set.CreatedAt).Error; err != nil {
 				return err
 			}
 			row = recordDraftSetRow{ID: set.ID, ParsedDocumentSetID: set.ParsedDocumentSetID,
-				ExtractionProfileID: set.ExtractionProfileID, SourceStepRunID: set.SourceStepRunID,
+				ExtractionProfileID: set.ExtractionProfileID, ProducerNodeRunID: set.ProducerNodeRunID,
 				Status: model.RecordDraftSetRunning, ProducerAttempt: set.ProducerAttempt,
 				Model: set.Model, UnitCount: len(units), CreatedAt: set.CreatedAt}
 		default:
@@ -79,10 +79,10 @@ func (r *PipelineRepo) BeginRecordDraftSet(ctx context.Context, set *model.Recor
 			}
 			if row.ParsedDocumentSetID != set.ParsedDocumentSetID ||
 				row.ExtractionProfileID != set.ExtractionProfileID || row.Model != set.Model {
-				return fmt.Errorf("StepRun %s 的抽取输入、Profile 或模型发生变化", set.SourceStepRunID)
+				return fmt.Errorf("NodeRun %s 的抽取输入、Profile 或模型发生变化", set.ProducerNodeRunID)
 			}
 			if row.UnitCount != len(units) {
-				return fmt.Errorf("StepRun %s 的抽取分块计划发生变化", set.SourceStepRunID)
+				return fmt.Errorf("NodeRun %s 的抽取分块计划发生变化", set.ProducerNodeRunID)
 			}
 			if row.ProducerAttempt < set.ProducerAttempt {
 				if err := tx.Model(&recordDraftSetRow{}).Where("id = ?", row.ID).Updates(map[string]any{
@@ -151,8 +151,8 @@ func (r *PipelineRepo) GetRecordDraftSet(ctx context.Context, id string) (*model
 	return r.getRecordDraftSet(ctx, "id = ?", id)
 }
 
-func (r *PipelineRepo) GetRecordDraftSetByStepRun(ctx context.Context, stepRunID string) (*model.RecordDraftSet, []model.ExtractionUnit, error) {
-	return r.getRecordDraftSet(ctx, "source_step_run_id = ?", stepRunID)
+func (r *PipelineRepo) GetRecordDraftSetByNodeRun(ctx context.Context, nodeRunID string) (*model.RecordDraftSet, []model.ExtractionUnit, error) {
+	return r.getRecordDraftSet(ctx, "producer_node_run_id = ?", nodeRunID)
 }
 
 func (r *PipelineRepo) getRecordDraftSet(ctx context.Context, query string, value any) (*model.RecordDraftSet, []model.ExtractionUnit, error) {
@@ -222,7 +222,10 @@ func (r *PipelineRepo) CompleteExtractionUnit(ctx context.Context, setID string,
 			draft := &drafts[i]
 			// 与 record_drafts 的 jsonb_typeof='object' CHECK 对齐：非法值在这里报可归因的
 			// 应用层错误，而不是等 INSERT 撞数据库约束后炸出 SQLSTATE 23514。
-			for _, column := range []struct{ name string; value json.RawMessage }{
+			for _, column := range []struct {
+				name  string
+				value json.RawMessage
+			}{
 				{"fields", draft.Fields}, {"field_confidence", draft.FieldConfidence},
 			} {
 				if err := requireJSONBObject(column.name, column.value); err != nil {
@@ -385,17 +388,17 @@ func (r *PipelineRepo) ListRecordDrafts(ctx context.Context, setID string) ([]mo
 	return drafts, nil
 }
 
-func assertActiveStepProducer(tx *gorm.DB, stepRunID string, attempt int) error {
+func assertActiveNodeProducer(tx *gorm.DB, nodeRunID string, attempt int) error {
 	var producer struct {
 		Attempt    int
 		Status     string
 		LeaseUntil *time.Time
 	}
-	if err := tx.Raw(`SELECT attempt, status, lease_until FROM step_runs WHERE id = ? FOR UPDATE`,
-		stepRunID).Scan(&producer).Error; err != nil {
+	if err := tx.Raw(`SELECT attempt, status, lease_until FROM workflow_node_runs WHERE id = ? FOR UPDATE`,
+		nodeRunID).Scan(&producer).Error; err != nil {
 		return err
 	}
-	if producer.Attempt != attempt || producer.Status != model.StepRunRunning ||
+	if producer.Attempt != attempt || producer.Status != "running" ||
 		producer.LeaseUntil == nil || !producer.LeaseUntil.After(time.Now()) {
 		return port.ErrStaleResourceExecution
 	}
@@ -403,22 +406,22 @@ func assertActiveStepProducer(tx *gorm.DB, stepRunID string, attempt int) error 
 }
 
 func lockWritableRecordDraftSet(tx *gorm.DB, setID string, attempt int) (*recordDraftSetRow, error) {
-	// 所有写路径统一先锁 StepRun 再锁 Manifest，避免 Begin 与分块写入形成锁顺序反转。
+	// 所有写路径统一先锁 NodeRun 再锁 Manifest，避免锁顺序反转。
 	var identity struct {
-		SourceStepRunID string
+		ProducerNodeRunID string
 	}
-	if err := tx.Model(&recordDraftSetRow{}).Select("source_step_run_id").
+	if err := tx.Model(&recordDraftSetRow{}).Select("producer_node_run_id").
 		Where("id = ?", setID).Take(&identity).Error; err != nil {
 		return nil, err
 	}
-	if err := assertActiveStepProducer(tx, identity.SourceStepRunID, attempt); err != nil {
+	if err := assertActiveNodeProducer(tx, identity.ProducerNodeRunID, attempt); err != nil {
 		return nil, err
 	}
 	var row recordDraftSetRow
 	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", setID).First(&row).Error; err != nil {
 		return nil, err
 	}
-	if row.SourceStepRunID != identity.SourceStepRunID || row.ProducerAttempt != attempt ||
+	if row.ProducerNodeRunID != identity.ProducerNodeRunID || row.ProducerAttempt != attempt ||
 		row.Status != model.RecordDraftSetRunning {
 		return nil, port.ErrStaleResourceExecution
 	}
@@ -491,7 +494,7 @@ type recordDraftSetRow struct {
 	ID                  string     `gorm:"column:id;primaryKey"`
 	ParsedDocumentSetID string     `gorm:"column:parsed_document_set_id"`
 	ExtractionProfileID string     `gorm:"column:extraction_profile_id"`
-	SourceStepRunID     string     `gorm:"column:source_step_run_id"`
+	ProducerNodeRunID   string     `gorm:"column:producer_node_run_id"`
 	Status              string     `gorm:"column:status"`
 	ProducerAttempt     int        `gorm:"column:producer_attempt"`
 	Model               string     `gorm:"column:model"`
@@ -511,7 +514,7 @@ type recordDraftSetRow struct {
 func (recordDraftSetRow) TableName() string { return "record_draft_sets" }
 func (row recordDraftSetRow) toModel() model.RecordDraftSet {
 	set := model.RecordDraftSet{ID: row.ID, ParsedDocumentSetID: row.ParsedDocumentSetID,
-		ExtractionProfileID: row.ExtractionProfileID, SourceStepRunID: row.SourceStepRunID,
+		ExtractionProfileID: row.ExtractionProfileID, ProducerNodeRunID: row.ProducerNodeRunID,
 		Status: row.Status, ProducerAttempt: row.ProducerAttempt, Model: row.Model,
 		UnitCount: row.UnitCount, SucceededUnitCount: row.SucceededUnitCount,
 		FailedUnitCount: row.FailedUnitCount, DraftCount: row.DraftCount,

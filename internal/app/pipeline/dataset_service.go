@@ -84,8 +84,8 @@ func (s *DatasetService) CreateDataset(ctx context.Context, in CreateDatasetInpu
 	dataset := &model.Dataset{
 		WorkspaceID: strings.TrimSpace(in.WorkspaceID),
 		Name:        name, Description: strings.TrimSpace(in.Description),
-		Purpose: in.Purpose,
-		SchemaID: schema.ID,
+		Purpose:   in.Purpose,
+		SchemaID:  schema.ID,
 		KeyFields: append([]string(nil), in.KeyFields...),
 		Status:    model.DatasetStatusActive,
 	}
@@ -99,9 +99,9 @@ func (s *DatasetService) CreateDataset(ctx context.Context, in CreateDatasetInpu
 }
 
 type CreateBatchInput struct {
-	DatasetID       string
-	SourceTaskID    string
-	SourceStepRunID string
+	DatasetID             string
+	ProducerWorkflowRunID string
+	ProducerNodeRunID     string
 }
 
 func (s *DatasetService) CreateBatch(ctx context.Context, in CreateBatchInput) (*model.DatasetBatch, error) {
@@ -112,10 +112,10 @@ func (s *DatasetService) CreateBatch(ctx context.Context, in CreateBatchInput) (
 		return nil, fmt.Errorf("读取 Dataset: %w", err)
 	}
 	batch := &model.DatasetBatch{
-		DatasetID:       in.DatasetID,
-		SourceTaskID:    strings.TrimSpace(in.SourceTaskID),
-		SourceStepRunID: strings.TrimSpace(in.SourceStepRunID),
-		Status:          model.DatasetBatchStaging,
+		DatasetID:             in.DatasetID,
+		ProducerWorkflowRunID: strings.TrimSpace(in.ProducerWorkflowRunID),
+		ProducerNodeRunID:     strings.TrimSpace(in.ProducerNodeRunID),
+		Status:                model.DatasetBatchStaging,
 	}
 	if err := s.repo.CreateDatasetBatch(ctx, batch); err != nil {
 		return nil, err
@@ -123,18 +123,18 @@ func (s *DatasetService) CreateBatch(ctx context.Context, in CreateBatchInput) (
 	return batch, nil
 }
 
-// GetOrCreateBatch 以 source_step_run_id 为幂等键供 data.publish 使用。人工 HTTP
+// GetOrCreateBatch 以 producer_node_run_id 为幂等键供 data.publish 使用。人工 HTTP
 // 创建 Batch 仍走 CreateBatch，不会意外复用另一个业务动作。
 func (s *DatasetService) GetOrCreateBatch(ctx context.Context, in CreateBatchInput,
 	producerAttempt int) (*model.DatasetBatch, error) {
-	if strings.TrimSpace(in.DatasetID) == "" || strings.TrimSpace(in.SourceStepRunID) == "" {
-		return nil, fmt.Errorf("dataset_id 和 source_step_run_id 不能为空")
+	if strings.TrimSpace(in.DatasetID) == "" || strings.TrimSpace(in.ProducerNodeRunID) == "" {
+		return nil, fmt.Errorf("dataset_id 和 producer_node_run_id 不能为空")
 	}
 	if _, err := s.repo.GetAppendDataset(ctx, in.DatasetID); err != nil {
 		return nil, fmt.Errorf("读取 Dataset: %w", err)
 	}
-	return s.repo.GetOrCreateDatasetBatchForStep(ctx, &model.DatasetBatch{DatasetID: in.DatasetID,
-		SourceTaskID: strings.TrimSpace(in.SourceTaskID), SourceStepRunID: strings.TrimSpace(in.SourceStepRunID),
+	return s.repo.GetOrCreateDatasetBatchForNode(ctx, &model.DatasetBatch{DatasetID: in.DatasetID,
+		ProducerWorkflowRunID: strings.TrimSpace(in.ProducerWorkflowRunID), ProducerNodeRunID: strings.TrimSpace(in.ProducerNodeRunID),
 		Status: model.DatasetBatchStaging}, producerAttempt)
 }
 
@@ -152,14 +152,14 @@ func (s *DatasetService) CommitBatch(ctx context.Context, batchID string, inputs
 	return s.repo.CommitDatasetBatch(ctx, batch.ID, payloadHash, items)
 }
 
-func (s *DatasetService) CommitBatchForStep(ctx context.Context, batchID, sourceStepRunID string,
+func (s *DatasetService) CommitBatchForNode(ctx context.Context, batchID, producerNodeRunID string,
 	producerAttempt int, inputs []BatchItemInput) (*model.DatasetBatch, error) {
 	batch, items, err := s.prepareBatchItems(ctx, batchID, inputs)
 	if err != nil {
 		return nil, err
 	}
 	payloadHash := datasetBatchPayloadHash(items)
-	return s.repo.CommitDatasetBatchForStep(ctx, batch.ID, sourceStepRunID, producerAttempt, payloadHash, items)
+	return s.repo.CommitDatasetBatchForNode(ctx, batch.ID, producerNodeRunID, producerAttempt, payloadHash, items)
 }
 
 func (s *DatasetService) prepareBatchItems(ctx context.Context, batchID string,

@@ -60,18 +60,18 @@ const (
 // 单个文件失败只体现在成员状态上；下游读取这个 Manifest，而不是猜测某个
 // AssetSet 当前“最新”的解析结果。ProducerAttempt 用于阻止过期 Worker 覆盖重试结果。
 type ParsedDocumentSet struct {
-	ID              string
-	AssetSetID      string
-	SourceStepRunID string
-	ParserName      string
-	ParserVersion   string
-	Status          string
-	ProducerAttempt int
-	TotalCount      int
-	SucceededCount  int
-	FailedCount     int
-	CreatedAt       time.Time
-	FinishedAt      time.Time
+	ID                string
+	AssetSetID        string
+	ProducerNodeRunID string
+	ParserName        string
+	ParserVersion     string
+	Status            string
+	ProducerAttempt   int
+	TotalCount        int
+	SucceededCount    int
+	FailedCount       int
+	CreatedAt         time.Time
+	FinishedAt        time.Time
 }
 
 const (
