@@ -24,7 +24,7 @@ type Dataset struct {
 }
 
 // DatasetItem 已提交条目：不 UPDATE/DELETE；身份 = ItemKey（key_fields 归一化拼接），
-// Fingerprint 为规范化 fields 的稳定哈希；Provenance 保留 Batch/Task/Step/Asset/Block 链路。
+// Fingerprint 为规范化 fields 的稳定哈希；Provenance 保留 Batch/WorkflowRun/NodeRun/Asset/Block 链路。
 type DatasetItem struct {
 	ID          string
 	DatasetID   string

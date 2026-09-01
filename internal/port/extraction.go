@@ -6,11 +6,6 @@ import (
 	"reqflow/internal/domain/model"
 )
 
-type ExtractionProfileRepo interface {
-	CreateExtractionProfile(ctx context.Context, profile *model.ExtractionProfile) error
-	GetExtractionProfile(ctx context.Context, id string) (*model.ExtractionProfile, error)
-}
-
 type RecordDraftRepo interface {
 	BeginRecordDraftSet(ctx context.Context, set *model.RecordDraftSet, units []model.ExtractionUnit) (*model.RecordDraftSet, error)
 	GetRecordDraftSet(ctx context.Context, id string) (*model.RecordDraftSet, []model.ExtractionUnit, error)
@@ -23,7 +18,6 @@ type RecordDraftRepo interface {
 }
 
 type ExtractionPipelineRepo interface {
-	ExtractionProfileRepo
 	RecordDraftRepo
 	AssetCatalogRepo
 	ParsedDocumentRepo

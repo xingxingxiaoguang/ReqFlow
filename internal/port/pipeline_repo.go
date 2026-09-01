@@ -42,5 +42,5 @@ type QueryDatasetPipelineRepo interface {
 	GetOrCreatePipelineCursor(ctx context.Context, pipelineKey, sourceDatasetID, targetDatasetID string) (*model.PipelineCursor, error)
 	CommitQueryDatasetBatchForNode(ctx context.Context, batchID, producerNodeRunID string, producerAttempt int,
 		payloadHash string, items []model.DatasetItem, cursorID string, expectedThroughSeq, advanceThroughSeq int64,
-		lastSuccessTaskID string) (*model.DatasetBatch, *model.PipelineCursor, error)
+		lastSuccessRunID string) (*model.DatasetBatch, *model.PipelineCursor, error)
 }

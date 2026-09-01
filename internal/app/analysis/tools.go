@@ -15,7 +15,7 @@ type resultState struct {
 	Output    json.RawMessage `json:"output,omitempty"`
 }
 
-// submitResultTool 把 AnalysisProfile 的输出 Schema 变成唯一完成出口。Schema 或字段
+// submitResultTool 把节点冻结的 OutputContract Schema 变成唯一完成出口。Schema 或字段
 // 错误是可恢复工具错误，会回到 Agent 上下文供下一轮自行修正。
 type submitResultTool struct {
 	schema json.RawMessage
@@ -29,7 +29,7 @@ func (t *submitResultTool) Spec() port.ToolSpec {
 }
 
 func (*submitResultTool) PromptSnippet() string {
-	return "submit_analysis_result：按 AnalysisProfile Schema 校验并提交最终结果（唯一完成出口）"
+	return "submit_analysis_result：按 OutputContract Schema 校验并提交最终结果（唯一完成出口）"
 }
 
 func (*submitResultTool) PromptGuidelines() []string {
@@ -44,7 +44,7 @@ func (t *submitResultTool) Execute(_ context.Context, call port.ToolCall, _ func
 	if err != nil {
 		payload, _ := json.Marshal(map[string]any{"ok": false, "error": map[string]any{
 			"code": "ANALYSIS_SCHEMA_INVALID", "recoverable": true,
-			"message": err.Error(), "hint": "按 AnalysisProfile 的输出 Schema 修正参数后重新调用 submit_analysis_result",
+			"message": err.Error(), "hint": "按 OutputContract 的输出 Schema 修正参数后重新调用 submit_analysis_result",
 		}})
 		return agent.ToolOutput{Output: string(payload), Details: "分析结果未通过 Schema 校验", IsError: true}
 	}

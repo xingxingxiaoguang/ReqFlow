@@ -24,18 +24,17 @@ type DatasetBoundary struct {
 	ThroughSeq int64  `json:"through_seq"`
 }
 
-// RetrievalBoundary 固化 Task 使用的检索快照。
+// RetrievalBoundary 固化工作流使用的检索快照。
 type RetrievalBoundary struct {
 	RetrievalSnapshotID string `json:"retrieval_snapshot_id"`
 	SourceSeq           int64  `json:"source_seq"`
 }
 
-// AnalysisResultBoundary 固化 Agent 使用的 Profile 合同与模型身份。
+// AnalysisResultBoundary 固化 Agent 使用的输出合同与模型身份。
 type AnalysisResultBoundary struct {
-	AnalysisResultID string `json:"analysis_result_id"`
-	ProfileID        string `json:"profile_id"`
-	ProfileHash      string `json:"profile_hash"`
-	Model            string `json:"model"`
+	AnalysisResultID   string `json:"analysis_result_id"`
+	OutputContractHash string `json:"output_contract_hash"`
+	Model              string `json:"model"`
 }
 
 // ArtifactBoundary 让下游不读取 Blob 也能校验产物身份。
@@ -57,19 +56,19 @@ type ParsedDocumentsBoundary struct {
 // 终态不可变；这些字段让下游输入哈希和审计记录无需反查可变配置。
 type RecordDraftsBoundary struct {
 	ParsedDocumentSetID string `json:"parsed_document_set_id"`
-	ExtractionProfileID string `json:"extraction_profile_id"`
-	TargetSchemaID      string `json:"target_schema_id"`
-	ProfileHash         string `json:"profile_hash"`
+	DataContractHash    string `json:"data_contract_hash"`
+	ExtractionSpecHash  string `json:"extraction_spec_hash"`
+	SchemaHash          string `json:"schema_hash"`
 	Model               string `json:"model"`
 }
 
-// TransformedRecordsBoundary 固化确定性转换所使用的草稿、Profile、Schema 与引擎版本。
+// TransformedRecordsBoundary 固化确定性转换所使用的草稿、内联合同与引擎版本。
 // 同一 NodeRun 恢复时若引擎版本变化，必须拒绝混合新旧转换结果。
 type TransformedRecordsBoundary struct {
 	RecordDraftSetID       string `json:"record_draft_set_id"`
-	ExtractionProfileID    string `json:"extraction_profile_id"`
-	TargetSchemaID         string `json:"target_schema_id"`
-	ProfileHash            string `json:"profile_hash"`
+	DataContractHash       string `json:"data_contract_hash"`
+	ExtractionSpecHash     string `json:"extraction_spec_hash"`
+	SchemaHash             string `json:"schema_hash"`
 	TransformEngineVersion string `json:"transform_engine_version"`
 }
 

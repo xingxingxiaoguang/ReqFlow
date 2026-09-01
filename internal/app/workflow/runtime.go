@@ -212,7 +212,8 @@ func (s *RuntimeService) RunOnce(ctx context.Context, owner string) error {
 	stopRenew := make(chan struct{})
 	renewErr := make(chan error, 1)
 	go s.renewNodeLease(nodeCtx, cancel, node.ID, node.Attempt, owner, stopRenew, renewErr)
-	execution := NodeExecution{RunID: snapshot.Run.ID, NodeRunID: node.ID, Attempt: node.Attempt, Node: node.Node,
+	execution := NodeExecution{WorkspaceID: snapshot.Run.WorkspaceID, RunID: snapshot.Run.ID,
+		NodeRunID: node.ID, Attempt: node.Attempt, Node: node.Node,
 		Rules: snapshot.Run.Revision.Rules, Inputs: inputs, Checkpoint: node.Checkpoint,
 		CheckpointWriter: ownedNodeCheckpoint{repo: s.repo, nodeRunID: node.ID, attempt: node.Attempt, owner: owner},
 		Progress:         ownedNodeProgress{repo: s.repo, nodeRunID: node.ID, attempt: node.Attempt, owner: owner}}

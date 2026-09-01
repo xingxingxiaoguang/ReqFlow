@@ -36,16 +36,20 @@ func BuiltinCatalog() (*domain.StaticCatalog, error) {
 			primaryInput("dataset", "数据集边界", domain.ResourceDatasetBoundary),
 			primaryOutput("snapshot", "检索快照", domain.ResourceRetrievalSnapshot)),
 			domain.RuleDataContract, domain.RuleSearch),
-		withRules(capability("knowledge.analyze", "知识分析", "基于固定知识快照生成符合输出合同的分析结果。",
+		withRules(withConfig(capability("knowledge.analyze", "知识分析", "基于固定知识快照生成符合输出合同的分析结果。",
 			primaryInput("knowledge", "知识快照", domain.ResourceRetrievalSnapshot),
 			primaryOutput("analysis", "分析结果", domain.ResourceAnalysisResult)),
+			json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"instruction":{"type":"string","minLength":1,"maxLength":131072},"knowledge_name":{"type":"string","minLength":1,"maxLength":120},"knowledge_description":{"type":"string","maxLength":1000}},"required":["instruction"]}`),
+			json.RawMessage(`{"instruction":"基于知识快照生成结构化分析结果。","knowledge_name":"knowledge","knowledge_description":"工作流固定知识快照"}`)),
 			domain.RuleOutputContract),
 		manualCapability(capability("human.approve_analysis", "人工确认分析", "人工确认或编辑结构化分析结果后继续。",
 			primaryInput("analysis", "分析结果", domain.ResourceAnalysisResult),
 			primaryOutput("approved", "已确认分析", domain.ResourceAnalysisResult))),
-		withSideEffects(withRules(capability("artifact.render", "生成业务制品", "把分析结果固化为可查看和下载的业务制品。",
+		withSideEffects(withRules(withConfig(capability("artifact.render", "生成业务制品", "把分析结果固化为可查看和下载的业务制品。",
 			primaryInput("analysis", "分析结果", domain.ResourceAnalysisResult),
 			primaryOutput("artifact", "业务制品", domain.ResourceArtifact)),
+			json.RawMessage(`{"type":"object","additionalProperties":false,"properties":{"kind":{"type":"string","enum":["markdown","json","graph_manifest"]},"name":{"type":"string","minLength":1,"maxLength":240},"content_path":{"type":"string","minLength":1,"maxLength":500}},"required":["kind","name","content_path"]}`),
+			json.RawMessage(`{"kind":"markdown","name":"分析结果","content_path":"$"}`)),
 			domain.RuleOutputContract)),
 	)
 }
@@ -86,6 +90,12 @@ func deliveryOutput(name, label string, resourceType domain.ResourceType) domain
 
 func withRules(definition domain.CapabilityDefinition, rules ...domain.RuleSection) domain.CapabilityDefinition {
 	definition.RuleRequirements = append([]domain.RuleSection(nil), rules...)
+	return definition
+}
+
+func withConfig(definition domain.CapabilityDefinition, schema, defaults json.RawMessage) domain.CapabilityDefinition {
+	definition.ConfigSchema = schema
+	definition.DefaultConfig = defaults
 	return definition
 }
 

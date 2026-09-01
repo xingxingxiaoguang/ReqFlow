@@ -3,13 +3,12 @@
 > 活账本：修一销一，新增债随波登记。产品级平台通用债另见 [HANDOVER §5.3](./HANDOVER.md)（两处不重复立账，修哪边就销哪边）。
 > 每条债记录四件事：现状（在哪）、影响（咬谁）、处置方向（怎么还）、优先级。登记 ≠ 承诺排期——还债与产品波次一起排。
 
-> **V2 口径**：Legacy 元数据与数据集体系已于 2026-09-01 随切割整体删除（见下方销账记录）；本台账只登记现存代码的债务。
+> **纯新系统口径**：项目尚未上线，不保留旧 API、旧数据或旧范式兼容层；本台账只登记现存代码的落地债。
 
 ## 线性工作流重建专项（2026-09）
 
 | 编号 | 债 | 影响 | 处置方向 | 优先级 |
 |------|-----|------|----------|--------|
-| WF-1 | 新 Workflow 受控规则 DSL 已在 `internal/domain/workflow` 成为设计事实源，但旧 `record_cleaning.go` 仍维护私有 JSON DTO | Phase 5 接入执行器前存在合同镜像漂移风险；当前新 Draft 尚未调用旧执行路径 | 新 Capability Executor 直接消费 Workflow DSL，并把旧清洗实现改为执行纯函数或随 Phase 6 旧模型删除 | 高（Phase 5 销账） |
 | WF-2 | 开发期 Command Service 使用固定 local actor，尚未接入认证与 workspace 上下文 | HTTP 可用但不能证明多主体/跨 workspace 授权边界 | 接入服务端认证上下文和 workspace-scoped Repository 查询；请求体永不覆盖 actor | 高（Phase 6 前销账） |
 | WF-3 | 当前 PreviewService 生成的是结构化 temporary manifest，尚未驱动真实 Capability dry-run | 验收现在证明 Draft 结构与边界可运行，不证明真实解析/抽取/清洗输出 | Phase 5 接入 `ResolvedNode + RuleBundle + temporary binding` 执行器，副作用节点统一 dry-run | 高（Phase 5 销账） |
 | WF-4 | Design Agent 已具备 Proposal/Human 核心工具，但 Profile/sample/evidence 查询工具尚未绑定实际数据源 | Agent 目前可安全表达建议和人工问题，不能基于样本自动生成完整规则候选 | Phase 3 画像服务完成后注入只读查询工具；写入仍只走 Proposal sink | 高（Phase 4 收尾/Phase 3 依赖） |
@@ -19,8 +18,9 @@
 ## 已销账记录（Legacy 切割，2026-09-01）
 
 - **WF-5 已销账**：Parsed/Extraction/Transform/Validation/Review/Publish/Retrieval/Analysis/Artifact 的生产者身份、attempt fencing 与数据库外键均已切换到 `workflow_runs` / `workflow_node_runs`；旧 Task Orchestrator、StepRun、Platform Agent 会话与配置模型已删除。
+- **WF-1 已销账**：`document.extract`、`data.transform`、`data.validate`、`retrieval.build`、`knowledge.analyze` 与 `artifact.render` 已直接消费 Revision 的 `RuleBundle`；清洗内核直接接收 Workflow 领域规则类型，不再维护私有 JSON DTO 镜像。RecordDraftSet、RetrievalSnapshot、AnalysisResult 均冻结自包含合同及哈希。
 
-**元数据模块专项债（MD-1~MD-8）与数据集归属化专项债（DA-1~DA-4）已整体销账**：两账描述的 Legacy 元数据体系（metadata_registry / seed→override→effective / 兼容规则引擎 / 动态 FTS 索引）与 Legacy 数据集体系（datasets.schema 字段定义归属、受控编辑、merge/upsert/replace 写入、archived_* 归档表）已随 V2 切割整体删除——相关服务、仓储、端口、handler、前端页面、配置组（match/fts）与数据库表不复存在，V2 以不可变 DatasetSchemaDefinition + ExtractionProfile + 只追加 Batch + 状态归档重新表达全部能力。旧债不再适用，不再登记。
+**元数据模块专项债（MD-1~MD-8）与数据集归属化专项债（DA-1~DA-4）已整体销账**：两账描述的旧元数据体系（metadata_registry / seed→override→effective / 兼容规则引擎 / 动态 FTS 索引）与旧数据集体系（datasets.schema 字段定义归属、受控编辑、merge/upsert/replace 写入、archived_* 归档表）均已删除。当前系统以 Revision 内联 DataContract、资源自包含合同快照、不可变 DatasetSchemaDefinition 和只追加 Batch 表达执行事实，不再存在 Profile 表或 Profile ID。
 
 - ~~导出格式口径漂移~~（文档写 YAML / 实现为 JSON）：口径已在 HANDOVER §3.4 定为 JSON。
 - ~~锚行双语义、数据集类型所有权不变量无文档~~（代码有约束、设计无处可查）：均已并入 HANDOVER §3.4。

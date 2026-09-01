@@ -100,8 +100,6 @@ func New(svc Services) *gin.Engine {
 		api.GET("/parsed-documents/:id/blocks", h.v2GetDocumentBlocks)
 	}
 	if svc.V2Extractions != nil {
-		api.POST("/extraction-profiles", h.v2CreateExtractionProfile)
-		api.GET("/extraction-profiles/:id", h.v2GetExtractionProfile)
 		api.GET("/record-draft-sets/:id", h.v2GetRecordDraftSet)
 	}
 	if svc.V2Cleaning != nil {
@@ -109,17 +107,11 @@ func New(svc Services) *gin.Engine {
 		api.GET("/validation-result-sets/:id", h.v2GetValidationResultSet)
 	}
 	if svc.V2Retrieval != nil {
-		api.POST("/retrieval-profiles", h.v2CreateRetrievalProfile)
-		api.GET("/retrieval-profiles/:id", h.v2GetRetrievalProfile)
-		api.POST("/retrieval-profiles/:id/clone", h.v2CloneRetrievalProfile)
 		api.GET("/retrieval-snapshots", h.v2ListRetrievalSnapshots)
 		api.GET("/retrieval-snapshots/:id", h.v2GetRetrievalSnapshot)
 		api.POST("/retrieval/search", h.v2SearchRetrieval)
 	}
 	if svc.V2Analysis != nil {
-		api.POST("/analysis-profiles", h.v2CreateAnalysisProfile)
-		api.GET("/analysis-profiles/:id", h.v2GetAnalysisProfile)
-		api.POST("/analysis-profiles/:id/clone", h.v2CloneAnalysisProfile)
 		api.GET("/analysis-results/:id", h.v2GetAnalysisResult)
 	}
 	if svc.V2Artifacts != nil {

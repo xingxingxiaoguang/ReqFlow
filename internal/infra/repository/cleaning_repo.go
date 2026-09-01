@@ -38,24 +38,26 @@ func (r *PipelineRepo) BeginTransformedRecordSet(ctx context.Context, set *model
 				set.CreatedAt = time.Now()
 			}
 			if err := tx.Exec(`INSERT INTO transformed_record_sets
-				(id, record_draft_set_id, extraction_profile_id, target_schema_id,
+				(id, record_draft_set_id, data_contract_hash, extraction_spec_hash, schema_hash,
 				 producer_node_run_id, status, producer_attempt, engine_version, draft_count, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, set.ID, set.RecordDraftSetID,
-				set.ExtractionProfileID, set.TargetSchemaID, set.ProducerNodeRunID,
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, set.ID, set.RecordDraftSetID,
+				set.DataContractHash, set.ExtractionSpecHash, set.SchemaHash, set.ProducerNodeRunID,
 				model.TransformedRecordSetRunning, set.ProducerAttempt, set.EngineVersion,
 				set.DraftCount, set.CreatedAt).Error; err != nil {
 				return err
 			}
 			row = transformedRecordSetRow{ID: set.ID, RecordDraftSetID: set.RecordDraftSetID,
-				ExtractionProfileID: set.ExtractionProfileID, TargetSchemaID: set.TargetSchemaID,
+				DataContractHash: set.DataContractHash, ExtractionSpecHash: set.ExtractionSpecHash,
+				SchemaHash:        set.SchemaHash,
 				ProducerNodeRunID: set.ProducerNodeRunID, Status: model.TransformedRecordSetRunning,
 				ProducerAttempt: set.ProducerAttempt, EngineVersion: set.EngineVersion,
 				DraftCount: set.DraftCount, CreatedAt: set.CreatedAt}
 		} else {
-			if row.RecordDraftSetID != set.RecordDraftSetID || row.ExtractionProfileID != set.ExtractionProfileID ||
-				row.TargetSchemaID != set.TargetSchemaID || row.EngineVersion != set.EngineVersion ||
+			if row.RecordDraftSetID != set.RecordDraftSetID || row.DataContractHash != set.DataContractHash ||
+				row.ExtractionSpecHash != set.ExtractionSpecHash || row.SchemaHash != set.SchemaHash ||
+				row.EngineVersion != set.EngineVersion ||
 				row.DraftCount != set.DraftCount {
-				return fmt.Errorf("NodeRun %s 的转换输入、Profile、Schema 或引擎版本发生变化", set.ProducerNodeRunID)
+				return fmt.Errorf("NodeRun %s 的转换输入、内联合同或引擎版本发生变化", set.ProducerNodeRunID)
 			}
 			if row.ProducerAttempt > set.ProducerAttempt {
 				return port.ErrStaleResourceExecution
@@ -510,26 +512,28 @@ func decodeSingleJSONForRepo(raw []byte, dst any) error {
 }
 
 type transformedRecordSetRow struct {
-	ID                  string     `gorm:"column:id;primaryKey"`
-	RecordDraftSetID    string     `gorm:"column:record_draft_set_id"`
-	ExtractionProfileID string     `gorm:"column:extraction_profile_id"`
-	TargetSchemaID      string     `gorm:"column:target_schema_id"`
-	ProducerNodeRunID   string     `gorm:"column:producer_node_run_id"`
-	Status              string     `gorm:"column:status"`
-	ProducerAttempt     int        `gorm:"column:producer_attempt"`
-	EngineVersion       string     `gorm:"column:engine_version"`
-	DraftCount          int        `gorm:"column:draft_count"`
-	TransformedCount    int        `gorm:"column:transformed_count"`
-	ChangedRecordCount  int        `gorm:"column:changed_record_count"`
-	IssueCount          int        `gorm:"column:issue_count"`
-	CreatedAt           time.Time  `gorm:"column:created_at"`
-	FinishedAt          *time.Time `gorm:"column:finished_at"`
+	ID                 string     `gorm:"column:id;primaryKey"`
+	RecordDraftSetID   string     `gorm:"column:record_draft_set_id"`
+	DataContractHash   string     `gorm:"column:data_contract_hash"`
+	ExtractionSpecHash string     `gorm:"column:extraction_spec_hash"`
+	SchemaHash         string     `gorm:"column:schema_hash"`
+	ProducerNodeRunID  string     `gorm:"column:producer_node_run_id"`
+	Status             string     `gorm:"column:status"`
+	ProducerAttempt    int        `gorm:"column:producer_attempt"`
+	EngineVersion      string     `gorm:"column:engine_version"`
+	DraftCount         int        `gorm:"column:draft_count"`
+	TransformedCount   int        `gorm:"column:transformed_count"`
+	ChangedRecordCount int        `gorm:"column:changed_record_count"`
+	IssueCount         int        `gorm:"column:issue_count"`
+	CreatedAt          time.Time  `gorm:"column:created_at"`
+	FinishedAt         *time.Time `gorm:"column:finished_at"`
 }
 
 func (transformedRecordSetRow) TableName() string { return "transformed_record_sets" }
 func (row transformedRecordSetRow) toModel() model.TransformedRecordSet {
 	set := model.TransformedRecordSet{ID: row.ID, RecordDraftSetID: row.RecordDraftSetID,
-		ExtractionProfileID: row.ExtractionProfileID, TargetSchemaID: row.TargetSchemaID,
+		DataContractHash: row.DataContractHash, ExtractionSpecHash: row.ExtractionSpecHash,
+		SchemaHash:        row.SchemaHash,
 		ProducerNodeRunID: row.ProducerNodeRunID, Status: row.Status, ProducerAttempt: row.ProducerAttempt,
 		EngineVersion: row.EngineVersion, DraftCount: row.DraftCount, TransformedCount: row.TransformedCount,
 		ChangedRecordCount: row.ChangedRecordCount, IssueCount: row.IssueCount, CreatedAt: row.CreatedAt}

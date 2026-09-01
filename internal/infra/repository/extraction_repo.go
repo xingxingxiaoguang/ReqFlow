@@ -15,33 +15,12 @@ import (
 	"reqflow/internal/port"
 )
 
-func (r *PipelineRepo) CreateExtractionProfile(ctx context.Context, profile *model.ExtractionProfile) error {
-	if profile.ID == "" {
-		profile.ID = uuid.NewString()
-	}
-	if profile.CreatedAt.IsZero() {
-		profile.CreatedAt = time.Now()
-	}
-	return r.db.WithContext(ctx).Exec(`INSERT INTO extraction_profiles
-		(id, workspace_id, name, target_schema_id, record_granularity, system_instruction,
-		 field_guides, examples, normalization_rules, validation_rules, profile_hash, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?)`,
-		profile.ID, profile.WorkspaceID, profile.Name, profile.TargetSchemaID,
-		profile.RecordGranularity, profile.SystemInstruction, string(profile.FieldGuides),
-		string(profile.Examples), string(profile.NormalizationRules), string(profile.ValidationRules),
-		profile.ProfileHash, profile.CreatedAt).Error
-}
-
-func (r *PipelineRepo) GetExtractionProfile(ctx context.Context, id string) (*model.ExtractionProfile, error) {
-	var row extractionProfileRow
-	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&row).Error; err != nil {
-		return nil, err
-	}
-	profile := row.toModel()
-	return &profile, nil
-}
-
 func (r *PipelineRepo) BeginRecordDraftSet(ctx context.Context, set *model.RecordDraftSet, units []model.ExtractionUnit) (*model.RecordDraftSet, error) {
+	if set == nil || len(set.DataContract) == 0 || len(set.ExtractionSpec) == 0 || len(set.JSONSchema) == 0 ||
+		strings.TrimSpace(set.DataContractHash) == "" || strings.TrimSpace(set.ExtractionSpecHash) == "" ||
+		strings.TrimSpace(set.SchemaHash) == "" {
+		return nil, fmt.Errorf("RecordDraftSet 必须固化完整内联合同")
+	}
 	var stored model.RecordDraftSet
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		if err := assertActiveNodeProducer(tx, set.ProducerNodeRunID, set.ProducerAttempt); err != nil {
@@ -62,24 +41,31 @@ func (r *PipelineRepo) BeginRecordDraftSet(ctx context.Context, set *model.Recor
 				set.CreatedAt = time.Now()
 			}
 			if err := tx.Exec(`INSERT INTO record_draft_sets
-				(id, parsed_document_set_id, extraction_profile_id, producer_node_run_id, status,
+				(id, parsed_document_set_id, data_contract, data_contract_hash, extraction_spec,
+				 extraction_spec_hash, json_schema, schema_hash, producer_node_run_id, status,
 				 producer_attempt, model, unit_count, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, set.ID, set.ParsedDocumentSetID,
-				set.ExtractionProfileID, set.ProducerNodeRunID, model.RecordDraftSetRunning,
-				set.ProducerAttempt, set.Model, len(units), set.CreatedAt).Error; err != nil {
+				VALUES (?, ?, ?::jsonb, ?, ?::jsonb, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?)`,
+				set.ID, set.ParsedDocumentSetID, string(set.DataContract), set.DataContractHash,
+				string(set.ExtractionSpec), set.ExtractionSpecHash, string(set.JSONSchema), set.SchemaHash,
+				set.ProducerNodeRunID, model.RecordDraftSetRunning, set.ProducerAttempt, set.Model,
+				len(units), set.CreatedAt).Error; err != nil {
 				return err
 			}
 			row = recordDraftSetRow{ID: set.ID, ParsedDocumentSetID: set.ParsedDocumentSetID,
-				ExtractionProfileID: set.ExtractionProfileID, ProducerNodeRunID: set.ProducerNodeRunID,
+				DataContract: set.DataContract, DataContractHash: set.DataContractHash,
+				ExtractionSpec: set.ExtractionSpec, ExtractionSpecHash: set.ExtractionSpecHash,
+				JSONSchema: set.JSONSchema, SchemaHash: set.SchemaHash, ProducerNodeRunID: set.ProducerNodeRunID,
 				Status: model.RecordDraftSetRunning, ProducerAttempt: set.ProducerAttempt,
 				Model: set.Model, UnitCount: len(units), CreatedAt: set.CreatedAt}
 		default:
 			if row.ProducerAttempt > set.ProducerAttempt {
 				return port.ErrStaleResourceExecution
 			}
-			if row.ParsedDocumentSetID != set.ParsedDocumentSetID ||
-				row.ExtractionProfileID != set.ExtractionProfileID || row.Model != set.Model {
-				return fmt.Errorf("NodeRun %s 的抽取输入、Profile 或模型发生变化", set.ProducerNodeRunID)
+			if row.ParsedDocumentSetID != set.ParsedDocumentSetID || row.DataContractHash != set.DataContractHash ||
+				row.ExtractionSpecHash != set.ExtractionSpecHash || row.SchemaHash != set.SchemaHash || row.Model != set.Model ||
+				!equalJSON(row.DataContract, set.DataContract) || !equalJSON(row.ExtractionSpec, set.ExtractionSpec) ||
+				!equalJSON(row.JSONSchema, set.JSONSchema) {
+				return fmt.Errorf("NodeRun %s 的抽取输入、内联合同或模型发生变化", set.ProducerNodeRunID)
 			}
 			if row.UnitCount != len(units) {
 				return fmt.Errorf("NodeRun %s 的抽取分块计划发生变化", set.ProducerNodeRunID)
@@ -466,55 +452,38 @@ func refreshRecordDraftSetCounts(tx *gorm.DB, row *recordDraftSetRow) error {
 	return nil
 }
 
-type extractionProfileRow struct {
-	ID                 string          `gorm:"column:id;primaryKey"`
-	WorkspaceID        string          `gorm:"column:workspace_id"`
-	Name               string          `gorm:"column:name"`
-	TargetSchemaID     string          `gorm:"column:target_schema_id"`
-	RecordGranularity  string          `gorm:"column:record_granularity"`
-	SystemInstruction  string          `gorm:"column:system_instruction"`
-	FieldGuides        json.RawMessage `gorm:"column:field_guides;type:jsonb"`
-	Examples           json.RawMessage `gorm:"column:examples;type:jsonb"`
-	NormalizationRules json.RawMessage `gorm:"column:normalization_rules;type:jsonb"`
-	ValidationRules    json.RawMessage `gorm:"column:validation_rules;type:jsonb"`
-	ProfileHash        string          `gorm:"column:profile_hash"`
-	CreatedAt          time.Time       `gorm:"column:created_at"`
-}
-
-func (extractionProfileRow) TableName() string { return "extraction_profiles" }
-func (row extractionProfileRow) toModel() model.ExtractionProfile {
-	return model.ExtractionProfile{ID: row.ID, WorkspaceID: row.WorkspaceID, Name: row.Name,
-		TargetSchemaID: row.TargetSchemaID, RecordGranularity: row.RecordGranularity,
-		SystemInstruction: row.SystemInstruction, FieldGuides: row.FieldGuides,
-		Examples: row.Examples, NormalizationRules: row.NormalizationRules,
-		ValidationRules: row.ValidationRules, ProfileHash: row.ProfileHash, CreatedAt: row.CreatedAt}
-}
-
 type recordDraftSetRow struct {
-	ID                  string     `gorm:"column:id;primaryKey"`
-	ParsedDocumentSetID string     `gorm:"column:parsed_document_set_id"`
-	ExtractionProfileID string     `gorm:"column:extraction_profile_id"`
-	ProducerNodeRunID   string     `gorm:"column:producer_node_run_id"`
-	Status              string     `gorm:"column:status"`
-	ProducerAttempt     int        `gorm:"column:producer_attempt"`
-	Model               string     `gorm:"column:model"`
-	UnitCount           int        `gorm:"column:unit_count"`
-	SucceededUnitCount  int        `gorm:"column:succeeded_unit_count"`
-	FailedUnitCount     int        `gorm:"column:failed_unit_count"`
-	DraftCount          int        `gorm:"column:draft_count"`
-	LLMRequestCount     int        `gorm:"column:llm_request_count"`
-	InputTokens         int        `gorm:"column:input_tokens"`
-	OutputTokens        int        `gorm:"column:output_tokens"`
-	CacheReadTokens     int        `gorm:"column:cache_read_tokens"`
-	CacheWriteTokens    int        `gorm:"column:cache_write_tokens"`
-	CreatedAt           time.Time  `gorm:"column:created_at"`
-	FinishedAt          *time.Time `gorm:"column:finished_at"`
+	ID                  string          `gorm:"column:id;primaryKey"`
+	ParsedDocumentSetID string          `gorm:"column:parsed_document_set_id"`
+	DataContract        json.RawMessage `gorm:"column:data_contract;type:jsonb"`
+	DataContractHash    string          `gorm:"column:data_contract_hash"`
+	ExtractionSpec      json.RawMessage `gorm:"column:extraction_spec;type:jsonb"`
+	ExtractionSpecHash  string          `gorm:"column:extraction_spec_hash"`
+	JSONSchema          json.RawMessage `gorm:"column:json_schema;type:jsonb"`
+	SchemaHash          string          `gorm:"column:schema_hash"`
+	ProducerNodeRunID   string          `gorm:"column:producer_node_run_id"`
+	Status              string          `gorm:"column:status"`
+	ProducerAttempt     int             `gorm:"column:producer_attempt"`
+	Model               string          `gorm:"column:model"`
+	UnitCount           int             `gorm:"column:unit_count"`
+	SucceededUnitCount  int             `gorm:"column:succeeded_unit_count"`
+	FailedUnitCount     int             `gorm:"column:failed_unit_count"`
+	DraftCount          int             `gorm:"column:draft_count"`
+	LLMRequestCount     int             `gorm:"column:llm_request_count"`
+	InputTokens         int             `gorm:"column:input_tokens"`
+	OutputTokens        int             `gorm:"column:output_tokens"`
+	CacheReadTokens     int             `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens    int             `gorm:"column:cache_write_tokens"`
+	CreatedAt           time.Time       `gorm:"column:created_at"`
+	FinishedAt          *time.Time      `gorm:"column:finished_at"`
 }
 
 func (recordDraftSetRow) TableName() string { return "record_draft_sets" }
 func (row recordDraftSetRow) toModel() model.RecordDraftSet {
 	set := model.RecordDraftSet{ID: row.ID, ParsedDocumentSetID: row.ParsedDocumentSetID,
-		ExtractionProfileID: row.ExtractionProfileID, ProducerNodeRunID: row.ProducerNodeRunID,
+		DataContract: row.DataContract, DataContractHash: row.DataContractHash,
+		ExtractionSpec: row.ExtractionSpec, ExtractionSpecHash: row.ExtractionSpecHash,
+		JSONSchema: row.JSONSchema, SchemaHash: row.SchemaHash, ProducerNodeRunID: row.ProducerNodeRunID,
 		Status: row.Status, ProducerAttempt: row.ProducerAttempt, Model: row.Model,
 		UnitCount: row.UnitCount, SucceededUnitCount: row.SucceededUnitCount,
 		FailedUnitCount: row.FailedUnitCount, DraftCount: row.DraftCount,

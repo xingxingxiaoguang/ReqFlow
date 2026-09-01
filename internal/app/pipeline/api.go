@@ -133,11 +133,12 @@ type SourceReferenceInput struct {
 }
 
 type ProvenanceInput struct {
-	SourceRefs          []SourceReferenceInput `json:"source_refs,omitempty"`
-	ExtractionProfileID string                 `json:"extraction_profile_id,omitempty"`
-	Model               string                 `json:"model,omitempty"`
-	PromptHash          string                 `json:"prompt_hash,omitempty"`
-	QualityStatus       string                 `json:"quality_status,omitempty"`
+	SourceRefs         []SourceReferenceInput `json:"source_refs,omitempty"`
+	DataContractHash   string                 `json:"data_contract_hash,omitempty"`
+	ExtractionSpecHash string                 `json:"extraction_spec_hash,omitempty"`
+	Model              string                 `json:"model,omitempty"`
+	PromptHash         string                 `json:"prompt_hash,omitempty"`
+	QualityStatus      string                 `json:"quality_status,omitempty"`
 }
 
 type CommitBatchRequest struct {
@@ -153,8 +154,9 @@ func (s *DatasetService) PublishBatch(ctx context.Context, batchID string, reque
 				BlockID: reference.BlockID, PageNo: reference.PageNo, Quote: reference.Quote}
 		}
 		items[i] = BatchItemInput{Fields: item.Fields, Provenance: model.ItemProvenance{
-			SourceRefs: references, ExtractionProfileID: item.Provenance.ExtractionProfileID,
-			Model: item.Provenance.Model, PromptHash: item.Provenance.PromptHash,
+			SourceRefs: references, DataContractHash: item.Provenance.DataContractHash,
+			ExtractionSpecHash: item.Provenance.ExtractionSpecHash,
+			Model:              item.Provenance.Model, PromptHash: item.Provenance.PromptHash,
 			QualityStatus: item.Provenance.QualityStatus,
 		}}
 	}

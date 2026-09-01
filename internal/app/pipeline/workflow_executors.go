@@ -98,22 +98,15 @@ func (e *WorkflowDataTransformExecutor) run(ctx context.Context, execution port.
 	if !ok || input.ResourceType != domain.ResourceRecordDrafts || strings.TrimSpace(input.ResourceID) == "" {
 		return port.WorkflowCapabilityResult{}, fmt.Errorf("data.transform drafts 输入必须是具体 RecordDraftSet")
 	}
-	rules := json.RawMessage(`[]`)
-	if execution.Rules.Extraction != nil {
-		rules, _ = json.Marshal(execution.Rules.Extraction.NormalizationRules)
-	}
 	manifest, err := e.cleaning.TransformWorkflow(ctx, WorkflowTransformInput{ResourceID: input.ResourceID,
-		ExecutionID: execution.NodeRunID, Attempt: execution.Attempt, NormalizationRules: rules},
+		ExecutionID: execution.NodeRunID, Attempt: execution.Attempt},
 		workflowCleaningProgress(ctx, execution, "transforming"))
 	if err != nil {
 		return port.WorkflowCapabilityResult{}, err
 	}
-	profile, err := e.cleaning.GetProfile(ctx, manifest.ExtractionProfileID)
-	if err != nil {
-		return port.WorkflowCapabilityResult{}, err
-	}
 	boundary, err := json.Marshal(map[string]any{"record_draft_set_id": manifest.RecordDraftSetID,
-		"target_schema_id": manifest.TargetSchemaID, "profile_hash": profile.ProfileHash,
+		"data_contract_hash": manifest.DataContractHash, "extraction_spec_hash": manifest.ExtractionSpecHash,
+		"schema_hash":              manifest.SchemaHash,
 		"transform_engine_version": manifest.EngineVersion})
 	if err != nil {
 		return port.WorkflowCapabilityResult{}, err
@@ -213,13 +206,9 @@ func (e *WorkflowDataValidateExecutor) run(ctx context.Context, execution port.W
 	if !datasetOK || dataset.ResourceType != domain.ResourceDataset || strings.TrimSpace(dataset.ResourceID) == "" {
 		return port.WorkflowCapabilityResult{}, fmt.Errorf("data.validate dataset 输入必须是具体 Dataset")
 	}
-	rules := json.RawMessage(`[]`)
-	if execution.Rules.Extraction != nil {
-		rules, _ = json.Marshal(execution.Rules.Extraction.ValidationRules)
-	}
 	manifest, err := e.cleaning.ValidateWorkflow(ctx, WorkflowValidateInput{RecordsID: records.ResourceID,
 		DatasetID: dataset.ResourceID, ExecutionID: execution.NodeRunID,
-		Attempt: execution.Attempt, ValidationRules: rules}, workflowCleaningProgress(ctx, execution, "validating"))
+		Attempt: execution.Attempt}, workflowCleaningProgress(ctx, execution, "validating"))
 	if err != nil {
 		return port.WorkflowCapabilityResult{}, err
 	}

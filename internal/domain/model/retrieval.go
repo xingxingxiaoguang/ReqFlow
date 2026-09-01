@@ -25,38 +25,27 @@ type FusionConfig struct {
 	VectorCandidates  int    `json:"vector_candidates"`
 }
 
-// RetrievalProfile 是创建后不可修改的索引合同。
-type RetrievalProfile struct {
-	ID              string
-	WorkspaceID     string
-	Name            string
-	DatasetSchemaID string
-	Lexical         LexicalConfig
-	Vector          VectorConfig
-	FilterFields    []string
-	Fusion          FusionConfig
-	ProfileHash     string
-	CreatedAt       time.Time
-}
-
 type RetrievalSnapshot struct {
-	ID                 string
-	DatasetID          string
-	RetrievalProfileID string
-	ProducerNodeRunID  string
-	SourceSeq          int64
-	Status             string
-	LexicalRef         string
-	VectorRef          string
-	LexicalCount       int
-	VectorCount        int
-	FailureReason      string
-	CreatedAt          time.Time
-	ActivatedAt        time.Time
+	ID                string
+	DatasetID         string
+	DataContractHash  string
+	SearchSpec        json.RawMessage
+	SearchSpecHash    string
+	EmbeddingModel    string
+	ProducerNodeRunID string
+	SourceSeq         int64
+	Status            string
+	LexicalRef        string
+	VectorRef         string
+	LexicalCount      int
+	VectorCount       int
+	FailureReason     string
+	CreatedAt         time.Time
+	ActivatedAt       time.Time
 }
 
-// RetrievalSearchMode 控制单次查询启用哪些召回通道。索引合同由
-// RetrievalProfile 固化，业务侧的权重、阈值和数量必须放在查询请求中。
+// RetrievalSearchMode 控制单次查询启用哪些召回通道。索引合同由 Snapshot
+// 固化，业务侧的权重、阈值和数量必须放在查询请求中。
 type RetrievalSearchMode string
 
 const (
@@ -65,7 +54,7 @@ const (
 	RetrievalModeHybrid   RetrievalSearchMode = "hybrid"
 )
 
-// RetrievalSearchStrategy 是运行时检索策略，不属于不可变 Profile。
+// RetrievalSearchStrategy 是运行时检索策略，不属于不可变 SearchSpec。
 // ScoreThreshold 使用 0..1 的归一化融合分数；RerankTopN 仅在启用重排序时生效。
 type RetrievalSearchStrategy struct {
 	Mode           RetrievalSearchMode `json:"mode"`
@@ -107,16 +96,16 @@ const (
 )
 
 type RetrievalChunk struct {
-	ID                 string
-	DatasetID          string
-	DatasetItemID      string
-	RetrievalProfileID string
-	ChunkNo            int
-	ChunkText          string
-	ChunkHash          string
-	SourceSeq          int64
-	EmbeddingModel     string
-	Embedding          []float32
-	Metadata           json.RawMessage
-	CreatedAt          time.Time
+	ID             string
+	DatasetID      string
+	DatasetItemID  string
+	SearchSpecHash string
+	ChunkNo        int
+	ChunkText      string
+	ChunkHash      string
+	SourceSeq      int64
+	EmbeddingModel string
+	Embedding      []float32
+	Metadata       json.RawMessage
+	CreatedAt      time.Time
 }

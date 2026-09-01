@@ -16,72 +16,12 @@ import (
 	"reqflow/internal/port"
 )
 
-func (r *PipelineRepo) CreateRetrievalProfile(ctx context.Context, profile *model.RetrievalProfile) error {
-	if profile.ID == "" {
-		profile.ID = uuid.NewString()
-	}
-	profile.CreatedAt = time.Now()
-	lexical, err := json.Marshal(profile.Lexical)
-	if err != nil {
-		return err
-	}
-	vector, err := json.Marshal(profile.Vector)
-	if err != nil {
-		return err
-	}
-	filters, err := json.Marshal(profile.FilterFields)
-	if err != nil {
-		return err
-	}
-	fusion, err := json.Marshal(profile.Fusion)
-	if err != nil {
-		return err
-	}
-	return r.db.WithContext(ctx).Exec(`INSERT INTO retrieval_profiles
-		(id, workspace_id, name, dataset_schema_id, lexical_config, vector_config,
-		 filter_fields, fusion_config, profile_hash, created_at)
-		VALUES (?, ?, ?, ?, ?::jsonb, ?::jsonb, ?::jsonb, ?::jsonb, ?, ?)`,
-		profile.ID, profile.WorkspaceID, profile.Name, profile.DatasetSchemaID,
-		string(lexical), string(vector), string(filters), string(fusion), profile.ProfileHash, profile.CreatedAt).Error
-}
-
-func (r *PipelineRepo) GetRetrievalProfile(ctx context.Context, id string) (*model.RetrievalProfile, error) {
-	var row retrievalProfileRow
-	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&row).Error; err != nil {
-		return nil, err
-	}
-	return row.toModel()
-}
-
-func (r *PipelineRepo) ListRetrievalProfiles(ctx context.Context, workspaceID, datasetSchemaID string,
-	limit int) ([]model.RetrievalProfile, error) {
-	if limit <= 0 || limit > 200 {
-		limit = 100
-	}
-	query := r.db.WithContext(ctx).Where("workspace_id = ?", workspaceID)
-	if strings.TrimSpace(datasetSchemaID) != "" {
-		query = query.Where("dataset_schema_id = ?", datasetSchemaID)
-	}
-	var rows []retrievalProfileRow
-	if err := query.Order("created_at DESC, id DESC").Limit(limit).Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	out := make([]model.RetrievalProfile, len(rows))
-	for i := range rows {
-		profile, err := rows[i].toModel()
-		if err != nil {
-			return nil, err
-		}
-		out[i] = *profile
-	}
-	return out, nil
-}
-
 func (r *PipelineRepo) GetOrCreateRetrievalSnapshotForNode(ctx context.Context, snapshot *model.RetrievalSnapshot,
 	producerAttempt int) (*model.RetrievalSnapshot, error) {
-	if snapshot == nil || strings.TrimSpace(snapshot.DatasetID) == "" || strings.TrimSpace(snapshot.RetrievalProfileID) == "" ||
-		strings.TrimSpace(snapshot.ProducerNodeRunID) == "" {
-		return nil, fmt.Errorf("幂等 RetrievalSnapshot 必须提供 dataset/profile/source_step_run")
+	if snapshot == nil || strings.TrimSpace(snapshot.DatasetID) == "" || strings.TrimSpace(snapshot.DataContractHash) == "" ||
+		strings.TrimSpace(snapshot.SearchSpecHash) == "" || len(snapshot.SearchSpec) == 0 ||
+		strings.TrimSpace(snapshot.EmbeddingModel) == "" || strings.TrimSpace(snapshot.ProducerNodeRunID) == "" {
+		return nil, fmt.Errorf("幂等 RetrievalSnapshot 必须提供 dataset、内联合同和 NodeRun")
 	}
 	if snapshot.ID == "" {
 		snapshot.ID = uuid.NewString()
@@ -98,11 +38,12 @@ func (r *PipelineRepo) GetOrCreateRetrievalSnapshotForNode(ctx context.Context, 
 			return err
 		}
 		if err := tx.Exec(`INSERT INTO retrieval_snapshots
-			(id, dataset_id, retrieval_profile_id, producer_node_run_id, producer_attempt,
-			 source_seq, status, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			(id, dataset_id, data_contract_hash, search_spec, search_spec_hash, embedding_model,
+			 producer_node_run_id, producer_attempt, source_seq, status, created_at)
+			VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?)
 			ON CONFLICT (producer_node_run_id) WHERE producer_node_run_id IS NOT NULL DO NOTHING`,
-			snapshot.ID, snapshot.DatasetID, snapshot.RetrievalProfileID, snapshot.ProducerNodeRunID,
+			snapshot.ID, snapshot.DatasetID, snapshot.DataContractHash, string(snapshot.SearchSpec),
+			snapshot.SearchSpecHash, snapshot.EmbeddingModel, snapshot.ProducerNodeRunID,
 			producerAttempt, snapshot.SourceSeq, snapshot.Status, snapshot.CreatedAt).Error; err != nil {
 			return err
 		}
@@ -111,7 +52,9 @@ func (r *PipelineRepo) GetOrCreateRetrievalSnapshotForNode(ctx context.Context, 
 			First(&row).Error; err != nil {
 			return err
 		}
-		if row.DatasetID != snapshot.DatasetID || row.RetrievalProfileID != snapshot.RetrievalProfileID || row.SourceSeq != snapshot.SourceSeq {
+		if row.DatasetID != snapshot.DatasetID || row.DataContractHash != snapshot.DataContractHash ||
+			row.SearchSpecHash != snapshot.SearchSpecHash || row.EmbeddingModel != snapshot.EmbeddingModel ||
+			row.SourceSeq != snapshot.SourceSeq || !equalJSON(row.SearchSpec, snapshot.SearchSpec) {
 			return fmt.Errorf("NodeRun %s 已绑定到不同的 RetrievalSnapshot", snapshot.ProducerNodeRunID)
 		}
 		if row.Status != model.RetrievalSnapshotActive {
@@ -137,7 +80,7 @@ func (r *PipelineRepo) GetRetrievalSnapshot(ctx context.Context, id string) (*mo
 	return row.toModel()
 }
 
-func (r *PipelineRepo) ListRetrievalSnapshots(ctx context.Context, datasetID, profileID, status string,
+func (r *PipelineRepo) ListRetrievalSnapshots(ctx context.Context, datasetID, searchSpecHash, status string,
 	limit int) ([]model.RetrievalSnapshot, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
@@ -146,8 +89,8 @@ func (r *PipelineRepo) ListRetrievalSnapshots(ctx context.Context, datasetID, pr
 	if strings.TrimSpace(datasetID) != "" {
 		query = query.Where("dataset_id = ?", datasetID)
 	}
-	if strings.TrimSpace(profileID) != "" {
-		query = query.Where("retrieval_profile_id = ?", profileID)
+	if strings.TrimSpace(searchSpecHash) != "" {
+		query = query.Where("search_spec_hash = ?", searchSpecHash)
 	}
 	if strings.TrimSpace(status) != "" {
 		query = query.Where("status = ?", status)
@@ -167,10 +110,10 @@ func (r *PipelineRepo) ListRetrievalSnapshots(ctx context.Context, datasetID, pr
 	return out, nil
 }
 
-func (r *PipelineRepo) GetLatestActiveRetrievalSnapshot(ctx context.Context, datasetID, profileID string,
+func (r *PipelineRepo) GetLatestActiveRetrievalSnapshot(ctx context.Context, datasetID, searchSpecHash string,
 	throughSeq int64) (*model.RetrievalSnapshot, error) {
-	query := r.db.WithContext(ctx).Where("dataset_id = ? AND retrieval_profile_id = ? AND status = ?",
-		datasetID, profileID, model.RetrievalSnapshotActive)
+	query := r.db.WithContext(ctx).Where("dataset_id = ? AND search_spec_hash = ? AND status = ?",
+		datasetID, searchSpecHash, model.RetrievalSnapshotActive)
 	if throughSeq >= 0 {
 		query = query.Where("source_seq <= ?", throughSeq)
 	}
@@ -264,14 +207,14 @@ func (r *PipelineRepo) UpsertRetrievalChunks(ctx context.Context, chunks []model
 				metadata = json.RawMessage(`{}`)
 			}
 			if err := tx.Exec(`INSERT INTO retrieval_chunks
-				(id, dataset_id, dataset_item_id, retrieval_profile_id, chunk_no, chunk_text,
-				 chunk_hash, source_seq, embedding_model, embedding, metadata, created_at)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)
-				ON CONFLICT (dataset_item_id, retrieval_profile_id, chunk_no) DO UPDATE SET
+					(id, dataset_id, dataset_item_id, search_spec_hash, chunk_no, chunk_text,
+					 chunk_hash, source_seq, embedding_model, embedding, metadata, created_at)
+					VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, ?)
+					ON CONFLICT (dataset_item_id, search_spec_hash, chunk_no) DO UPDATE SET
 				 chunk_text = EXCLUDED.chunk_text, chunk_hash = EXCLUDED.chunk_hash,
 				 source_seq = EXCLUDED.source_seq, embedding_model = EXCLUDED.embedding_model,
 				 embedding = EXCLUDED.embedding, metadata = EXCLUDED.metadata`,
-				chunk.ID, chunk.DatasetID, chunk.DatasetItemID, chunk.RetrievalProfileID, chunk.ChunkNo,
+				chunk.ID, chunk.DatasetID, chunk.DatasetItemID, chunk.SearchSpecHash, chunk.ChunkNo,
 				chunk.ChunkText, chunk.ChunkHash, chunk.SourceSeq, chunk.EmbeddingModel,
 				pgvector.NewVector(chunk.Embedding), string(metadata), chunk.CreatedAt).Error; err != nil {
 				return err
@@ -281,7 +224,7 @@ func (r *PipelineRepo) UpsertRetrievalChunks(ctx context.Context, chunks []model
 	})
 }
 
-func (r *PipelineRepo) CountRetrievalChunks(ctx context.Context, datasetID, profileID string,
+func (r *PipelineRepo) CountRetrievalChunks(ctx context.Context, datasetID, searchSpecHash string,
 	sourceSeq int64) (chunkCount, itemCount int, err error) {
 	var row struct {
 		ChunkCount int `gorm:"column:chunk_count"`
@@ -290,8 +233,8 @@ func (r *PipelineRepo) CountRetrievalChunks(ctx context.Context, datasetID, prof
 	err = r.db.WithContext(ctx).Raw(`SELECT COUNT(*) AS chunk_count,
 		COUNT(DISTINCT dataset_item_id) AS item_count
 		FROM retrieval_chunks
-		WHERE dataset_id = ? AND retrieval_profile_id = ? AND source_seq <= ? AND embedding IS NOT NULL`,
-		datasetID, profileID, sourceSeq).Scan(&row).Error
+		WHERE dataset_id = ? AND search_spec_hash = ? AND source_seq <= ? AND embedding IS NOT NULL`,
+		datasetID, searchSpecHash, sourceSeq).Scan(&row).Error
 	return row.ChunkCount, row.ItemCount, err
 }
 
@@ -312,9 +255,9 @@ func (r *PipelineRepo) SearchRetrievalChunks(ctx context.Context, req port.Vecto
 		1 - (rc.embedding <=> ?::vector) AS score
 		FROM retrieval_chunks rc
 		JOIN dataset_items di ON di.id = rc.dataset_item_id
-		WHERE rc.dataset_id = ? AND rc.retrieval_profile_id = ?
+		WHERE rc.dataset_id = ? AND rc.search_spec_hash = ?
 		  AND rc.source_seq <= ? AND di.commit_seq <= ? AND rc.embedding IS NOT NULL`
-	args := []any{pgvector.NewVector(req.QueryEmbedding), req.DatasetID, req.RetrievalProfileID, req.SourceSeq, req.SourceSeq}
+	args := []any{pgvector.NewVector(req.QueryEmbedding), req.DatasetID, req.SearchSpecHash, req.SourceSeq, req.SourceSeq}
 	for field, values := range req.Filters {
 		if len(values) == 0 {
 			continue
@@ -382,62 +325,34 @@ func (r *PipelineRepo) AppendKnowledgeToolAudit(ctx context.Context, audit port.
 		audit.ToolName, audit.SourceName, string(request), audit.ResultCount, audit.LatencyMS, audit.ErrorMessage).Error
 }
 
-type retrievalProfileRow struct {
-	ID              string    `gorm:"column:id;primaryKey"`
-	WorkspaceID     string    `gorm:"column:workspace_id"`
-	Name            string    `gorm:"column:name"`
-	DatasetSchemaID string    `gorm:"column:dataset_schema_id"`
-	LexicalConfig   string    `gorm:"column:lexical_config"`
-	VectorConfig    string    `gorm:"column:vector_config"`
-	FilterFields    string    `gorm:"column:filter_fields"`
-	FusionConfig    string    `gorm:"column:fusion_config"`
-	ProfileHash     string    `gorm:"column:profile_hash"`
-	CreatedAt       time.Time `gorm:"column:created_at"`
-}
-
-func (retrievalProfileRow) TableName() string { return "retrieval_profiles" }
-
-func (row retrievalProfileRow) toModel() (*model.RetrievalProfile, error) {
-	profile := &model.RetrievalProfile{ID: row.ID, WorkspaceID: row.WorkspaceID, Name: row.Name,
-		DatasetSchemaID: row.DatasetSchemaID, ProfileHash: row.ProfileHash, CreatedAt: row.CreatedAt}
-	if err := json.Unmarshal([]byte(row.LexicalConfig), &profile.Lexical); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal([]byte(row.VectorConfig), &profile.Vector); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal([]byte(row.FilterFields), &profile.FilterFields); err != nil {
-		return nil, err
-	}
-	if err := json.Unmarshal([]byte(row.FusionConfig), &profile.Fusion); err != nil {
-		return nil, err
-	}
-	return profile, nil
-}
-
 type retrievalSnapshotRow struct {
-	ID                 string     `gorm:"column:id;primaryKey"`
-	DatasetID          string     `gorm:"column:dataset_id"`
-	RetrievalProfileID string     `gorm:"column:retrieval_profile_id"`
-	ProducerNodeRunID  string     `gorm:"column:producer_node_run_id"`
-	ProducerAttempt    int        `gorm:"column:producer_attempt"`
-	SourceSeq          int64      `gorm:"column:source_seq"`
-	Status             string     `gorm:"column:status"`
-	LexicalRef         string     `gorm:"column:lexical_ref"`
-	VectorRef          string     `gorm:"column:vector_ref"`
-	LexicalCount       int        `gorm:"column:lexical_count"`
-	VectorCount        int        `gorm:"column:vector_count"`
-	FailureReason      string     `gorm:"column:failure_reason"`
-	CreatedAt          time.Time  `gorm:"column:created_at"`
-	ActivatedAt        *time.Time `gorm:"column:activated_at"`
+	ID                string          `gorm:"column:id;primaryKey"`
+	DatasetID         string          `gorm:"column:dataset_id"`
+	DataContractHash  string          `gorm:"column:data_contract_hash"`
+	SearchSpec        json.RawMessage `gorm:"column:search_spec;type:jsonb"`
+	SearchSpecHash    string          `gorm:"column:search_spec_hash"`
+	EmbeddingModel    string          `gorm:"column:embedding_model"`
+	ProducerNodeRunID string          `gorm:"column:producer_node_run_id"`
+	ProducerAttempt   int             `gorm:"column:producer_attempt"`
+	SourceSeq         int64           `gorm:"column:source_seq"`
+	Status            string          `gorm:"column:status"`
+	LexicalRef        string          `gorm:"column:lexical_ref"`
+	VectorRef         string          `gorm:"column:vector_ref"`
+	LexicalCount      int             `gorm:"column:lexical_count"`
+	VectorCount       int             `gorm:"column:vector_count"`
+	FailureReason     string          `gorm:"column:failure_reason"`
+	CreatedAt         time.Time       `gorm:"column:created_at"`
+	ActivatedAt       *time.Time      `gorm:"column:activated_at"`
 }
 
 func (retrievalSnapshotRow) TableName() string { return "retrieval_snapshots" }
 
 func (row retrievalSnapshotRow) toModel() (*model.RetrievalSnapshot, error) {
 	snapshot := &model.RetrievalSnapshot{ID: row.ID, DatasetID: row.DatasetID,
-		RetrievalProfileID: row.RetrievalProfileID, ProducerNodeRunID: row.ProducerNodeRunID,
-		SourceSeq: row.SourceSeq, Status: row.Status, LexicalRef: row.LexicalRef,
+		DataContractHash: row.DataContractHash, SearchSpec: row.SearchSpec,
+		SearchSpecHash: row.SearchSpecHash, EmbeddingModel: row.EmbeddingModel,
+		ProducerNodeRunID: row.ProducerNodeRunID,
+		SourceSeq:         row.SourceSeq, Status: row.Status, LexicalRef: row.LexicalRef,
 		VectorRef: row.VectorRef, LexicalCount: row.LexicalCount, VectorCount: row.VectorCount,
 		FailureReason: row.FailureReason, CreatedAt: row.CreatedAt}
 	if row.ActivatedAt != nil {

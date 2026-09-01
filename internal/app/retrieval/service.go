@@ -7,14 +7,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 
 	"golang.org/x/sync/errgroup"
 
-	"reqflow/internal/domain/logic"
 	"reqflow/internal/domain/model"
+	domain "reqflow/internal/domain/workflow"
 	"reqflow/internal/port"
 )
 
@@ -55,62 +56,55 @@ func NewService(repo port.RetrievalRepo, lexical port.LexicalBackend, embedder p
 		pageSize: options.PageSize}, nil
 }
 
-type CreateProfileInput struct {
-	WorkspaceID     string
-	Name            string
-	DatasetSchemaID string
-	Lexical         model.LexicalConfig
-	Vector          model.VectorConfig
-	FilterFields    []string
-	Fusion          model.FusionConfig
+type searchContract struct {
+	Spec         domain.SearchSpec
+	Raw          json.RawMessage
+	Hash         string
+	Lexical      model.LexicalConfig
+	Vector       model.VectorConfig
+	FilterFields []string
+	Fusion       model.FusionConfig
 }
 
-func (s *Service) CreateProfile(ctx context.Context, input CreateProfileInput) (*model.RetrievalProfile, error) {
-	if strings.TrimSpace(input.WorkspaceID) == "" {
-		input.WorkspaceID = "default"
-	}
-	schema, err := s.repo.GetDatasetSchema(ctx, strings.TrimSpace(input.DatasetSchemaID))
+func compileSearchContract(spec domain.SearchSpec) (searchContract, error) {
+	raw, err := json.Marshal(spec)
 	if err != nil {
-		return nil, fmt.Errorf("目标 DatasetSchema 不存在: %w", err)
+		return searchContract{}, err
 	}
-	if schema.WorkspaceID != input.WorkspaceID {
-		return nil, fmt.Errorf("RetrievalProfile 与 DatasetSchema 必须属于同一 workspace")
-	}
-	profile := model.RetrievalProfile{WorkspaceID: input.WorkspaceID, Name: input.Name,
-		DatasetSchemaID: input.DatasetSchemaID, Lexical: input.Lexical, Vector: input.Vector,
-		FilterFields: input.FilterFields, Fusion: input.Fusion}
-	profile, hash, err := logic.NormalizeRetrievalProfile(profile, *schema)
+	hash, err := domain.HashContract(spec)
 	if err != nil {
-		return nil, err
+		return searchContract{}, err
 	}
-	profile.ProfileHash = hash
-	if err := s.repo.CreateRetrievalProfile(ctx, &profile); err != nil {
-		return nil, err
+	lexical := make(map[string]float64, len(spec.LexicalFields))
+	for _, field := range spec.LexicalFields {
+		if strings.TrimSpace(field.Field) == "" || field.Weight <= 0 {
+			return searchContract{}, fmt.Errorf("SearchSpec lexical_fields 非法")
+		}
+		lexical[field.Field] = field.Weight
 	}
-	return &profile, nil
-}
-
-func (s *Service) GetProfile(ctx context.Context, id string) (*model.RetrievalProfile, error) {
-	return s.repo.GetRetrievalProfile(ctx, strings.TrimSpace(id))
-}
-
-func (s *Service) CloneProfile(ctx context.Context, id, name string) (*model.RetrievalProfile, error) {
-	source, err := s.GetProfile(ctx, id)
-	if err != nil {
-		return nil, err
+	if len(lexical) == 0 && len(spec.VectorFields) == 0 {
+		return searchContract{}, fmt.Errorf("SearchSpec 至少需要一个搜索字段")
 	}
-	return s.CreateProfile(ctx, CreateProfileInput{WorkspaceID: source.WorkspaceID, Name: name,
-		DatasetSchemaID: source.DatasetSchemaID, Lexical: source.Lexical, Vector: source.Vector,
-		FilterFields: append([]string(nil), source.FilterFields...), Fusion: source.Fusion})
+	if spec.ChunkSize <= 0 || spec.ChunkOverlap < 0 || spec.ChunkOverlap >= spec.ChunkSize {
+		return searchContract{}, fmt.Errorf("SearchSpec 分块参数非法")
+	}
+	return searchContract{Spec: spec, Raw: raw, Hash: hash,
+		Lexical: model.LexicalConfig{Fields: lexical, Analyzer: "standard"},
+		Vector: model.VectorConfig{Fields: append([]string(nil), spec.VectorFields...),
+			ChunkSize: spec.ChunkSize, ChunkOverlap: spec.ChunkOverlap,
+			ChunkerVersion: "rune_v1", EmbeddingModel: "platform_default"},
+		FilterFields: append([]string(nil), spec.FilterFields...),
+		Fusion: model.FusionConfig{Method: "rrf", RankConstant: 60,
+			LexicalCandidates: spec.LexicalCandidates, VectorCandidates: spec.VectorCandidates}}, nil
 }
 
 type BuildInput struct {
-	DatasetID          string
-	RetrievalProfileID string
-	SourceSeq          int64
-	TaskID             string
-	ProducerNodeRunID  string
-	ProducerAttempt    int
+	DatasetID         string
+	DataContract      domain.DataContract
+	SearchSpec        domain.SearchSpec
+	SourceSeq         int64
+	ProducerNodeRunID string
+	ProducerAttempt   int
 }
 
 type BuildProgress struct {
@@ -124,23 +118,27 @@ type BuildProgress struct {
 
 func (s *Service) BuildSnapshot(ctx context.Context, input BuildInput,
 	report func(BuildProgress) error) (snapshot *model.RetrievalSnapshot, err error) {
-	dataset, profile, err := s.validateBuildInput(ctx, input)
+	dataset, dataContractHash, contract, err := s.validateBuildInput(ctx, input)
 	if err != nil {
 		return nil, err
 	}
-	if !s.lexical.Available() {
+	if len(contract.Lexical.Fields) > 0 && !s.lexical.Available() {
 		return nil, fmt.Errorf("OpenSearch BM25 后端未配置")
 	}
-	if !s.embedder.Available() {
+	if len(contract.Vector.Fields) > 0 && !s.embedder.Available() {
 		return nil, fmt.Errorf("embedding 后端未配置")
 	}
-	resolvedModel, err := s.resolveEmbeddingModel(ctx, profile.Vector.EmbeddingModel)
-	if err != nil {
-		return nil, err
+	resolvedModel := "none"
+	if len(contract.Vector.Fields) > 0 {
+		resolvedModel, err = s.resolveEmbeddingModel(ctx, contract.Vector.EmbeddingModel)
+		if err != nil {
+			return nil, err
+		}
 	}
-	indexRef := retrievalIndexRef(dataset.ID, profile.ID)
+	indexRef := retrievalIndexRef(dataset.ID, contract.Hash)
 	snapshot, err = s.repo.GetOrCreateRetrievalSnapshotForNode(ctx, &model.RetrievalSnapshot{
-		DatasetID: dataset.ID, RetrievalProfileID: profile.ID, ProducerNodeRunID: input.ProducerNodeRunID,
+		DatasetID: dataset.ID, DataContractHash: dataContractHash, SearchSpec: contract.Raw,
+		SearchSpecHash: contract.Hash, EmbeddingModel: resolvedModel, ProducerNodeRunID: input.ProducerNodeRunID,
 		SourceSeq: input.SourceSeq, Status: model.RetrievalSnapshotBuilding,
 	}, input.ProducerAttempt)
 	if err != nil {
@@ -158,9 +156,15 @@ func (s *Service) BuildSnapshot(ctx context.Context, input BuildInput,
 	}()
 
 	afterSeq := int64(0)
-	if previous, previousErr := s.repo.GetLatestActiveRetrievalSnapshot(ctx, dataset.ID, profile.ID, input.SourceSeq); previousErr == nil {
-		lexicalCount, lexicalErr := s.lexical.Count(ctx, indexRef, previous.SourceSeq)
-		_, vectorItems, vectorErr := s.repo.CountRetrievalChunks(ctx, dataset.ID, profile.ID, previous.SourceSeq)
+	if previous, previousErr := s.repo.GetLatestActiveRetrievalSnapshot(ctx, dataset.ID, contract.Hash, input.SourceSeq); previousErr == nil {
+		lexicalCount, vectorItems := int(previous.SourceSeq), int(previous.SourceSeq)
+		var lexicalErr, vectorErr error
+		if len(contract.Lexical.Fields) > 0 {
+			lexicalCount, lexicalErr = s.lexical.Count(ctx, indexRef, previous.SourceSeq)
+		}
+		if len(contract.Vector.Fields) > 0 {
+			_, vectorItems, vectorErr = s.repo.CountRetrievalChunks(ctx, dataset.ID, contract.Hash, previous.SourceSeq)
+		}
 		if lexicalErr == nil && vectorErr == nil && lexicalCount == int(previous.SourceSeq) && vectorItems == int(previous.SourceSeq) {
 			afterSeq = previous.SourceSeq
 		}
@@ -168,9 +172,11 @@ func (s *Service) BuildSnapshot(ctx context.Context, input BuildInput,
 		return nil, previousErr
 	}
 	// 即使 Dataset 为空也要先创建物理 BM25 索引，Active Snapshot 的 lexical_ref 必须可用。
-	if err = s.lexical.Build(ctx, port.LexicalBuildRequest{IndexRef: indexRef,
-		Analyzer: profile.Lexical.Analyzer, Fields: profile.Lexical.Fields, Filters: profile.FilterFields}); err != nil {
-		return nil, err
+	if len(contract.Lexical.Fields) > 0 {
+		if err = s.lexical.Build(ctx, port.LexicalBuildRequest{IndexRef: indexRef,
+			Analyzer: contract.Lexical.Analyzer, Fields: contract.Lexical.Fields, Filters: contract.FilterFields}); err != nil {
+			return nil, err
+		}
 	}
 	processed := afterSeq
 	for processed < input.SourceSeq {
@@ -188,27 +194,35 @@ func (s *Service) BuildSnapshot(ctx context.Context, input BuildInput,
 			if parseErr != nil {
 				return nil, fmt.Errorf("DatasetItem %s fields 非法: %w", item.ID, parseErr)
 			}
-			documents = append(documents, lexicalDocument(item, fields, *profile))
-			chunks = append(chunks, buildItemChunks(item, fields, *profile, resolvedModel)...)
+			if len(contract.Lexical.Fields) > 0 {
+				documents = append(documents, lexicalDocument(item, fields, contract))
+			}
+			if len(contract.Vector.Fields) > 0 {
+				chunks = append(chunks, buildItemChunks(item, fields, contract, resolvedModel)...)
+			}
 		}
 		texts := make([]string, len(chunks))
 		for i := range chunks {
 			texts[i] = chunks[i].ChunkText
 		}
-		embeddings, embedErr := s.embedder.Generate(ctx, texts)
-		if embedErr != nil {
-			return nil, embedErr
+		if len(chunks) > 0 {
+			embeddings, embedErr := s.embedder.Generate(ctx, texts)
+			if embedErr != nil {
+				return nil, embedErr
+			}
+			if len(embeddings) != len(chunks) {
+				return nil, fmt.Errorf("embedding 数量不匹配: want %d got %d", len(chunks), len(embeddings))
+			}
+			for i := range chunks {
+				chunks[i].Embedding = embeddings[i]
+			}
 		}
-		if len(embeddings) != len(chunks) {
-			return nil, fmt.Errorf("embedding 数量不匹配: want %d got %d", len(chunks), len(embeddings))
-		}
-		for i := range chunks {
-			chunks[i].Embedding = embeddings[i]
-		}
-		if err = s.lexical.Build(ctx, port.LexicalBuildRequest{IndexRef: indexRef,
-			Analyzer: profile.Lexical.Analyzer, Fields: profile.Lexical.Fields,
-			Filters: profile.FilterFields, Documents: documents}); err != nil {
-			return nil, err
+		if len(documents) > 0 {
+			if err = s.lexical.Build(ctx, port.LexicalBuildRequest{IndexRef: indexRef,
+				Analyzer: contract.Lexical.Analyzer, Fields: contract.Lexical.Fields,
+				Filters: contract.FilterFields, Documents: documents}); err != nil {
+				return nil, err
+			}
 		}
 		if err = s.repo.UpsertRetrievalChunks(ctx, chunks); err != nil {
 			return nil, err
@@ -226,21 +240,34 @@ func (s *Service) BuildSnapshot(ctx context.Context, input BuildInput,
 		input.ProducerAttempt, model.RetrievalSnapshotValidating, ""); err != nil {
 		return nil, err
 	}
-	lexicalCount, err := s.lexical.Count(ctx, indexRef, input.SourceSeq)
-	if err != nil {
-		return nil, err
+	lexicalCount := 0
+	if len(contract.Lexical.Fields) > 0 {
+		lexicalCount, err = s.lexical.Count(ctx, indexRef, input.SourceSeq)
+		if err != nil {
+			return nil, err
+		}
 	}
-	vectorCount, vectorItems, err := s.repo.CountRetrievalChunks(ctx, dataset.ID, profile.ID, input.SourceSeq)
-	if err != nil {
-		return nil, err
+	vectorCount, vectorItems := 0, 0
+	if len(contract.Vector.Fields) > 0 {
+		vectorCount, vectorItems, err = s.repo.CountRetrievalChunks(ctx, dataset.ID, contract.Hash, input.SourceSeq)
+		if err != nil {
+			return nil, err
+		}
 	}
-	if lexicalCount != int(input.SourceSeq) || vectorItems != int(input.SourceSeq) {
+	if (len(contract.Lexical.Fields) > 0 && lexicalCount != int(input.SourceSeq)) ||
+		(len(contract.Vector.Fields) > 0 && vectorItems != int(input.SourceSeq)) {
 		return nil, fmt.Errorf("Snapshot 覆盖不完整: source_seq=%d lexical_items=%d vector_items=%d",
 			input.SourceSeq, lexicalCount, vectorItems)
 	}
-	vectorRef := "pgvector:" + dataset.ID + ":" + profile.ID
+	lexicalRef, vectorRef := "", ""
+	if len(contract.Lexical.Fields) > 0 {
+		lexicalRef = indexRef
+	}
+	if len(contract.Vector.Fields) > 0 {
+		vectorRef = "pgvector:" + dataset.ID + ":" + contract.Hash
+	}
 	snapshot, err = s.repo.ActivateRetrievalSnapshotForNode(ctx, snapshot.ID, input.ProducerNodeRunID,
-		input.ProducerAttempt, indexRef, vectorRef, lexicalCount, vectorCount)
+		input.ProducerAttempt, lexicalRef, vectorRef, lexicalCount, vectorCount)
 	if err != nil {
 		return nil, err
 	}
@@ -255,28 +282,40 @@ func (s *Service) BuildSnapshot(ctx context.Context, input BuildInput,
 	return snapshot, nil
 }
 
-func (s *Service) validateBuildInput(ctx context.Context, input BuildInput) (*model.Dataset, *model.RetrievalProfile, error) {
+func (s *Service) validateBuildInput(ctx context.Context, input BuildInput) (*model.Dataset, string, searchContract, error) {
 	if strings.TrimSpace(input.ProducerNodeRunID) == "" || input.ProducerAttempt <= 0 {
-		return nil, nil, fmt.Errorf("retrieval.build 必须由有效 NodeRun attempt 执行")
+		return nil, "", searchContract{}, fmt.Errorf("retrieval.build 必须由有效 NodeRun attempt 执行")
 	}
 	dataset, err := s.repo.GetAppendDataset(ctx, strings.TrimSpace(input.DatasetID))
 	if err != nil {
-		return nil, nil, fmt.Errorf("Dataset 不存在: %w", err)
+		return nil, "", searchContract{}, fmt.Errorf("Dataset 不存在: %w", err)
 	}
 	if dataset.Status != model.DatasetStatusActive {
-		return nil, nil, fmt.Errorf("Dataset 未处于 active")
+		return nil, "", searchContract{}, fmt.Errorf("Dataset 未处于 active")
 	}
 	if input.SourceSeq < 0 || input.SourceSeq > dataset.CurrentSeq {
-		return nil, nil, fmt.Errorf("source_seq %d 超出 Dataset 当前位点 %d", input.SourceSeq, dataset.CurrentSeq)
+		return nil, "", searchContract{}, fmt.Errorf("source_seq %d 超出 Dataset 当前位点 %d", input.SourceSeq, dataset.CurrentSeq)
 	}
-	profile, err := s.repo.GetRetrievalProfile(ctx, strings.TrimSpace(input.RetrievalProfileID))
+	schema, err := s.repo.GetDatasetSchema(ctx, dataset.SchemaID)
 	if err != nil {
-		return nil, nil, fmt.Errorf("RetrievalProfile 不存在: %w", err)
+		return nil, "", searchContract{}, fmt.Errorf("DatasetSchema 不存在: %w", err)
 	}
-	if profile.WorkspaceID != dataset.WorkspaceID || profile.DatasetSchemaID != dataset.SchemaID {
-		return nil, nil, fmt.Errorf("RetrievalProfile 与 Dataset 的 workspace/schema 不匹配")
+	_, schemaHash, err := domain.CompileDataContract(input.DataContract)
+	if err != nil {
+		return nil, "", searchContract{}, err
 	}
-	return dataset, profile, nil
+	if schema.SchemaHash != schemaHash || !slices.Equal(dataset.KeyFields, input.DataContract.KeyFields) {
+		return nil, "", searchContract{}, fmt.Errorf("Dataset 与内联 DataContract 不一致")
+	}
+	dataHash, err := domain.HashContract(input.DataContract)
+	if err != nil {
+		return nil, "", searchContract{}, err
+	}
+	contract, err := compileSearchContract(input.SearchSpec)
+	if err != nil {
+		return nil, "", searchContract{}, err
+	}
+	return dataset, dataHash, contract, nil
 }
 
 func (s *Service) resolveEmbeddingModel(ctx context.Context, configured string) (string, error) {
@@ -296,7 +335,7 @@ func (s *Service) resolveEmbeddingModel(ctx context.Context, configured string) 
 		return platformModel, nil
 	}
 	if platformModel == "" || configured != platformModel {
-		return "", fmt.Errorf("RetrievalProfile 要求 embedding model %q，当前平台配置为 %q", configured, platformModel)
+		return "", fmt.Errorf("SearchSpec 要求 embedding model %q，当前平台配置为 %q", configured, platformModel)
 	}
 	return configured, nil
 }
@@ -328,11 +367,18 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (*SearchRes
 	if snapshot.Status != model.RetrievalSnapshotActive {
 		return nil, fmt.Errorf("RetrievalSnapshot %s 未激活", snapshot.ID)
 	}
-	profile, err := s.repo.GetRetrievalProfile(ctx, snapshot.RetrievalProfileID)
+	var spec domain.SearchSpec
+	if err := json.Unmarshal(snapshot.SearchSpec, &spec); err != nil {
+		return nil, fmt.Errorf("RetrievalSnapshot SearchSpec 非法: %w", err)
+	}
+	contract, err := compileSearchContract(spec)
 	if err != nil {
 		return nil, err
 	}
-	strategy, err := normalizeSearchStrategy(request.Strategy, *profile)
+	if contract.Hash != snapshot.SearchSpecHash {
+		return nil, fmt.Errorf("RetrievalSnapshot SearchSpec 哈希不一致")
+	}
+	strategy, err := normalizeSearchStrategy(request.Strategy, contract)
 	if err != nil {
 		return nil, err
 	}
@@ -346,7 +392,7 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (*SearchRes
 		// 阈值只对 rerank 后的校准分数生效。
 		strategy.ScoreThreshold = 0
 	}
-	if err := validateFilters(request.Filters, profile.FilterFields); err != nil {
+	if err := validateFilters(request.Filters, contract.FilterFields); err != nil {
 		return nil, err
 	}
 
@@ -359,7 +405,7 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (*SearchRes
 			}
 			var searchErr error
 			lexicalHits, searchErr = s.lexical.Search(groupCtx, port.LexicalSearchRequest{
-				IndexRef: snapshot.LexicalRef, Query: request.Query, Fields: profile.Lexical.Fields,
+				IndexRef: snapshot.LexicalRef, Query: request.Query, Fields: contract.Lexical.Fields,
 				Filters: request.Filters, SourceSeq: snapshot.SourceSeq, Limit: strategy.RecallLimit,
 			})
 			return searchErr
@@ -378,7 +424,7 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (*SearchRes
 				return fmt.Errorf("query embedding 响应数量异常")
 			}
 			semanticHits, embedErr = s.repo.SearchRetrievalChunks(groupCtx, port.VectorSearchRequest{
-				DatasetID: snapshot.DatasetID, RetrievalProfileID: profile.ID, QueryEmbedding: vectors[0],
+				DatasetID: snapshot.DatasetID, SearchSpecHash: contract.Hash, QueryEmbedding: vectors[0],
 				Filters: request.Filters, SourceSeq: snapshot.SourceSeq, Limit: strategy.RecallLimit,
 			})
 			return embedErr
@@ -387,7 +433,7 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (*SearchRes
 	if err := group.Wait(); err != nil {
 		return nil, err
 	}
-	fused := fuseRRF(lexicalHits, semanticHits, strategy, profile.Fusion.RankConstant)
+	fused := fuseRRF(lexicalHits, semanticHits, strategy, contract.Fusion.RankConstant)
 	if len(fused) > strategy.RecallLimit {
 		fused = fused[:strategy.RecallLimit]
 	}
@@ -417,7 +463,7 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (*SearchRes
 	if strategy.RerankEnabled && len(hits) > 0 {
 		documents := make([]string, len(hits))
 		for i := range hits {
-			documents[i] = rerankDocument(hits[i].Fields, profile.Vector.Fields)
+			documents[i] = rerankDocument(hits[i].Fields, contract.Vector.Fields)
 		}
 		results, rerankErr := s.reranker.Rerank(ctx, request.Query, documents, strategy.RerankTopN)
 		if rerankErr != nil {
@@ -504,16 +550,25 @@ func fuseRRF(lexical, semantic []port.RankedHit, strategy model.RetrievalSearchS
 	return out
 }
 
-func normalizeSearchStrategy(strategy model.RetrievalSearchStrategy, profile model.RetrievalProfile) (model.RetrievalSearchStrategy, error) {
+func normalizeSearchStrategy(strategy model.RetrievalSearchStrategy, contract searchContract) (model.RetrievalSearchStrategy, error) {
 	if strategy.Mode == "" {
 		strategy.Mode = model.RetrievalModeHybrid
 	}
 	switch strategy.Mode {
 	case model.RetrievalModeLexical:
+		if len(contract.Lexical.Fields) == 0 {
+			return strategy, fmt.Errorf("当前 Snapshot 未配置 lexical 搜索")
+		}
 		strategy.LexicalWeight, strategy.SemanticWeight = 1, 0
 	case model.RetrievalModeSemantic:
+		if len(contract.Vector.Fields) == 0 {
+			return strategy, fmt.Errorf("当前 Snapshot 未配置 semantic 搜索")
+		}
 		strategy.LexicalWeight, strategy.SemanticWeight = 0, 1
 	case model.RetrievalModeHybrid:
+		if len(contract.Lexical.Fields) == 0 || len(contract.Vector.Fields) == 0 {
+			return strategy, fmt.Errorf("当前 Snapshot 不支持 hybrid 搜索")
+		}
 		if strategy.LexicalWeight == 0 && strategy.SemanticWeight == 0 {
 			strategy.LexicalWeight, strategy.SemanticWeight = 0.5, 0.5
 		}
@@ -532,9 +587,9 @@ func normalizeSearchStrategy(strategy model.RetrievalSearchStrategy, profile mod
 		return strategy, fmt.Errorf("score_threshold 必须在 0..1 之间")
 	}
 	if strategy.RecallLimit == 0 {
-		strategy.RecallLimit = profile.Fusion.LexicalCandidates
-		if profile.Fusion.VectorCandidates > strategy.RecallLimit {
-			strategy.RecallLimit = profile.Fusion.VectorCandidates
+		strategy.RecallLimit = contract.Fusion.LexicalCandidates
+		if contract.Fusion.VectorCandidates > strategy.RecallLimit {
+			strategy.RecallLimit = contract.Fusion.VectorCandidates
 		}
 	}
 	if strategy.RecallLimit < 1 || strategy.RecallLimit > maxRecallLimit {
@@ -566,7 +621,7 @@ func validateFilters(filters map[string][]string, allowed []string) error {
 	}
 	for field, values := range filters {
 		if !whitelist[field] {
-			return fmt.Errorf("filter 字段 %s 不在 RetrievalProfile 白名单", field)
+			return fmt.Errorf("filter 字段 %s 不在 SearchSpec 白名单", field)
 		}
 		if len(values) == 0 || len(values) > 100 {
 			return fmt.Errorf("filter 字段 %s 必须包含 1..100 个值", field)
@@ -580,34 +635,34 @@ func validateFilters(filters map[string][]string, allowed []string) error {
 	return nil
 }
 
-func retrievalIndexRef(datasetID, profileID string) string {
-	digest := sha256.Sum256([]byte(datasetID + ":" + profileID))
+func retrievalIndexRef(datasetID, searchSpecHash string) string {
+	digest := sha256.Sum256([]byte(datasetID + ":" + searchSpecHash))
 	return "retrieval-" + hex.EncodeToString(digest[:12])
 }
 
-func lexicalDocument(item model.DatasetItem, fields map[string]any, profile model.RetrievalProfile) port.LexicalDocument {
+func lexicalDocument(item model.DatasetItem, fields map[string]any, contract searchContract) port.LexicalDocument {
 	indexed := map[string]any{}
-	for name := range profile.Lexical.Fields {
+	for name := range contract.Lexical.Fields {
 		indexed[name] = normalizedSearchValue(fields[name])
 	}
 	filters := map[string]any{}
-	for _, name := range profile.FilterFields {
+	for _, name := range contract.FilterFields {
 		filters[name] = fields[name]
 	}
 	return port.LexicalDocument{DatasetItemID: item.ID, SourceSeq: item.CommitSeq,
 		Fields: indexed, Filters: filters}
 }
 
-func buildItemChunks(item model.DatasetItem, fields map[string]any, profile model.RetrievalProfile,
+func buildItemChunks(item model.DatasetItem, fields map[string]any, contract searchContract,
 	embeddingModel string) []model.RetrievalChunk {
-	text := rerankDocumentFromValues(fields, profile.Vector.Fields)
-	parts := chunkRunes(text, profile.Vector.ChunkSize, profile.Vector.ChunkOverlap)
+	text := rerankDocumentFromValues(fields, contract.Vector.Fields)
+	parts := chunkRunes(text, contract.Vector.ChunkSize, contract.Vector.ChunkOverlap)
 	chunks := make([]model.RetrievalChunk, len(parts))
 	for i, part := range parts {
 		digest := sha256.Sum256([]byte(part))
-		metadata, _ := json.Marshal(map[string]any{"chunker_version": profile.Vector.ChunkerVersion})
+		metadata, _ := json.Marshal(map[string]any{"chunker_version": contract.Vector.ChunkerVersion})
 		chunks[i] = model.RetrievalChunk{DatasetID: item.DatasetID, DatasetItemID: item.ID,
-			RetrievalProfileID: profile.ID, ChunkNo: i, ChunkText: part,
+			SearchSpecHash: contract.Hash, ChunkNo: i, ChunkText: part,
 			ChunkHash: hex.EncodeToString(digest[:]), SourceSeq: item.CommitSeq,
 			EmbeddingModel: embeddingModel, Metadata: metadata}
 	}

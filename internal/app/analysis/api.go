@@ -8,31 +8,14 @@ import (
 	"reqflow/internal/domain/model"
 )
 
-type CreateProfileRequest struct {
-	WorkspaceID  string          `json:"workspace_id,omitempty"`
-	Name         string          `json:"name"`
-	Instruction  string          `json:"instruction"`
-	OutputSchema json.RawMessage `json:"output_schema"`
-}
-
-type CloneProfileRequest struct {
-	Name string `json:"name"`
-}
-
-type ProfileView struct {
-	ID           string          `json:"id"`
-	WorkspaceID  string          `json:"workspace_id"`
-	Name         string          `json:"name"`
-	Instruction  string          `json:"instruction"`
-	OutputSchema json.RawMessage `json:"output_schema"`
-	ProfileHash  string          `json:"profile_hash"`
-	CreatedAt    time.Time       `json:"created_at"`
-}
-
 type ResultView struct {
 	ID                    string          `json:"id"`
 	WorkspaceID           string          `json:"workspace_id"`
-	AnalysisProfileID     string          `json:"analysis_profile_id"`
+	Instruction           string          `json:"instruction"`
+	OutputContract        json.RawMessage `json:"output_contract"`
+	OutputContractHash    string          `json:"output_contract_hash"`
+	OutputSchema          json.RawMessage `json:"output_schema"`
+	OutputSchemaHash      string          `json:"output_schema_hash"`
 	ProducerWorkflowRunID string          `json:"producer_workflow_run_id"`
 	ProducerNodeRunID     string          `json:"producer_node_run_id"`
 	Status                string          `json:"status"`
@@ -57,45 +40,6 @@ type ArtifactView struct {
 	ProducerNodeRunID     string          `json:"producer_node_run_id"`
 	Metadata              json.RawMessage `json:"metadata"`
 	CreatedAt             time.Time       `json:"created_at"`
-}
-
-func (s *Service) RegisterProfile(ctx context.Context, request CreateProfileRequest) (*ProfileView, error) {
-	profile, err := s.CreateProfile(ctx, CreateProfileInput(request))
-	if err != nil {
-		return nil, err
-	}
-	view := profileView(*profile)
-	return &view, nil
-}
-
-func (s *Service) GetProfileView(ctx context.Context, id string) (*ProfileView, error) {
-	profile, err := s.GetProfile(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	view := profileView(*profile)
-	return &view, nil
-}
-
-func (s *Service) ListProfileViews(ctx context.Context, workspaceID string, limit int) ([]ProfileView, error) {
-	profiles, err := s.ListProfiles(ctx, workspaceID, limit)
-	if err != nil {
-		return nil, err
-	}
-	views := make([]ProfileView, len(profiles))
-	for i := range profiles {
-		views[i] = profileView(profiles[i])
-	}
-	return views, nil
-}
-
-func (s *Service) CloneProfileView(ctx context.Context, id string, request CloneProfileRequest) (*ProfileView, error) {
-	profile, err := s.CloneProfile(ctx, id, request.Name)
-	if err != nil {
-		return nil, err
-	}
-	view := profileView(*profile)
-	return &view, nil
 }
 
 func (s *Service) GetResultView(ctx context.Context, id string) (*ResultView, error) {
@@ -128,15 +72,11 @@ func (s *ArtifactService) ListViews(ctx context.Context, workspaceID, kind strin
 	return views, nil
 }
 
-func profileView(profile model.AnalysisProfile) ProfileView {
-	return ProfileView{ID: profile.ID, WorkspaceID: profile.WorkspaceID, Name: profile.Name,
-		Instruction: profile.Instruction, OutputSchema: profile.OutputSchema,
-		ProfileHash: profile.ProfileHash, CreatedAt: profile.CreatedAt}
-}
-
 func resultView(result model.AnalysisResult) ResultView {
 	return ResultView{ID: result.ID, WorkspaceID: result.WorkspaceID,
-		AnalysisProfileID: result.AnalysisProfileID, ProducerWorkflowRunID: result.ProducerWorkflowRunID,
+		Instruction: result.Instruction, OutputContract: result.OutputContract,
+		OutputContractHash: result.OutputContractHash, OutputSchema: result.OutputSchema,
+		OutputSchemaHash: result.OutputSchemaHash, ProducerWorkflowRunID: result.ProducerWorkflowRunID,
 		ProducerNodeRunID: result.ProducerNodeRunID, Status: result.Status, Output: result.Output,
 		Model: result.Model, InputTokens: result.InputTokens, OutputTokens: result.OutputTokens,
 		CacheReadTokens: result.CacheReadTokens, CacheWriteTokens: result.CacheWriteTokens,

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 
 	"reqflow/internal/domain/logic"
 	"reqflow/internal/domain/model"
+	domain "reqflow/internal/domain/workflow"
 	"reqflow/internal/port"
 )
 
@@ -28,23 +30,21 @@ func NewCleaningService(repo port.CleaningPipelineRepo) (*CleaningService, error
 }
 
 type TransformInput struct {
-	RecordDraftSetID   string
-	ProducerNodeRunID  string
-	ProducerAttempt    int
-	NormalizationRules json.RawMessage
+	RecordDraftSetID  string
+	ProducerNodeRunID string
+	ProducerAttempt   int
 }
 
 type WorkflowTransformInput struct {
-	ResourceID         string
-	ExecutionID        string
-	Attempt            int
-	NormalizationRules json.RawMessage
+	ResourceID  string
+	ExecutionID string
+	Attempt     int
 }
 
 func (s *CleaningService) TransformWorkflow(ctx context.Context, input WorkflowTransformInput,
 	progress func(CleaningProgress) error) (*model.TransformedRecordSet, error) {
 	return s.Transform(ctx, TransformInput{RecordDraftSetID: input.ResourceID, ProducerNodeRunID: input.ExecutionID,
-		ProducerAttempt: input.Attempt, NormalizationRules: input.NormalizationRules}, progress)
+		ProducerAttempt: input.Attempt}, progress)
 }
 
 type CleaningProgress struct {
@@ -64,13 +64,9 @@ func (s *CleaningService) Transform(ctx context.Context, in TransformInput, prog
 	if draftSet.Status != model.RecordDraftSetSucceeded {
 		return nil, fmt.Errorf("RecordDraftSet %s 状态 %s 不允许转换", draftSet.ID, draftSet.Status)
 	}
-	profile, err := s.repo.GetExtractionProfile(ctx, draftSet.ExtractionProfileID)
-	if err != nil {
-		return nil, fmt.Errorf("读取 ExtractionProfile: %w", err)
-	}
-	schema, err := s.repo.GetDatasetSchema(ctx, profile.TargetSchemaID)
-	if err != nil {
-		return nil, fmt.Errorf("读取目标 DatasetSchema: %w", err)
+	var extractionSpec domain.ExtractionSpec
+	if err := json.Unmarshal(draftSet.ExtractionSpec, &extractionSpec); err != nil {
+		return nil, fmt.Errorf("RecordDraftSet ExtractionSpec 非法: %w", err)
 	}
 	drafts, err := s.repo.ListRecordDrafts(ctx, draftSet.ID)
 	if err != nil {
@@ -79,14 +75,11 @@ func (s *CleaningService) Transform(ctx context.Context, in TransformInput, prog
 	if len(drafts) != draftSet.DraftCount {
 		return nil, fmt.Errorf("RecordDraftSet %s 声明 %d 条草稿，实际读取 %d 条", draftSet.ID, draftSet.DraftCount, len(drafts))
 	}
-	normalizationRules := profile.NormalizationRules
-	if len(in.NormalizationRules) > 0 {
-		normalizationRules = in.NormalizationRules
-	}
 	manifest, err := s.repo.BeginTransformedRecordSet(ctx, &model.TransformedRecordSet{
-		RecordDraftSetID: draftSet.ID, ExtractionProfileID: profile.ID,
-		TargetSchemaID: schema.ID, ProducerNodeRunID: strings.TrimSpace(in.ProducerNodeRunID),
-		ProducerAttempt: in.ProducerAttempt, EngineVersion: TransformEngineVersion,
+		RecordDraftSetID: draftSet.ID, DataContractHash: draftSet.DataContractHash,
+		ExtractionSpecHash: draftSet.ExtractionSpecHash, SchemaHash: draftSet.SchemaHash,
+		ProducerNodeRunID: strings.TrimSpace(in.ProducerNodeRunID),
+		ProducerAttempt:   in.ProducerAttempt, EngineVersion: TransformEngineVersion,
 		DraftCount: len(drafts),
 	})
 	if err != nil {
@@ -108,7 +101,7 @@ func (s *CleaningService) Transform(ctx context.Context, in TransformInput, prog
 		reused := completed[draft.ID]
 		if !reused {
 			fields, changes, issues, transformErr := logic.TransformRecord(
-				schema.JSONSchema, normalizationRules, draft.Fields)
+				draftSet.JSONSchema, extractionSpec.NormalizationRules, draft.Fields)
 			if transformErr != nil {
 				return nil, fmt.Errorf("转换第 %d 条 RecordDraft: %w", ordinal+1, transformErr)
 			}
@@ -134,22 +127,19 @@ type ValidateInput struct {
 	TargetDatasetID        string
 	ProducerNodeRunID      string
 	ProducerAttempt        int
-	ValidationRules        json.RawMessage
 }
 
 type WorkflowValidateInput struct {
-	RecordsID       string
-	DatasetID       string
-	ExecutionID     string
-	Attempt         int
-	ValidationRules json.RawMessage
+	RecordsID   string
+	DatasetID   string
+	ExecutionID string
+	Attempt     int
 }
 
 func (s *CleaningService) ValidateWorkflow(ctx context.Context, input WorkflowValidateInput,
 	progress func(CleaningProgress) error) (*model.ValidationResultSet, error) {
 	return s.Validate(ctx, ValidateInput{TransformedRecordSetID: input.RecordsID, TargetDatasetID: input.DatasetID,
-		ProducerNodeRunID: input.ExecutionID, ProducerAttempt: input.Attempt,
-		ValidationRules: input.ValidationRules}, progress)
+		ProducerNodeRunID: input.ExecutionID, ProducerAttempt: input.Attempt}, progress)
 }
 
 type validationPlan struct {
@@ -168,9 +158,9 @@ func (s *CleaningService) Validate(ctx context.Context, in ValidateInput, progre
 	if transformedSet.Status != model.TransformedRecordSetSucceeded {
 		return nil, fmt.Errorf("TransformedRecordSet %s 状态 %s 不允许校验", transformedSet.ID, transformedSet.Status)
 	}
-	profile, err := s.repo.GetExtractionProfile(ctx, transformedSet.ExtractionProfileID)
+	draftSet, _, err := s.repo.GetRecordDraftSet(ctx, transformedSet.RecordDraftSetID)
 	if err != nil {
-		return nil, fmt.Errorf("读取 ExtractionProfile: %w", err)
+		return nil, fmt.Errorf("读取 RecordDraftSet 合同: %w", err)
 	}
 	dataset, err := s.repo.GetAppendDataset(ctx, strings.TrimSpace(in.TargetDatasetID))
 	if err != nil {
@@ -178,9 +168,6 @@ func (s *CleaningService) Validate(ctx context.Context, in ValidateInput, progre
 	}
 	if dataset.Status != model.DatasetStatusActive {
 		return nil, fmt.Errorf("目标 Dataset %s 当前状态 %s 不允许校验追加", dataset.ID, dataset.Status)
-	}
-	if dataset.SchemaID != transformedSet.TargetSchemaID || profile.TargetSchemaID != dataset.SchemaID {
-		return nil, fmt.Errorf("目标 Dataset Schema 与转换结果的不可变 Schema 不一致")
 	}
 	schema, err := s.repo.GetDatasetSchema(ctx, dataset.SchemaID)
 	if err != nil {
@@ -193,9 +180,18 @@ func (s *CleaningService) Validate(ctx context.Context, in ValidateInput, progre
 	if len(records) != transformedSet.TransformedCount {
 		return nil, fmt.Errorf("TransformedRecordSet %s 记录数量不一致", transformedSet.ID)
 	}
-	validationRules := profile.ValidationRules
-	if len(in.ValidationRules) > 0 {
-		validationRules = in.ValidationRules
+	var contract domain.DataContract
+	if err := json.Unmarshal(draftSet.DataContract, &contract); err != nil {
+		return nil, fmt.Errorf("RecordDraftSet DataContract 非法: %w", err)
+	}
+	if schema.SchemaHash != draftSet.SchemaHash || transformedSet.SchemaHash != draftSet.SchemaHash ||
+		transformedSet.DataContractHash != draftSet.DataContractHash ||
+		transformedSet.ExtractionSpecHash != draftSet.ExtractionSpecHash || !slices.Equal(dataset.KeyFields, contract.KeyFields) {
+		return nil, fmt.Errorf("目标 Dataset 与内联 DataContract 不一致")
+	}
+	var extractionSpec domain.ExtractionSpec
+	if err := json.Unmarshal(draftSet.ExtractionSpec, &extractionSpec); err != nil {
+		return nil, fmt.Errorf("RecordDraftSet ExtractionSpec 非法: %w", err)
 	}
 	manifest, err := s.repo.BeginValidationResultSet(ctx, &model.ValidationResultSet{
 		TransformedRecordSetID: transformedSet.ID, TargetDatasetID: dataset.ID,
@@ -214,7 +210,8 @@ func (s *CleaningService) Validate(ctx context.Context, in ValidateInput, progre
 	keyCounts := make(map[string]int, len(records))
 	keys := make([]string, 0, len(records))
 	for i, record := range records {
-		fields, issues, validateErr := logic.ValidateTransformedRecord(schema.JSONSchema, validationRules, record.Fields)
+		fields, issues, validateErr := logic.ValidateTransformedRecord(schema.JSONSchema,
+			extractionSpec.ValidationRules, record.Fields)
 		if validateErr != nil {
 			return nil, fmt.Errorf("校验第 %d 条 TransformedRecord: %w", i+1, validateErr)
 		}
@@ -299,10 +296,6 @@ func (s *CleaningService) GetValidationResultSet(ctx context.Context, id string)
 	}
 	results, err := s.repo.ListValidationResults(ctx, set.ID)
 	return set, results, err
-}
-
-func (s *CleaningService) GetProfile(ctx context.Context, id string) (*model.ExtractionProfile, error) {
-	return s.repo.GetExtractionProfile(ctx, id)
 }
 
 func hasErrorIssues(issues []model.RecordIssue) bool {

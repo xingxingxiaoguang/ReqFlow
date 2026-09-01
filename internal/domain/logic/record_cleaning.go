@@ -13,7 +13,10 @@ import (
 	"unicode"
 
 	"reqflow/internal/domain/model"
+	domain "reqflow/internal/domain/workflow"
 )
+
+const MaxCleaningRulesJSONBytes = 256 << 10
 
 const (
 	MaxCleaningRules       = 128
@@ -23,62 +26,37 @@ const (
 
 var unitValuePattern = regexp.MustCompile(`^([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*(\S+)$`)
 
-type normalizationRule struct {
-	Field        string             `json:"field"`
-	Operation    string             `json:"operation"`
-	Aliases      map[string]any     `json:"aliases,omitempty"`
-	TrueValues   []string           `json:"true_values,omitempty"`
-	FalseValues  []string           `json:"false_values,omitempty"`
-	Layouts      []string           `json:"layouts,omitempty"`
-	Units        map[string]float64 `json:"units,omitempty"`
-	Separator    string             `json:"separator,omitempty"`
-	SourceFields []string           `json:"source_fields,omitempty"`
-}
-
-type validationRule struct {
-	Field      string   `json:"field"`
-	Operation  string   `json:"operation"`
-	Severity   string   `json:"severity,omitempty"`
-	Message    string   `json:"message,omitempty"`
-	Pattern    string   `json:"pattern,omitempty"`
-	Minimum    *float64 `json:"minimum,omitempty"`
-	Maximum    *float64 `json:"maximum,omitempty"`
-	MinLength  *int     `json:"min_length,omitempty"`
-	MaxLength  *int     `json:"max_length,omitempty"`
-	Values     []any    `json:"values,omitempty"`
-	OtherField string   `json:"other_field,omitempty"`
-	Operator   string   `json:"operator,omitempty"`
-}
-
-// NormalizeCleaningRules 校验受控的转换/校验 DSL，并返回稳定 JSON。规则只能引用
+// NormalizeCleaningRules 校验并规范化 Workflow 的受控转换/校验 DSL。规则只能引用
 // 目标 Schema 顶层字段；不接受表达式、脚本或任意函数名。
-func NormalizeCleaningRules(normalizationRaw, validationRaw, schemaPayload json.RawMessage) (json.RawMessage, json.RawMessage, error) {
+func NormalizeCleaningRules(normalization []domain.NormalizationRule, validation []domain.ValidationRule,
+	schemaPayload json.RawMessage) ([]domain.NormalizationRule, []domain.ValidationRule, error) {
 	properties, err := rootSchemaProperties(schemaPayload)
 	if err != nil {
 		return nil, nil, err
 	}
-	normalization, err := normalizeNormalizationRules(normalizationRaw, properties)
+	normalization, err = normalizeNormalizationRules(normalization, properties)
 	if err != nil {
 		return nil, nil, err
 	}
-	validation, err := normalizeValidationRules(validationRaw, properties)
+	validation, err = normalizeValidationRules(validation, properties)
 	if err != nil {
 		return nil, nil, err
 	}
 	return normalization, validation, nil
 }
 
-func normalizeNormalizationRules(raw json.RawMessage, properties map[string]any) (json.RawMessage, error) {
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return json.RawMessage(`[]`), nil
+func normalizeNormalizationRules(source []domain.NormalizationRule, properties map[string]any) ([]domain.NormalizationRule, error) {
+	if len(source) == 0 {
+		return []domain.NormalizationRule{}, nil
 	}
-	if len(raw) > MaxExtractionProfileJSONBytes {
+	raw, err := json.Marshal(source)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > MaxCleaningRulesJSONBytes {
 		return nil, fmt.Errorf("normalization_rules 超过大小限制")
 	}
-	var rules []normalizationRule
-	if err := decodeStrictSingleJSON(raw, &rules); err != nil {
-		return nil, fmt.Errorf("normalization_rules 必须是受控规则数组: %w", err)
-	}
+	rules := cloneNormalizationRules(source)
 	if len(rules) > MaxCleaningRules {
 		return nil, fmt.Errorf("normalization_rules 最多 %d 条", MaxCleaningRules)
 	}
@@ -86,7 +64,7 @@ func normalizeNormalizationRules(raw json.RawMessage, properties map[string]any)
 	for i := range rules {
 		rule := &rules[i]
 		rule.Field = strings.TrimSpace(rule.Field)
-		rule.Operation = strings.TrimSpace(rule.Operation)
+		rule.Operation = domain.NormalizationOperation(strings.TrimSpace(string(rule.Operation)))
 		node, ok := properties[rule.Field].(map[string]any)
 		if !ok {
 			return nil, fmt.Errorf("normalization_rules 第 %d 条引用了不存在的字段 %s", i+1, rule.Field)
@@ -99,10 +77,45 @@ func normalizeNormalizationRules(raw json.RawMessage, properties map[string]any)
 			return nil, fmt.Errorf("normalization_rules 第 %d 条: %w", i+1, err)
 		}
 	}
-	return json.Marshal(rules)
+	return rules, nil
 }
 
-func validateNormalizationRule(rule *normalizationRule, node map[string]any, properties map[string]any) error {
+func cloneNormalizationRules(source []domain.NormalizationRule) []domain.NormalizationRule {
+	rules := append([]domain.NormalizationRule(nil), source...)
+	for index := range rules {
+		rules[index].Aliases = cloneAnyMap(rules[index].Aliases)
+		rules[index].TrueValues = append([]string(nil), rules[index].TrueValues...)
+		rules[index].FalseValues = append([]string(nil), rules[index].FalseValues...)
+		rules[index].Layouts = append([]string(nil), rules[index].Layouts...)
+		rules[index].Units = cloneFloatMap(rules[index].Units)
+		rules[index].SourceFields = append([]string(nil), rules[index].SourceFields...)
+	}
+	return rules
+}
+
+func cloneAnyMap(source map[string]any) map[string]any {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]any, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func cloneFloatMap(source map[string]float64) map[string]float64 {
+	if source == nil {
+		return nil
+	}
+	result := make(map[string]float64, len(source))
+	for key, value := range source {
+		result[key] = value
+	}
+	return result
+}
+
+func validateNormalizationRule(rule *domain.NormalizationRule, node map[string]any, properties map[string]any) error {
 	typ, _ := node["type"].(string)
 	switch rule.Operation {
 	case "enum_alias":
@@ -226,30 +239,31 @@ func validateNormalizationRule(rule *normalizationRule, node map[string]any, pro
 	return nil
 }
 
-func normalizeValidationRules(raw json.RawMessage, properties map[string]any) (json.RawMessage, error) {
-	if len(bytes.TrimSpace(raw)) == 0 {
-		return json.RawMessage(`[]`), nil
+func normalizeValidationRules(source []domain.ValidationRule, properties map[string]any) ([]domain.ValidationRule, error) {
+	if len(source) == 0 {
+		return []domain.ValidationRule{}, nil
 	}
-	if len(raw) > MaxExtractionProfileJSONBytes {
+	raw, err := json.Marshal(source)
+	if err != nil {
+		return nil, err
+	}
+	if len(raw) > MaxCleaningRulesJSONBytes {
 		return nil, fmt.Errorf("validation_rules 超过大小限制")
 	}
-	var rules []validationRule
-	if err := decodeStrictSingleJSON(raw, &rules); err != nil {
-		return nil, fmt.Errorf("validation_rules 必须是受控规则数组: %w", err)
-	}
+	rules := cloneValidationRules(source)
 	if len(rules) > MaxCleaningRules {
 		return nil, fmt.Errorf("validation_rules 最多 %d 条", MaxCleaningRules)
 	}
 	for i := range rules {
 		rule := &rules[i]
 		rule.Field = strings.TrimSpace(rule.Field)
-		rule.Operation = strings.TrimSpace(rule.Operation)
-		rule.Severity = strings.TrimSpace(rule.Severity)
+		rule.Operation = domain.ValidationOperation(strings.TrimSpace(string(rule.Operation)))
+		rule.Severity = domain.IssueSeverity(strings.TrimSpace(string(rule.Severity)))
 		rule.Message = strings.TrimSpace(rule.Message)
 		if rule.Severity == "" {
-			rule.Severity = model.RecordIssueError
+			rule.Severity = domain.SeverityError
 		}
-		if rule.Severity != model.RecordIssueError && rule.Severity != model.RecordIssueWarning {
+		if rule.Severity != domain.SeverityError && rule.Severity != domain.SeverityWarning {
 			return nil, fmt.Errorf("validation_rules 第 %d 条 severity 只能是 error/warning", i+1)
 		}
 		if len(rule.Message) > MaxCleaningRuleMessage {
@@ -263,10 +277,18 @@ func normalizeValidationRules(raw json.RawMessage, properties map[string]any) (j
 			return nil, fmt.Errorf("validation_rules 第 %d 条: %w", i+1, err)
 		}
 	}
-	return json.Marshal(rules)
+	return rules, nil
 }
 
-func validateValidationRule(rule *validationRule, node map[string]any, properties map[string]any) error {
+func cloneValidationRules(source []domain.ValidationRule) []domain.ValidationRule {
+	rules := append([]domain.ValidationRule(nil), source...)
+	for index := range rules {
+		rules[index].Values = append([]any(nil), rules[index].Values...)
+	}
+	return rules
+}
+
+func validateValidationRule(rule *domain.ValidationRule, node map[string]any, properties map[string]any) error {
 	typ, _ := node["type"].(string)
 	switch rule.Operation {
 	case "required":
@@ -349,7 +371,7 @@ func validateValidationRule(rule *validationRule, node map[string]any, propertie
 	return nil
 }
 
-func rejectUnusedNormalizationParams(rule *normalizationRule, allowed ...string) error {
+func rejectUnusedNormalizationParams(rule *domain.NormalizationRule, allowed ...string) error {
 	allow := make(map[string]bool, len(allowed))
 	for _, name := range allowed {
 		allow[name] = true
@@ -368,7 +390,7 @@ func rejectUnusedNormalizationParams(rule *normalizationRule, allowed ...string)
 	return nil
 }
 
-func rejectUnusedValidationParams(rule *validationRule, allowed ...string) error {
+func rejectUnusedValidationParams(rule *domain.ValidationRule, allowed ...string) error {
 	allow := make(map[string]bool, len(allowed))
 	for _, name := range allowed {
 		allow[name] = true
@@ -388,17 +410,14 @@ func rejectUnusedValidationParams(rule *validationRule, allowed ...string) error
 
 // TransformRecord 对一条 LLM 草稿执行确定性转换。字段转换失败会作为 issue 返回，
 // 原值仍被保留，供 data.validate 和人工审核处理；只有合同或 JSON 损坏才返回 error。
-func TransformRecord(schemaPayload, rulesRaw, fieldsRaw json.RawMessage) (json.RawMessage, []model.RecordChange, []model.RecordIssue, error) {
+func TransformRecord(schemaPayload json.RawMessage, sourceRules []domain.NormalizationRule,
+	fieldsRaw json.RawMessage) (json.RawMessage, []model.RecordChange, []model.RecordIssue, error) {
 	properties, err := rootSchemaProperties(schemaPayload)
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	normalizedRules, err := normalizeNormalizationRules(rulesRaw, properties)
+	rules, err := normalizeNormalizationRules(sourceRules, properties)
 	if err != nil {
-		return nil, nil, nil, err
-	}
-	var rules []normalizationRule
-	if err := decodeStrictSingleJSON(normalizedRules, &rules); err != nil {
 		return nil, nil, nil, err
 	}
 	var fields map[string]any
@@ -407,7 +426,7 @@ func TransformRecord(schemaPayload, rulesRaw, fieldsRaw json.RawMessage) (json.R
 	}
 	original := cloneJSONObject(fields)
 	fields = normalizeLooseValue(fields).(map[string]any)
-	ruleByField := make(map[string]normalizationRule, len(rules))
+	ruleByField := make(map[string]domain.NormalizationRule, len(rules))
 	for _, rule := range rules {
 		ruleByField[rule.Field] = rule
 	}
@@ -462,12 +481,13 @@ func TransformRecord(schemaPayload, rulesRaw, fieldsRaw json.RawMessage) (json.R
 
 // ValidateTransformedRecord 执行 JSON Schema 和声明式业务规则校验。Schema 校验
 // 失败时仍返回原字段，确保无效记录可以进入审核区而不是从管线中消失。
-func ValidateTransformedRecord(schemaPayload, rulesRaw, fieldsRaw json.RawMessage) (json.RawMessage, []model.RecordIssue, error) {
+func ValidateTransformedRecord(schemaPayload json.RawMessage, sourceRules []domain.ValidationRule,
+	fieldsRaw json.RawMessage) (json.RawMessage, []model.RecordIssue, error) {
 	properties, err := rootSchemaProperties(schemaPayload)
 	if err != nil {
 		return nil, nil, err
 	}
-	normalizedRules, err := normalizeValidationRules(rulesRaw, properties)
+	rules, err := normalizeValidationRules(sourceRules, properties)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -482,10 +502,6 @@ func ValidateTransformedRecord(schemaPayload, rulesRaw, fieldsRaw json.RawMessag
 		issues = append(issues, model.RecordIssue{Code: "schema_invalid", Field: fieldFromValidationMessage(schemaErr.Error()),
 			Severity: model.RecordIssueError, Message: schemaErr.Error()})
 	}
-	var rules []validationRule
-	if err := decodeStrictSingleJSON(normalizedRules, &rules); err != nil {
-		return nil, nil, err
-	}
 	for _, rule := range rules {
 		if issue := evaluateValidationRule(rule, fields); issue != nil {
 			issues = append(issues, *issue)
@@ -494,7 +510,7 @@ func ValidateTransformedRecord(schemaPayload, rulesRaw, fieldsRaw json.RawMessag
 	return canonical, issues, nil
 }
 
-func applyNormalizationRule(rule normalizationRule, node map[string]any, value any) (any, *model.RecordIssue) {
+func applyNormalizationRule(rule domain.NormalizationRule, node map[string]any, value any) (any, *model.RecordIssue) {
 	fail := func(code, message string) (any, *model.RecordIssue) {
 		return value, &model.RecordIssue{Code: code, Field: rule.Field, Severity: model.RecordIssueError, Message: message}
 	}
@@ -655,14 +671,14 @@ func coerceValueForSchema(schema map[string]any, value any, path string) (any, [
 	}
 }
 
-func evaluateValidationRule(rule validationRule, fields map[string]any) *model.RecordIssue {
+func evaluateValidationRule(rule domain.ValidationRule, fields map[string]any) *model.RecordIssue {
 	value, exists := fields[rule.Field]
 	message := rule.Message
 	issue := func(code, fallback string) *model.RecordIssue {
 		if message == "" {
 			message = fallback
 		}
-		return &model.RecordIssue{Code: code, Field: rule.Field, Severity: rule.Severity, Message: message}
+		return &model.RecordIssue{Code: code, Field: rule.Field, Severity: string(rule.Severity), Message: message}
 	}
 	if rule.Operation == "required" {
 		if !exists || isEmptyRecordValue(value) {
@@ -820,7 +836,7 @@ func sortedAnyMapKeys(values map[string]any) []string {
 	return keys
 }
 
-func diffTopLevelFields(before, after map[string]any, rules map[string]normalizationRule) []model.RecordChange {
+func diffTopLevelFields(before, after map[string]any, rules map[string]domain.NormalizationRule) []model.RecordChange {
 	keys := make(map[string]bool, len(before)+len(after))
 	for key := range before {
 		keys[key] = true
@@ -842,7 +858,7 @@ func diffTopLevelFields(before, after map[string]any, rules map[string]normaliza
 		}
 		operation := "schema_coerce"
 		if rule, ok := rules[field]; ok {
-			operation = rule.Operation
+			operation = string(rule.Operation)
 		}
 		changes = append(changes, model.RecordChange{Field: field, Operation: operation,
 			Before: oldRaw, After: newRaw})

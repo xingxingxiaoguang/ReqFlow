@@ -10,20 +10,21 @@ import (
 )
 
 type TransformedRecordSetView struct {
-	ID                  string                  `json:"id"`
-	RecordDraftSetID    string                  `json:"record_draft_set_id"`
-	ExtractionProfileID string                  `json:"extraction_profile_id"`
-	TargetSchemaID      string                  `json:"target_schema_id"`
-	ProducerNodeRunID   string                  `json:"producer_node_run_id"`
-	Status              string                  `json:"status"`
-	EngineVersion       string                  `json:"engine_version"`
-	DraftCount          int                     `json:"draft_count"`
-	TransformedCount    int                     `json:"transformed_count"`
-	ChangedRecordCount  int                     `json:"changed_record_count"`
-	IssueCount          int                     `json:"issue_count"`
-	CreatedAt           time.Time               `json:"created_at"`
-	FinishedAt          time.Time               `json:"finished_at,omitempty"`
-	Records             []TransformedRecordView `json:"records"`
+	ID                 string                  `json:"id"`
+	RecordDraftSetID   string                  `json:"record_draft_set_id"`
+	DataContractHash   string                  `json:"data_contract_hash"`
+	ExtractionSpecHash string                  `json:"extraction_spec_hash"`
+	SchemaHash         string                  `json:"schema_hash"`
+	ProducerNodeRunID  string                  `json:"producer_node_run_id"`
+	Status             string                  `json:"status"`
+	EngineVersion      string                  `json:"engine_version"`
+	DraftCount         int                     `json:"draft_count"`
+	TransformedCount   int                     `json:"transformed_count"`
+	ChangedRecordCount int                     `json:"changed_record_count"`
+	IssueCount         int                     `json:"issue_count"`
+	CreatedAt          time.Time               `json:"created_at"`
+	FinishedAt         time.Time               `json:"finished_at,omitempty"`
+	Records            []TransformedRecordView `json:"records"`
 }
 
 type TransformedRecordView struct {
@@ -42,7 +43,8 @@ func (s *CleaningService) TransformedRecordSetView(ctx context.Context, id strin
 		return nil, err
 	}
 	view := &TransformedRecordSetView{ID: set.ID, RecordDraftSetID: set.RecordDraftSetID,
-		ExtractionProfileID: set.ExtractionProfileID, TargetSchemaID: set.TargetSchemaID,
+		DataContractHash: set.DataContractHash, ExtractionSpecHash: set.ExtractionSpecHash,
+		SchemaHash:        set.SchemaHash,
 		ProducerNodeRunID: set.ProducerNodeRunID, Status: set.Status, EngineVersion: set.EngineVersion,
 		DraftCount: set.DraftCount, TransformedCount: set.TransformedCount,
 		ChangedRecordCount: set.ChangedRecordCount, IssueCount: set.IssueCount,

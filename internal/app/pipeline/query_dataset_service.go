@@ -206,8 +206,8 @@ func (s *QueryDatasetService) Derive(ctx context.Context, in DeriveQueryDatasetI
 		return nil, fmt.Errorf("读取 PipelineCursor: %w", err)
 	}
 	if cursor.ProcessedThroughSeq >= in.SourceThroughSeq {
-		// Batch 已提交但 Worker 在保存 progress/完成 Step 前失去 lease 时，同一 Task
-		// 的新 attempt 必须复用原 Batch；其他无增量或旧边界任务不创建 staging Batch。
+		// Batch 已提交但 Worker 在保存 progress/完成 NodeRun 前失去 lease 时，同一 WorkflowRun
+		// 的新 attempt 必须复用原 Batch；其他无增量或旧边界运行不创建 staging Batch。
 		if cursor.LastSuccessRunID == strings.TrimSpace(in.ProducerWorkflowRunID) {
 			batch, batchErr := s.datasets.GetOrCreateBatch(ctx, CreateBatchInput{DatasetID: target.ID,
 				ProducerWorkflowRunID: strings.TrimSpace(in.ProducerWorkflowRunID), ProducerNodeRunID: in.ProducerNodeRunID}, in.ProducerAttempt)
@@ -215,12 +215,12 @@ func (s *QueryDatasetService) Derive(ctx context.Context, in DeriveQueryDatasetI
 				return nil, batchErr
 			}
 			if batch.Status != model.DatasetBatchCommitted {
-				return nil, fmt.Errorf("Cursor 已推进但同 Task Query Batch 未提交")
+				return nil, fmt.Errorf("Cursor 已推进但同 WorkflowRun Query Batch 未提交")
 			}
 			return &QueryDatasetDerivation{Batch: batch, Cursor: cursor, QueryItemCount: batch.ItemCount}, nil
 		}
 		if cursor.ProcessedThroughSeq > in.SourceThroughSeq {
-			return nil, fmt.Errorf("%w: Cursor=%d TaskBoundary=%d", ErrStaleQueryDatasetBoundary,
+			return nil, fmt.Errorf("%w: Cursor=%d RunBoundary=%d", ErrStaleQueryDatasetBoundary,
 				cursor.ProcessedThroughSeq, in.SourceThroughSeq)
 		}
 		return nil, fmt.Errorf("%w: through_seq=%d", ErrNoQueryDatasetIncrement, in.SourceThroughSeq)

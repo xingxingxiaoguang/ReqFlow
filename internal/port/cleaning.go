@@ -30,7 +30,6 @@ type RecordValidationRepo interface {
 }
 
 type CleaningPipelineRepo interface {
-	ExtractionProfileRepo
 	RecordDraftRepo
 	DatasetPipelineRepo
 	RecordTransformRepo

@@ -174,6 +174,11 @@ func main() {
 		logger.Error("source.parse 初始化失败", "err", err)
 		os.Exit(1)
 	}
+	documentExtract, err := appextraction.NewWorkflowDocumentExtractExecutor(extractions)
+	if err != nil {
+		logger.Error("document.extract 初始化失败", "err", err)
+		os.Exit(1)
+	}
 	transform, err := pipeline.NewWorkflowDataTransformExecutor(cleaning)
 	if err != nil {
 		logger.Error("data.transform 初始化失败", "err", err)
@@ -189,6 +194,21 @@ func main() {
 		logger.Error("data.publish 初始化失败", "err", err)
 		os.Exit(1)
 	}
+	retrievalBuild, err := appretrieval.NewWorkflowBuildExecutor(retrieval)
+	if err != nil {
+		logger.Error("retrieval.build 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	knowledgeAnalyze, err := appanalysis.NewWorkflowKnowledgeAnalyzeExecutor(analysis)
+	if err != nil {
+		logger.Error("knowledge.analyze 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	artifactRender, err := appanalysis.NewWorkflowArtifactRenderExecutor(analysis, artifacts)
+	if err != nil {
+		logger.Error("artifact.render 初始化失败", "err", err)
+		os.Exit(1)
+	}
 	humanReview, err := appworkflow.NewManualExecutor(domain.CapabilityRef{Kind: "human.review_records", Version: 1}, "人工审核记录")
 	if err != nil {
 		logger.Error("人工审核 Executor 初始化失败", "err", err)
@@ -199,7 +219,8 @@ func main() {
 		logger.Error("人工分析 Executor 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	registry, err := appworkflow.NewNodeExecutorRegistry(sourceParse, transform, validate, dataPublish, humanReview, humanAnalysis)
+	registry, err := appworkflow.NewNodeExecutorRegistry(sourceParse, documentExtract, transform, validate,
+		dataPublish, retrievalBuild, knowledgeAnalyze, artifactRender, humanReview, humanAnalysis)
 	if err != nil {
 		logger.Error("Workflow Executor Registry 初始化失败", "err", err)
 		os.Exit(1)

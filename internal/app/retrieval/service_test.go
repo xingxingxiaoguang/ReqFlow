@@ -11,6 +11,7 @@ import (
 
 	"reqflow/internal/app/agent"
 	"reqflow/internal/domain/model"
+	domain "reqflow/internal/domain/workflow"
 	"reqflow/internal/port"
 )
 
@@ -20,7 +21,7 @@ func TestBuildSnapshotIncrementalAndCoverageGate(t *testing.T) {
 	schema := retrievalTestSchema()
 	repo.schemas[schema.ID] = &schema
 	dataset := &model.Dataset{ID: "dataset-1", WorkspaceID: "default", SchemaID: schema.ID,
-		Status: model.DatasetStatusActive, CurrentSeq: 2}
+		KeyFields: []string{"title"}, Status: model.DatasetStatusActive, CurrentSeq: 2}
 	repo.datasets[dataset.ID] = dataset
 	repo.items[dataset.ID] = []model.DatasetItem{
 		retrievalTestItem("item-1", dataset.ID, 1, "Apple shutdown", "high temperature"),
@@ -33,12 +34,10 @@ func TestBuildSnapshotIncrementalAndCoverageGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	profile, err := service.CreateProfile(ctx, retrievalTestProfileInput(schema.ID))
-	if err != nil {
-		t.Fatal(err)
-	}
+	dataContract, searchSpec := retrievalTestContracts()
 	first, err := service.BuildSnapshot(ctx, BuildInput{DatasetID: dataset.ID,
-		RetrievalProfileID: profile.ID, SourceSeq: 2, ProducerNodeRunID: "node-1", ProducerAttempt: 1}, nil)
+		DataContract: dataContract, SearchSpec: searchSpec, SourceSeq: 2,
+		ProducerNodeRunID: "node-1", ProducerAttempt: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +53,8 @@ func TestBuildSnapshotIncrementalAndCoverageGate(t *testing.T) {
 		retrievalTestItem("item-3", dataset.ID, 3, "Cherry thermal", "automatic shutdown"))
 	lexical.builtDocuments = 0
 	second, err := service.BuildSnapshot(ctx, BuildInput{DatasetID: dataset.ID,
-		RetrievalProfileID: profile.ID, SourceSeq: 3, ProducerNodeRunID: "node-2", ProducerAttempt: 1}, nil)
+		DataContract: dataContract, SearchSpec: searchSpec, SourceSeq: 3,
+		ProducerNodeRunID: "node-2", ProducerAttempt: 1}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -70,7 +70,8 @@ func TestBuildSnapshotIncrementalAndCoverageGate(t *testing.T) {
 	repo.items[dataset.ID] = append(repo.items[dataset.ID],
 		retrievalTestItem("item-4", dataset.ID, 4, "Date sensor", "sensor failure"))
 	failed, err := service.BuildSnapshot(ctx, BuildInput{DatasetID: dataset.ID,
-		RetrievalProfileID: profile.ID, SourceSeq: 4, ProducerNodeRunID: "node-3", ProducerAttempt: 1}, nil)
+		DataContract: dataContract, SearchSpec: searchSpec, SourceSeq: 4,
+		ProducerNodeRunID: "node-3", ProducerAttempt: 1}, nil)
 	if err == nil || !strings.Contains(err.Error(), "覆盖不完整") {
 		t.Fatalf("覆盖不完整应失败，got snapshot=%+v err=%v", failed, err)
 	}
@@ -86,7 +87,7 @@ func TestSearchRuntimeStrategyAndRerank(t *testing.T) {
 	schema := retrievalTestSchema()
 	repo.schemas[schema.ID] = &schema
 	dataset := &model.Dataset{ID: "dataset-search", WorkspaceID: "default", SchemaID: schema.ID,
-		Status: model.DatasetStatusActive, CurrentSeq: 2}
+		KeyFields: []string{"title"}, Status: model.DatasetStatusActive, CurrentSeq: 2}
 	repo.datasets[dataset.ID] = dataset
 	repo.items[dataset.ID] = []model.DatasetItem{
 		retrievalTestItem("item-a", dataset.ID, 1, "Apple", "thermal shutdown"),
@@ -100,12 +101,14 @@ func TestSearchRuntimeStrategyAndRerank(t *testing.T) {
 	reranker := &fakeReranker{available: true, results: []port.RerankResult{{Index: 1, Score: .95}, {Index: 0, Score: .4}}}
 	service, _ := NewService(repo, lexical, fakeRetrievalEmbedder{available: true}, reranker,
 		Options{EmbeddingModel: "BAAI/bge-m3"})
-	profile, err := service.CreateProfile(ctx, retrievalTestProfileInput(schema.ID))
+	_, searchSpec := retrievalTestContracts()
+	contract, err := compileSearchContract(searchSpec)
 	if err != nil {
 		t.Fatal(err)
 	}
 	snapshot := &model.RetrievalSnapshot{ID: "snapshot-search", DatasetID: dataset.ID,
-		RetrievalProfileID: profile.ID, SourceSeq: 2, Status: model.RetrievalSnapshotActive,
+		SearchSpec: contract.Raw, SearchSpecHash: contract.Hash, EmbeddingModel: "BAAI/bge-m3",
+		SourceSeq: 2, Status: model.RetrievalSnapshotActive,
 		LexicalRef: "index-search"}
 	repo.snapshots[snapshot.ID] = snapshot
 
@@ -198,15 +201,17 @@ func TestKnowledgeToolsEnforceLogicalScopeAndAudit(t *testing.T) {
 	schema := retrievalTestSchema()
 	repo.schemas[schema.ID] = &schema
 	dataset := &model.Dataset{ID: "dataset-scope", WorkspaceID: "default", SchemaID: schema.ID,
-		Status: model.DatasetStatusActive, CurrentSeq: 1}
+		KeyFields: []string{"title"}, Status: model.DatasetStatusActive, CurrentSeq: 1}
 	repo.datasets[dataset.ID] = dataset
 	repo.items[dataset.ID] = []model.DatasetItem{retrievalTestItem("item-scope", dataset.ID, 1, "Scoped", "knowledge")}
 	lexical := newFakeLexical()
 	service, _ := NewService(repo, lexical, fakeRetrievalEmbedder{available: true},
 		&fakeReranker{available: true}, Options{EmbeddingModel: "BAAI/bge-m3"})
-	profile, _ := service.CreateProfile(ctx, retrievalTestProfileInput(schema.ID))
+	_, searchSpec := retrievalTestContracts()
+	contract, _ := compileSearchContract(searchSpec)
 	snapshot := &model.RetrievalSnapshot{ID: "snapshot-scope", DatasetID: dataset.ID,
-		RetrievalProfileID: profile.ID, SourceSeq: 1, Status: model.RetrievalSnapshotActive,
+		SearchSpec: contract.Raw, SearchSpecHash: contract.Hash, EmbeddingModel: "BAAI/bge-m3",
+		SourceSeq: 1, Status: model.RetrievalSnapshotActive,
 		LexicalRef: "index-scope"}
 	repo.snapshots[snapshot.ID] = snapshot
 	tools, err := service.BuildKnowledgeTools(ctx, KnowledgeScope{ID: "task-scope", WorkspaceID: "default",
@@ -236,20 +241,24 @@ func TestKnowledgeToolsEnforceLogicalScopeAndAudit(t *testing.T) {
 }
 
 func retrievalTestSchema() model.DatasetSchemaDefinition {
-	return model.DatasetSchemaDefinition{ID: "schema-retrieval", WorkspaceID: "default", SchemaHash: "schema-hash",
-		JSONSchema: json.RawMessage(`{"type":"object","properties":{
-			"title":{"type":"string"},"aliases":{"type":"array","items":{"type":"string"}},
-			"definition":{"type":"string"},"product_family":{"type":"string"}
-		},"required":["title","definition"],"additionalProperties":false}`)}
+	contract, _ := retrievalTestContracts()
+	schema, hash, _ := domain.CompileDataContract(contract)
+	return model.DatasetSchemaDefinition{ID: "schema-retrieval", WorkspaceID: "default",
+		SchemaHash: hash, JSONSchema: schema}
 }
 
-func retrievalTestProfileInput(schemaID string) CreateProfileInput {
-	return CreateProfileInput{WorkspaceID: "default", Name: "default", DatasetSchemaID: schemaID,
-		Lexical: model.LexicalConfig{Fields: map[string]float64{"title": 3, "aliases": 2, "definition": 1}, Analyzer: "standard"},
-		Vector: model.VectorConfig{Fields: []string{"title", "definition"}, ChunkSize: 100,
-			ChunkOverlap: 20, EmbeddingModel: "platform_default"},
-		FilterFields: []string{"product_family"},
-		Fusion:       model.FusionConfig{Method: "rrf", RankConstant: 60, LexicalCandidates: 10, VectorCandidates: 10}}
+func retrievalTestContracts() (domain.DataContract, domain.SearchSpec) {
+	return domain.DataContract{RecordGranularity: "每个产品一条", KeyFields: []string{"title"},
+		Fields: []domain.FieldContract{
+			{Key: "title", Type: domain.FieldString, Required: true},
+			{Key: "aliases", Type: domain.FieldArray, Items: &domain.FieldContract{Key: "item", Type: domain.FieldString}},
+			{Key: "definition", Type: domain.FieldString, Required: true},
+			{Key: "product_family", Type: domain.FieldString},
+		}}, domain.SearchSpec{Preset: domain.SearchBalanced,
+		LexicalFields: []domain.WeightedField{{Field: "title", Weight: 3}, {Field: "aliases", Weight: 2},
+			{Field: "definition", Weight: 1}}, VectorFields: []string{"title", "definition"},
+		FilterFields: []string{"product_family"}, ChunkSize: 100, ChunkOverlap: 20,
+		LexicalCandidates: 10, VectorCandidates: 10}
 }
 
 func retrievalTestItem(id, datasetID string, seq int64, title, definition string) model.DatasetItem {
@@ -322,7 +331,6 @@ type retrievalMemoryRepo struct {
 	next       int
 	schemas    map[string]*model.DatasetSchemaDefinition
 	datasets   map[string]*model.Dataset
-	profiles   map[string]*model.RetrievalProfile
 	snapshots  map[string]*model.RetrievalSnapshot
 	items      map[string][]model.DatasetItem
 	chunks     map[string]model.RetrievalChunk
@@ -332,7 +340,7 @@ type retrievalMemoryRepo struct {
 
 func newRetrievalMemoryRepo() *retrievalMemoryRepo {
 	return &retrievalMemoryRepo{schemas: map[string]*model.DatasetSchemaDefinition{},
-		datasets: map[string]*model.Dataset{}, profiles: map[string]*model.RetrievalProfile{},
+		datasets:  map[string]*model.Dataset{},
 		snapshots: map[string]*model.RetrievalSnapshot{}, items: map[string][]model.DatasetItem{},
 		chunks: map[string]model.RetrievalChunk{}}
 }
@@ -368,32 +376,6 @@ func (r *retrievalMemoryRepo) ListDatasetItemsAfter(_ context.Context, datasetID
 	}
 	return out, nil
 }
-func (r *retrievalMemoryRepo) CreateRetrievalProfile(_ context.Context, profile *model.RetrievalProfile) error {
-	profile.ID = r.id("profile")
-	clone := *profile
-	r.profiles[profile.ID] = &clone
-	return nil
-}
-func (r *retrievalMemoryRepo) GetRetrievalProfile(_ context.Context, id string) (*model.RetrievalProfile, error) {
-	value, ok := r.profiles[id]
-	if !ok {
-		return nil, errors.New("not found")
-	}
-	clone := *value
-	return &clone, nil
-}
-func (r *retrievalMemoryRepo) ListRetrievalProfiles(_ context.Context, workspaceID, schemaID string, limit int) ([]model.RetrievalProfile, error) {
-	var out []model.RetrievalProfile
-	for _, value := range r.profiles {
-		if value.WorkspaceID == workspaceID && (schemaID == "" || value.DatasetSchemaID == schemaID) {
-			out = append(out, *value)
-			if len(out) == limit {
-				break
-			}
-		}
-	}
-	return out, nil
-}
 func (r *retrievalMemoryRepo) GetOrCreateRetrievalSnapshotForNode(_ context.Context, snapshot *model.RetrievalSnapshot, _ int) (*model.RetrievalSnapshot, error) {
 	if existing := r.snapshotByNode(snapshot.ProducerNodeRunID); existing != nil {
 		clone := *existing
@@ -416,10 +398,10 @@ func (r *retrievalMemoryRepo) GetRetrievalSnapshot(_ context.Context, id string)
 	clone := *value
 	return &clone, nil
 }
-func (r *retrievalMemoryRepo) ListRetrievalSnapshots(_ context.Context, datasetID, profileID, status string, limit int) ([]model.RetrievalSnapshot, error) {
+func (r *retrievalMemoryRepo) ListRetrievalSnapshots(_ context.Context, datasetID, searchSpecHash, status string, limit int) ([]model.RetrievalSnapshot, error) {
 	var out []model.RetrievalSnapshot
 	for _, value := range r.snapshots {
-		if value.DatasetID == datasetID && (profileID == "" || value.RetrievalProfileID == profileID) && (status == "" || value.Status == status) {
+		if value.DatasetID == datasetID && (searchSpecHash == "" || value.SearchSpecHash == searchSpecHash) && (status == "" || value.Status == status) {
 			out = append(out, *value)
 			if len(out) == limit {
 				break
@@ -428,10 +410,10 @@ func (r *retrievalMemoryRepo) ListRetrievalSnapshots(_ context.Context, datasetI
 	}
 	return out, nil
 }
-func (r *retrievalMemoryRepo) GetLatestActiveRetrievalSnapshot(_ context.Context, datasetID, profileID string, throughSeq int64) (*model.RetrievalSnapshot, error) {
+func (r *retrievalMemoryRepo) GetLatestActiveRetrievalSnapshot(_ context.Context, datasetID, searchSpecHash string, throughSeq int64) (*model.RetrievalSnapshot, error) {
 	var found *model.RetrievalSnapshot
 	for _, value := range r.snapshots {
-		if value.DatasetID == datasetID && value.RetrievalProfileID == profileID && value.Status == model.RetrievalSnapshotActive && value.SourceSeq <= throughSeq && (found == nil || value.SourceSeq > found.SourceSeq) {
+		if value.DatasetID == datasetID && value.SearchSpecHash == searchSpecHash && value.Status == model.RetrievalSnapshotActive && value.SourceSeq <= throughSeq && (found == nil || value.SourceSeq > found.SourceSeq) {
 			clone := *value
 			found = &clone
 		}
@@ -454,16 +436,16 @@ func (r *retrievalMemoryRepo) ActivateRetrievalSnapshotForNode(_ context.Context
 }
 func (r *retrievalMemoryRepo) UpsertRetrievalChunks(_ context.Context, chunks []model.RetrievalChunk) error {
 	for _, chunk := range chunks {
-		key := fmt.Sprintf("%s:%s:%d", chunk.DatasetItemID, chunk.RetrievalProfileID, chunk.ChunkNo)
+		key := fmt.Sprintf("%s:%s:%d", chunk.DatasetItemID, chunk.SearchSpecHash, chunk.ChunkNo)
 		r.chunks[key] = chunk
 	}
 	return nil
 }
-func (r *retrievalMemoryRepo) CountRetrievalChunks(_ context.Context, datasetID, profileID string, sourceSeq int64) (int, int, error) {
+func (r *retrievalMemoryRepo) CountRetrievalChunks(_ context.Context, datasetID, searchSpecHash string, sourceSeq int64) (int, int, error) {
 	items := map[string]bool{}
 	count := 0
 	for _, chunk := range r.chunks {
-		if chunk.DatasetID == datasetID && chunk.RetrievalProfileID == profileID && chunk.SourceSeq <= sourceSeq {
+		if chunk.DatasetID == datasetID && chunk.SearchSpecHash == searchSpecHash && chunk.SourceSeq <= sourceSeq {
 			count++
 			items[chunk.DatasetItemID] = true
 		}

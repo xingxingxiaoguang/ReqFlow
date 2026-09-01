@@ -103,6 +103,7 @@ func TestIntegrationFreshMigration(t *testing.T) {
 		WHERE table_schema = 'public' AND table_name IN
 		('projects', 'work_items', 'import_records', 'task_steps', 'task_items',
 		 'task_definitions', 'tasks', 'step_runs', 'task_resource_bindings', 'step_resource_bindings',
+		 'extraction_profiles', 'retrieval_profiles', 'analysis_profiles',
 		 'agent_sessions', 'agent_skills', 'agent_tool_settings',
 		 'metadata_registry', 'metadata_audit',
 		 'archived_tasks', 'archived_datasets', 'archived_dataset_items')`).Scan(&legacyTables).Error; err != nil {

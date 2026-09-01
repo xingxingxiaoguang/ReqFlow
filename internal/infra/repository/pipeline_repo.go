@@ -183,7 +183,7 @@ type batchCommitFinalizer func(tx *gorm.DB, batch *pipelineBatchRow, alreadyComm
 
 func (r *PipelineRepo) CommitQueryDatasetBatchForNode(ctx context.Context, batchID, producerNodeRunID string,
 	producerAttempt int, payloadHash string, items []model.DatasetItem, cursorID string,
-	expectedThroughSeq, advanceThroughSeq int64, lastSuccessTaskID string) (*model.DatasetBatch, *model.PipelineCursor, error) {
+	expectedThroughSeq, advanceThroughSeq int64, lastSuccessRunID string) (*model.DatasetBatch, *model.PipelineCursor, error) {
 	if advanceThroughSeq <= expectedThroughSeq {
 		return nil, nil, fmt.Errorf("Cursor 新位点必须大于原位点")
 	}
@@ -194,7 +194,7 @@ func (r *PipelineRepo) CommitQueryDatasetBatchForNode(ctx context.Context, batch
 		}
 		return assertActiveNodeProducer(tx, producerNodeRunID, producerAttempt)
 	}, pipelineCursorCommitFinalizer(cursorID, expectedThroughSeq, advanceThroughSeq,
-		lastSuccessTaskID, &committedCursor))
+		lastSuccessRunID, &committedCursor))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -202,7 +202,7 @@ func (r *PipelineRepo) CommitQueryDatasetBatchForNode(ctx context.Context, batch
 }
 
 func pipelineCursorCommitFinalizer(cursorID string, expectedThroughSeq, advanceThroughSeq int64,
-	lastSuccessTaskID string, committedCursor **model.PipelineCursor) batchCommitFinalizer {
+	lastSuccessRunID string, committedCursor **model.PipelineCursor) batchCommitFinalizer {
 	return func(tx *gorm.DB, _ *pipelineBatchRow, alreadyCommitted bool) error {
 		var cursor pipelineCursorRow
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", cursorID).First(&cursor).Error; err != nil {
@@ -224,7 +224,7 @@ func pipelineCursorCommitFinalizer(cursorID string, expectedThroughSeq, advanceT
 		result := tx.Model(&pipelineCursorRow{}).Where("id = ? AND processed_through_seq = ?",
 			cursor.ID, expectedThroughSeq).Updates(map[string]any{
 			"processed_through_seq": advanceThroughSeq,
-			"last_success_run_id":   nullableUUID(lastSuccessTaskID),
+			"last_success_run_id":   nullableUUID(lastSuccessRunID),
 			"updated_at":            now,
 		})
 		if result.Error != nil {
@@ -234,7 +234,7 @@ func pipelineCursorCommitFinalizer(cursorID string, expectedThroughSeq, advanceT
 			return port.ErrPipelineCursorConflict
 		}
 		cursor.ProcessedThroughSeq = advanceThroughSeq
-		cursor.LastSuccessRunID = strPtr(lastSuccessTaskID)
+		cursor.LastSuccessRunID = strPtr(lastSuccessRunID)
 		cursor.UpdatedAt = now
 		*committedCursor = cursor.toModel()
 		return nil

@@ -169,28 +169,18 @@ CREATE TABLE parsed_document_set_items (
     UNIQUE (parsed_document_set_id, ordinal)
 );
 
-/* ---- 抽取（Profile 驱动的 Agent 草稿） ---- */
-
-CREATE TABLE extraction_profiles (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id        TEXT NOT NULL DEFAULT 'default',
-    name                TEXT NOT NULL,
-    target_schema_id    UUID NOT NULL REFERENCES dataset_schemas (id),
-    record_granularity  TEXT NOT NULL,
-    system_instruction  TEXT NOT NULL,
-    field_guides        JSONB NOT NULL DEFAULT '{}'::jsonb,
-    examples            JSONB NOT NULL DEFAULT '[]'::jsonb,
-    normalization_rules JSONB NOT NULL DEFAULT '[]'::jsonb,
-    validation_rules    JSONB NOT NULL DEFAULT '[]'::jsonb,
-    profile_hash        TEXT NOT NULL,
-    created_at          TIMESTAMPTZ NOT NULL DEFAULT now()
-);
+/* ---- 抽取（内联合同驱动的 Agent 草稿） ---- */
 
 CREATE TABLE record_draft_sets (
     id                     UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     parsed_document_set_id UUID NOT NULL REFERENCES parsed_document_sets (id),
-    extraction_profile_id  UUID NOT NULL REFERENCES extraction_profiles (id),
-    producer_node_run_id     UUID NOT NULL,
+    data_contract          JSONB NOT NULL,
+    data_contract_hash     TEXT NOT NULL CHECK (data_contract_hash <> ''),
+    extraction_spec        JSONB NOT NULL,
+    extraction_spec_hash   TEXT NOT NULL CHECK (extraction_spec_hash <> ''),
+    json_schema            JSONB NOT NULL,
+    schema_hash            TEXT NOT NULL CHECK (schema_hash <> ''),
+    producer_node_run_id   UUID NOT NULL,
     status                 TEXT NOT NULL DEFAULT 'running',
     producer_attempt       INT NOT NULL CHECK (producer_attempt > 0),
     model                  TEXT NOT NULL CHECK (model <> ''),
@@ -210,7 +200,7 @@ CREATE TABLE record_draft_sets (
     CHECK (succeeded_unit_count + failed_unit_count <= unit_count)
 );
 CREATE INDEX idx_record_draft_sets_source
-    ON record_draft_sets (parsed_document_set_id, extraction_profile_id, created_at DESC);
+    ON record_draft_sets (parsed_document_set_id, created_at DESC);
 
 CREATE TABLE extraction_units (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -265,8 +255,9 @@ CREATE INDEX idx_record_drafts_set ON record_drafts (record_draft_set_id, extrac
 CREATE TABLE transformed_record_sets (
     id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     record_draft_set_id   UUID NOT NULL REFERENCES record_draft_sets (id) ON DELETE CASCADE,
-    extraction_profile_id UUID NOT NULL REFERENCES extraction_profiles (id),
-    target_schema_id      UUID NOT NULL REFERENCES dataset_schemas (id),
+    data_contract_hash    TEXT NOT NULL CHECK (data_contract_hash <> ''),
+    extraction_spec_hash  TEXT NOT NULL CHECK (extraction_spec_hash <> ''),
+    schema_hash           TEXT NOT NULL CHECK (schema_hash <> ''),
     producer_node_run_id    UUID NOT NULL,
     status                TEXT NOT NULL DEFAULT 'running',
     producer_attempt      INT NOT NULL CHECK (producer_attempt > 0),
@@ -398,24 +389,14 @@ CREATE INDEX idx_record_review_decisions_publish
 
 /* ---- 混合检索（BM25 + pgvector 快照） ---- */
 
-CREATE TABLE retrieval_profiles (
-    id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id      TEXT NOT NULL DEFAULT 'default',
-    name              TEXT NOT NULL,
-    dataset_schema_id UUID NOT NULL REFERENCES dataset_schemas (id),
-    lexical_config    JSONB NOT NULL,
-    vector_config     JSONB NOT NULL,
-    filter_fields     JSONB NOT NULL DEFAULT '[]'::jsonb,
-    fusion_config     JSONB NOT NULL,
-    profile_hash      TEXT NOT NULL,
-    created_at        TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-
 CREATE TABLE retrieval_snapshots (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     dataset_id           UUID NOT NULL REFERENCES datasets (id) ON DELETE CASCADE,
-    retrieval_profile_id UUID NOT NULL REFERENCES retrieval_profiles (id),
-    producer_node_run_id   UUID,
+    data_contract_hash   TEXT NOT NULL CHECK (data_contract_hash <> ''),
+    search_spec          JSONB NOT NULL,
+    search_spec_hash     TEXT NOT NULL CHECK (search_spec_hash <> ''),
+    embedding_model      TEXT NOT NULL CHECK (embedding_model <> ''),
+    producer_node_run_id UUID,
     producer_attempt     INT NOT NULL DEFAULT 0,
     source_seq           BIGINT NOT NULL,
     status               TEXT NOT NULL DEFAULT 'building'
@@ -429,8 +410,8 @@ CREATE TABLE retrieval_snapshots (
     activated_at         TIMESTAMPTZ
 );
 CREATE INDEX idx_retrieval_snapshots_lookup
-    ON retrieval_snapshots (dataset_id, retrieval_profile_id, status, source_seq DESC);
-CREATE UNIQUE INDEX uq_retrieval_snapshots_step_run
+    ON retrieval_snapshots (dataset_id, search_spec_hash, status, source_seq DESC);
+CREATE UNIQUE INDEX uq_retrieval_snapshots_node_run
     ON retrieval_snapshots (producer_node_run_id)
     WHERE producer_node_run_id IS NOT NULL;
 
@@ -438,7 +419,7 @@ CREATE TABLE retrieval_chunks (
     id                   UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     dataset_id           UUID NOT NULL REFERENCES datasets (id) ON DELETE CASCADE,
     dataset_item_id      UUID NOT NULL REFERENCES dataset_items (id) ON DELETE CASCADE,
-    retrieval_profile_id UUID NOT NULL REFERENCES retrieval_profiles (id),
+    search_spec_hash     TEXT NOT NULL CHECK (search_spec_hash <> ''),
     chunk_no             INT NOT NULL,
     chunk_text           TEXT NOT NULL,
     chunk_hash           TEXT NOT NULL,
@@ -447,10 +428,10 @@ CREATE TABLE retrieval_chunks (
     embedding            vector(1024),
     metadata             JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at           TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (dataset_item_id, retrieval_profile_id, chunk_no)
+    UNIQUE (dataset_item_id, search_spec_hash, chunk_no)
 );
 CREATE INDEX idx_retrieval_chunks_incremental
-    ON retrieval_chunks (dataset_id, retrieval_profile_id, source_seq);
+    ON retrieval_chunks (dataset_id, search_spec_hash, source_seq);
 CREATE INDEX idx_retrieval_chunks_hnsw
     ON retrieval_chunks USING hnsw (embedding vector_cosine_ops);
 
@@ -483,22 +464,14 @@ CREATE INDEX idx_outbox_events_pending ON outbox_events (status, available_at, c
 
 /* ---- 通用分析与制品 ---- */
 
-CREATE TABLE analysis_profiles (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id  TEXT NOT NULL DEFAULT 'default',
-    name          TEXT NOT NULL,
-    instruction   TEXT NOT NULL,
-    output_schema JSONB NOT NULL,
-    profile_hash  TEXT NOT NULL,
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT now()
-);
-CREATE INDEX idx_analysis_profiles_workspace
-    ON analysis_profiles (workspace_id, created_at DESC);
-
 CREATE TABLE analysis_results (
-    id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    workspace_id        TEXT NOT NULL DEFAULT 'default',
-    analysis_profile_id UUID NOT NULL REFERENCES analysis_profiles (id),
+    id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    workspace_id             TEXT NOT NULL DEFAULT 'default',
+    instruction              TEXT NOT NULL CHECK (instruction <> ''),
+    output_contract          JSONB NOT NULL,
+    output_contract_hash     TEXT NOT NULL CHECK (output_contract_hash <> ''),
+    output_schema            JSONB NOT NULL,
+    output_schema_hash       TEXT NOT NULL CHECK (output_schema_hash <> ''),
     producer_workflow_run_id UUID NOT NULL,
     producer_node_run_id     UUID NOT NULL,
     producer_attempt    INT NOT NULL,
@@ -515,7 +488,7 @@ CREATE TABLE analysis_results (
     finished_at         TIMESTAMPTZ,
     UNIQUE (producer_node_run_id)
 );
-CREATE INDEX idx_analysis_results_task
+CREATE INDEX idx_analysis_results_workflow_run
     ON analysis_results (producer_workflow_run_id, created_at DESC);
 
 CREATE TABLE artifacts (
@@ -531,7 +504,7 @@ CREATE TABLE artifacts (
     metadata           JSONB NOT NULL DEFAULT '{}'::jsonb,
     created_at         TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE UNIQUE INDEX uq_artifacts_source_step
+CREATE UNIQUE INDEX uq_artifacts_node_run
     ON artifacts (producer_node_run_id)
     WHERE producer_node_run_id IS NOT NULL;
 

@@ -8,51 +8,6 @@ import (
 	"reqflow/internal/domain/model"
 )
 
-type CreateExtractionProfileRequest struct {
-	WorkspaceID        string          `json:"workspace_id,omitempty"`
-	Name               string          `json:"name"`
-	TargetSchemaID     string          `json:"target_schema_id"`
-	RecordGranularity  string          `json:"record_granularity"`
-	SystemInstruction  string          `json:"system_instruction"`
-	FieldGuides        json.RawMessage `json:"field_guides,omitempty"`
-	Examples           json.RawMessage `json:"examples,omitempty"`
-	NormalizationRules json.RawMessage `json:"normalization_rules,omitempty"`
-	ValidationRules    json.RawMessage `json:"validation_rules,omitempty"`
-}
-
-type ExtractionProfileView struct {
-	ID                 string          `json:"id"`
-	WorkspaceID        string          `json:"workspace_id"`
-	Name               string          `json:"name"`
-	TargetSchemaID     string          `json:"target_schema_id"`
-	RecordGranularity  string          `json:"record_granularity"`
-	SystemInstruction  string          `json:"system_instruction"`
-	FieldGuides        json.RawMessage `json:"field_guides"`
-	Examples           json.RawMessage `json:"examples"`
-	NormalizationRules json.RawMessage `json:"normalization_rules"`
-	ValidationRules    json.RawMessage `json:"validation_rules"`
-	ProfileHash        string          `json:"profile_hash"`
-	CreatedAt          time.Time       `json:"created_at"`
-}
-
-func (s *Service) RegisterProfile(ctx context.Context, request CreateExtractionProfileRequest) (*ExtractionProfileView, error) {
-	profile, err := s.CreateProfile(ctx, CreateExtractionProfileInput(request))
-	if err != nil {
-		return nil, err
-	}
-	view := extractionProfileView(profile)
-	return &view, nil
-}
-
-func (s *Service) ViewProfile(ctx context.Context, id string) (*ExtractionProfileView, error) {
-	profile, err := s.GetProfile(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	view := extractionProfileView(profile)
-	return &view, nil
-}
-
 type ExtractionUnitView struct {
 	ID                string    `json:"id"`
 	UnitKey           string    `json:"unit_key"`
@@ -86,7 +41,12 @@ type RecordDraftView struct {
 type RecordDraftSetView struct {
 	ID                  string               `json:"id"`
 	ParsedDocumentSetID string               `json:"parsed_document_set_id"`
-	ExtractionProfileID string               `json:"extraction_profile_id"`
+	DataContract        json.RawMessage      `json:"data_contract"`
+	DataContractHash    string               `json:"data_contract_hash"`
+	ExtractionSpec      json.RawMessage      `json:"extraction_spec"`
+	ExtractionSpecHash  string               `json:"extraction_spec_hash"`
+	JSONSchema          json.RawMessage      `json:"json_schema"`
+	SchemaHash          string               `json:"schema_hash"`
 	ProducerNodeRunID   string               `json:"producer_node_run_id"`
 	Status              string               `json:"status"`
 	Model               string               `json:"model"`
@@ -128,7 +88,9 @@ func (s *Service) ViewRecordDraftSet(ctx context.Context, id string) (*RecordDra
 			Provenance: draft.Provenance, CreatedAt: draft.CreatedAt}
 	}
 	return &RecordDraftSetView{ID: set.ID, ParsedDocumentSetID: set.ParsedDocumentSetID,
-		ExtractionProfileID: set.ExtractionProfileID, ProducerNodeRunID: set.ProducerNodeRunID,
+		DataContract: set.DataContract, DataContractHash: set.DataContractHash,
+		ExtractionSpec: set.ExtractionSpec, ExtractionSpecHash: set.ExtractionSpecHash,
+		JSONSchema: set.JSONSchema, SchemaHash: set.SchemaHash, ProducerNodeRunID: set.ProducerNodeRunID,
 		Status: set.Status, Model: set.Model, UnitCount: set.UnitCount,
 		SucceededUnitCount: set.SucceededUnitCount, FailedUnitCount: set.FailedUnitCount,
 		DraftCount: set.DraftCount, LLMRequestCount: set.LLMRequestCount,
@@ -136,13 +98,4 @@ func (s *Service) ViewRecordDraftSet(ctx context.Context, id string) (*RecordDra
 		CacheReadTokens: set.CacheReadTokens, CacheWriteTokens: set.CacheWriteTokens,
 		Units: unitViews, Drafts: draftViews,
 		CreatedAt: set.CreatedAt, FinishedAt: set.FinishedAt}, nil
-}
-
-func extractionProfileView(profile *model.ExtractionProfile) ExtractionProfileView {
-	return ExtractionProfileView{ID: profile.ID, WorkspaceID: profile.WorkspaceID,
-		Name: profile.Name, TargetSchemaID: profile.TargetSchemaID,
-		RecordGranularity: profile.RecordGranularity, SystemInstruction: profile.SystemInstruction,
-		FieldGuides: profile.FieldGuides, Examples: profile.Examples,
-		NormalizationRules: profile.NormalizationRules, ValidationRules: profile.ValidationRules,
-		ProfileHash: profile.ProfileHash, CreatedAt: profile.CreatedAt}
 }

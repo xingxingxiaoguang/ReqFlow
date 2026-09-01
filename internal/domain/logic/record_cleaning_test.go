@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"reqflow/internal/domain/model"
+	domain "reqflow/internal/domain/workflow"
 )
 
 func cleaningTestSchema(t *testing.T) (json.RawMessage, string) {
@@ -32,7 +33,7 @@ func cleaningTestSchema(t *testing.T) (json.RawMessage, string) {
 
 func TestTransformRecordAppliesControlledDeterministicRules(t *testing.T) {
 	schema, _ := cleaningTestSchema(t)
-	rules := json.RawMessage(`[
+	rules := mustNormalizationRules(t, `[
 		{"field":"enabled","operation":"boolean_alias","true_values":["是"],"false_values":["否"]},
 		{"field":"weight_kg","operation":"unit_scale","units":{"kg":1,"g":0.001}},
 		{"field":"status","operation":"enum_alias","aliases":{"在售":"active","退市":"retired"}},
@@ -71,7 +72,7 @@ func TestTransformRecordAppliesControlledDeterministicRules(t *testing.T) {
 
 func TestValidateTransformedRecordCombinesSchemaAndBusinessRules(t *testing.T) {
 	schema, _ := cleaningTestSchema(t)
-	rules := json.RawMessage(`[
+	rules := mustValidationRules(t, `[
 		{"field":"sku","operation":"regex","pattern":"^A-","severity":"warning","message":"建议使用 A 系列编码"},
 		{"field":"weight_kg","operation":"range","minimum":0.1,"maximum":100},
 		{"field":"display_name","operation":"required"}
@@ -85,7 +86,7 @@ func TestValidateTransformedRecordCombinesSchemaAndBusinessRules(t *testing.T) {
 		t.Fatalf("issues=%+v", issues)
 	}
 
-	_, invalid, err := ValidateTransformedRecord(schema, json.RawMessage(`[]`),
+	_, invalid, err := ValidateTransformedRecord(schema, nil,
 		json.RawMessage(`{"sku":"bad","enabled":"not-bool"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -97,20 +98,19 @@ func TestValidateTransformedRecordCombinesSchemaAndBusinessRules(t *testing.T) {
 
 func TestNormalizeCleaningRulesRejectsUnboundedOrUnknownDSL(t *testing.T) {
 	schema, _ := cleaningTestSchema(t)
-	cases := []json.RawMessage{
-		json.RawMessage(`[{"field":"missing","operation":"regex","pattern":"x"}]`),
-		json.RawMessage(`[{"field":"sku","operation":"script","code":"return true"}]`),
-		json.RawMessage(`[{"field":"sku","operation":"regex","pattern":"x","unknown":true}]`),
+	cases := [][]domain.ValidationRule{
+		{{Field: "missing", Operation: domain.ValidateRegex, Pattern: "x"}},
+		{{Field: "sku", Operation: domain.ValidationOperation("script")}},
 	}
 	for _, candidate := range cases {
-		if _, _, err := NormalizeCleaningRules(json.RawMessage(`[]`), candidate, schema); err == nil {
-			t.Fatalf("unsafe rule accepted: %s", candidate)
+		if _, _, err := NormalizeCleaningRules(nil, candidate, schema); err == nil {
+			t.Fatalf("unsafe rule accepted: %+v", candidate)
 		}
 	}
 
 	tooLong := strings.Repeat("x", MaxSchemaPatternLength+1)
-	raw, _ := json.Marshal([]map[string]any{{"field": "sku", "operation": "regex", "pattern": tooLong}})
-	if _, _, err := NormalizeCleaningRules(json.RawMessage(`[]`), raw, schema); err == nil {
+	if _, _, err := NormalizeCleaningRules(nil, []domain.ValidationRule{{Field: "sku",
+		Operation: domain.ValidateRegex, Pattern: tooLong}}, schema); err == nil {
 		t.Fatal("oversized regex accepted")
 	}
 }
@@ -120,11 +120,11 @@ func TestCleaningIssueOrderIsDeterministicAcrossRetries(t *testing.T) {
 	input := json.RawMessage(`{"sku":[],"enabled":[],"weight_kg":[],"status":[],"released_on":[],"display_name":[]}`)
 	var first string
 	for i := 0; i < 50; i++ {
-		fields, _, transformIssues, err := TransformRecord(schema, json.RawMessage(`[]`), input)
+		fields, _, transformIssues, err := TransformRecord(schema, nil, input)
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, validationIssues, err := ValidateTransformedRecord(schema, json.RawMessage(`[]`), fields)
+		_, validationIssues, err := ValidateTransformedRecord(schema, nil, fields)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -135,4 +135,22 @@ func TestCleaningIssueOrderIsDeterministicAcrossRetries(t *testing.T) {
 			t.Fatalf("retry changed issue order:\nfirst=%s\nnow=%s", first, raw)
 		}
 	}
+}
+
+func mustNormalizationRules(t *testing.T, raw string) []domain.NormalizationRule {
+	t.Helper()
+	var rules []domain.NormalizationRule
+	if err := json.Unmarshal([]byte(raw), &rules); err != nil {
+		t.Fatal(err)
+	}
+	return rules
+}
+
+func mustValidationRules(t *testing.T, raw string) []domain.ValidationRule {
+	t.Helper()
+	var rules []domain.ValidationRule
+	if err := json.Unmarshal([]byte(raw), &rules); err != nil {
+		t.Fatal(err)
+	}
+	return rules
 }

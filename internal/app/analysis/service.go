@@ -2,8 +2,6 @@ package analysis
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -11,7 +9,6 @@ import (
 
 	"reqflow/internal/app/agent"
 	appretrieval "reqflow/internal/app/retrieval"
-	"reqflow/internal/domain/logic"
 	"reqflow/internal/domain/model"
 	domain "reqflow/internal/domain/workflow"
 	"reqflow/internal/port"
@@ -19,7 +16,6 @@ import (
 
 const (
 	maxAnalysisInstructionBytes = 128 << 10
-	maxAnalysisNameBytes        = 200
 )
 
 type Options struct {
@@ -50,64 +46,6 @@ func NewService(repo port.AnalysisRepo, retrieval *appretrieval.Service, llm por
 		maxTurns: options.MaxIterations}, nil
 }
 
-type CreateProfileInput struct {
-	WorkspaceID  string
-	Name         string
-	Instruction  string
-	OutputSchema json.RawMessage
-}
-
-func (s *Service) CreateProfile(ctx context.Context, input CreateProfileInput) (*model.AnalysisProfile, error) {
-	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
-	if input.WorkspaceID == "" {
-		input.WorkspaceID = "default"
-	}
-	input.Name = strings.TrimSpace(input.Name)
-	input.Instruction = strings.TrimSpace(input.Instruction)
-	if input.Name == "" || len(input.Name) > maxAnalysisNameBytes {
-		return nil, fmt.Errorf("AnalysisProfile 名称必须为 1..%d 字节", maxAnalysisNameBytes)
-	}
-	if input.Instruction == "" || len(input.Instruction) > maxAnalysisInstructionBytes {
-		return nil, fmt.Errorf("instruction 必须为 1..%d 字节", maxAnalysisInstructionBytes)
-	}
-	normalizedSchema, schemaHash, err := logic.NormalizeDatasetSchema(input.OutputSchema)
-	if err != nil {
-		return nil, fmt.Errorf("output_schema 非法: %w", err)
-	}
-	hashPayload, _ := json.Marshal(map[string]any{
-		"instruction": input.Instruction, "output_schema_hash": schemaHash,
-	})
-	digest := sha256.Sum256(hashPayload)
-	profile := &model.AnalysisProfile{WorkspaceID: input.WorkspaceID, Name: input.Name,
-		Instruction: input.Instruction, OutputSchema: normalizedSchema,
-		ProfileHash: hex.EncodeToString(digest[:])}
-	if err := s.repo.CreateAnalysisProfile(ctx, profile); err != nil {
-		return nil, err
-	}
-	return profile, nil
-}
-
-func (s *Service) GetProfile(ctx context.Context, id string) (*model.AnalysisProfile, error) {
-	return s.repo.GetAnalysisProfile(ctx, strings.TrimSpace(id))
-}
-
-func (s *Service) ListProfiles(ctx context.Context, workspaceID string, limit int) ([]model.AnalysisProfile, error) {
-	workspaceID = strings.TrimSpace(workspaceID)
-	if workspaceID == "" {
-		workspaceID = "default"
-	}
-	return s.repo.ListAnalysisProfiles(ctx, workspaceID, limit)
-}
-
-func (s *Service) CloneProfile(ctx context.Context, id, name string) (*model.AnalysisProfile, error) {
-	source, err := s.GetProfile(ctx, id)
-	if err != nil {
-		return nil, err
-	}
-	return s.CreateProfile(ctx, CreateProfileInput{WorkspaceID: source.WorkspaceID,
-		Name: name, Instruction: source.Instruction, OutputSchema: source.OutputSchema})
-}
-
 func (s *Service) GetResult(ctx context.Context, id string) (*model.AnalysisResult, error) {
 	return s.repo.GetAnalysisResult(ctx, strings.TrimSpace(id))
 }
@@ -118,16 +56,17 @@ type KnowledgeSourceInput struct {
 }
 
 type RunInput struct {
-	WorkspaceID       string
-	TaskID            string
-	NodeRunID         string
-	ProducerAttempt   int
-	AnalysisProfileID string
-	Knowledge         map[string]KnowledgeSourceInput
-	Inputs            map[string]domain.NodeResourceBinding
-	Checkpoint        json.RawMessage
-	SaveCheckpoint    func(json.RawMessage) error
-	ReportProgress    func(map[string]any) error
+	WorkspaceID     string
+	WorkflowRunID   string
+	NodeRunID       string
+	ProducerAttempt int
+	Instruction     string
+	OutputContract  domain.OutputContract
+	Knowledge       map[string]KnowledgeSourceInput
+	Inputs          map[string]domain.NodeResourceBinding
+	Checkpoint      json.RawMessage
+	SaveCheckpoint  func(json.RawMessage) error
+	ReportProgress  func(map[string]any) error
 }
 
 type analysisCheckpoint struct {
@@ -138,19 +77,30 @@ type analysisCheckpoint struct {
 }
 
 func (s *Service) Analyze(ctx context.Context, input RunInput) (result *model.AnalysisResult, err error) {
-	profile, err := s.GetProfile(ctx, input.AnalysisProfileID)
-	if err != nil {
-		return nil, fmt.Errorf("AnalysisProfile 不存在: %w", err)
-	}
 	input.WorkspaceID = strings.TrimSpace(input.WorkspaceID)
 	if input.WorkspaceID == "" {
-		input.WorkspaceID = profile.WorkspaceID
+		input.WorkspaceID = "default"
 	}
-	if profile.WorkspaceID != input.WorkspaceID {
-		return nil, fmt.Errorf("AnalysisProfile 不属于任务 workspace")
+	input.Instruction = strings.TrimSpace(input.Instruction)
+	if input.Instruction == "" || len(input.Instruction) > maxAnalysisInstructionBytes {
+		return nil, fmt.Errorf("analysis instruction 必须为 1..%d 字节", maxAnalysisInstructionBytes)
+	}
+	outputSchema, outputSchemaHash, err := domain.CompileOutputContract(input.OutputContract)
+	if err != nil {
+		return nil, fmt.Errorf("编译 OutputContract: %w", err)
+	}
+	outputContractRaw, err := json.Marshal(input.OutputContract)
+	if err != nil {
+		return nil, err
+	}
+	outputContractHash, err := domain.HashContract(input.OutputContract)
+	if err != nil {
+		return nil, err
 	}
 	result, err = s.repo.BeginAnalysisResult(ctx, &model.AnalysisResult{WorkspaceID: input.WorkspaceID,
-		AnalysisProfileID: profile.ID, ProducerWorkflowRunID: input.TaskID, ProducerNodeRunID: input.NodeRunID},
+		Instruction: input.Instruction, OutputContract: outputContractRaw, OutputContractHash: outputContractHash,
+		OutputSchema: outputSchema, OutputSchemaHash: outputSchemaHash,
+		ProducerWorkflowRunID: input.WorkflowRunID, ProducerNodeRunID: input.NodeRunID},
 		input.ProducerAttempt)
 	if err != nil {
 		return nil, err
@@ -158,6 +108,13 @@ func (s *Service) Analyze(ctx context.Context, input RunInput) (result *model.An
 	if result.Status == model.AnalysisResultSucceeded {
 		return result, nil
 	}
+	resultID := result.ID
+	defer func() {
+		if err != nil {
+			_ = s.repo.FailAnalysisResult(context.WithoutCancel(ctx), resultID, input.NodeRunID,
+				input.ProducerAttempt, truncate(err.Error(), 4000))
+		}
+	}()
 	modelName, err := s.resolveModel(ctx)
 	if err != nil {
 		return nil, err
@@ -170,12 +127,6 @@ func (s *Service) Analyze(ctx context.Context, input RunInput) (result *model.An
 		return nil, fmt.Errorf("knowledge.analyze checkpoint 属于不同 AnalysisResult")
 	}
 	checkpoint.AnalysisResultID = result.ID
-	defer func() {
-		if err != nil {
-			_ = s.repo.FailAnalysisResult(context.WithoutCancel(ctx), result.ID, input.NodeRunID,
-				input.ProducerAttempt, truncate(err.Error(), 4000))
-		}
-	}()
 
 	if !checkpoint.Result.Submitted {
 		scopeSources := make(map[string]appretrieval.KnowledgeSource, len(input.Knowledge))
@@ -197,9 +148,9 @@ func (s *Service) Analyze(ctx context.Context, input RunInput) (result *model.An
 		if buildErr != nil {
 			return nil, buildErr
 		}
-		tools = append(tools, &submitResultTool{schema: profile.OutputSchema, state: &checkpoint.Result})
+		tools = append(tools, &submitResultTool{schema: result.OutputSchema, state: &checkpoint.Result})
 		if strings.TrimSpace(checkpoint.Run.Context.SystemPrompt) == "" {
-			checkpoint.Run.Context = analysisContext(profile, input.Knowledge, tools)
+			checkpoint.Run.Context = analysisContext(result.Instruction, result.OutputSchema, input.Knowledge, tools)
 		}
 		runErr := agent.Execute(ctx, s.llm, tools, &checkpoint.Run, &checkpoint.TraceEnvelope, agent.RunOptions{
 			ID: input.NodeRunID, Label: "知识分析", Ordinal: 0,
@@ -265,7 +216,7 @@ func (s *Service) resolveModel(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("当前 LLM 配置缺少 model")
 }
 
-func analysisContext(profile *model.AnalysisProfile,
+func analysisContext(instruction string, outputSchema json.RawMessage,
 	sources map[string]KnowledgeSourceInput, tools []agent.Tool) port.Context {
 	toolGuides := make([]string, 0, len(tools))
 	var guidelines []string
@@ -275,16 +226,16 @@ func analysisContext(profile *model.AnalysisProfile,
 			guidelines = append(guidelines, documented.PromptGuidelines()...)
 		}
 	}
-	schema := string(profile.OutputSchema)
-	system := "你是 ReqFlow V2 的结构化分析 Agent。只能使用已授权知识工具获取事实，不得猜测资源 ID。" +
+	schema := string(outputSchema)
+	system := "你是 ReqFlow 的结构化分析 Agent。只能使用已授权知识工具获取事实，不得猜测资源 ID。" +
 		"所有结论必须在输出中保留可验证的 dataset_item_id/provenance 引用。\n\n业务指令：\n" +
-		profile.Instruction + "\n\n可用工具：\n- " + strings.Join(toolGuides, "\n- ") +
+		instruction + "\n\n可用工具：\n- " + strings.Join(toolGuides, "\n- ") +
 		"\n\n工具规则：\n- " + strings.Join(guidelines, "\n- ") +
 		"\n\n不得用普通文本作为最终结果；submit_analysis_result 是唯一完成出口，其参数必须严格符合此 JSON Schema：\n" + schema
 	manifest, _ := json.Marshal(map[string]any{"knowledge_sources": sources, "output_schema": json.RawMessage(schema)})
 	return port.Context{SystemPrompt: system,
-		Messages:   []port.Message{port.NewUserMessage("请执行配置的分析任务。运行合同：" + string(manifest))},
-		TaskSchema: schema}
+		Messages:     []port.Message{port.NewUserMessage("请执行配置的分析任务。运行合同：" + string(manifest))},
+		OutputSchema: schema}
 }
 
 func decodeAnalysisCheckpoint(raw json.RawMessage) (analysisCheckpoint, error) {

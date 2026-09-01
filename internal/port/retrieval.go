@@ -52,35 +52,31 @@ type LexicalBackend interface {
 }
 
 type VectorSearchRequest struct {
-	DatasetID          string
-	RetrievalProfileID string
-	QueryEmbedding     []float32
-	Filters            map[string][]string
-	SourceSeq          int64
-	Limit              int
+	DatasetID      string
+	SearchSpecHash string
+	QueryEmbedding []float32
+	Filters        map[string][]string
+	SourceSeq      int64
+	Limit          int
 }
 
-// RetrievalRepo 同时保存不可变 Profile、Snapshot 状态机和 pgvector Chunk。
+// RetrievalRepo 保存自包含 Snapshot 状态机和 pgvector Chunk。
 // Snapshot 终态写入带 NodeRun attempt fencing，外部索引调用不进入数据库事务。
 type RetrievalRepo interface {
 	GetAppendDataset(ctx context.Context, id string) (*model.Dataset, error)
 	GetDatasetSchema(ctx context.Context, id string) (*model.DatasetSchemaDefinition, error)
 	ListDatasetItemsAfter(ctx context.Context, datasetID string, afterSeq, throughSeq int64, limit int) ([]model.DatasetItem, error)
 
-	CreateRetrievalProfile(ctx context.Context, profile *model.RetrievalProfile) error
-	GetRetrievalProfile(ctx context.Context, id string) (*model.RetrievalProfile, error)
-	ListRetrievalProfiles(ctx context.Context, workspaceID, datasetSchemaID string, limit int) ([]model.RetrievalProfile, error)
-
 	GetOrCreateRetrievalSnapshotForNode(ctx context.Context, snapshot *model.RetrievalSnapshot, producerAttempt int) (*model.RetrievalSnapshot, error)
 	GetRetrievalSnapshot(ctx context.Context, id string) (*model.RetrievalSnapshot, error)
-	ListRetrievalSnapshots(ctx context.Context, datasetID, profileID, status string, limit int) ([]model.RetrievalSnapshot, error)
-	GetLatestActiveRetrievalSnapshot(ctx context.Context, datasetID, profileID string, throughSeq int64) (*model.RetrievalSnapshot, error)
+	ListRetrievalSnapshots(ctx context.Context, datasetID, searchSpecHash, status string, limit int) ([]model.RetrievalSnapshot, error)
+	GetLatestActiveRetrievalSnapshot(ctx context.Context, datasetID, searchSpecHash string, throughSeq int64) (*model.RetrievalSnapshot, error)
 	SetRetrievalSnapshotStatusForNode(ctx context.Context, snapshotID, nodeRunID string, producerAttempt int, status, failureReason string) error
 	ActivateRetrievalSnapshotForNode(ctx context.Context, snapshotID, nodeRunID string, producerAttempt int,
 		lexicalRef, vectorRef string, lexicalCount, vectorCount int) (*model.RetrievalSnapshot, error)
 
 	UpsertRetrievalChunks(ctx context.Context, chunks []model.RetrievalChunk) error
-	CountRetrievalChunks(ctx context.Context, datasetID, profileID string, sourceSeq int64) (chunkCount, itemCount int, err error)
+	CountRetrievalChunks(ctx context.Context, datasetID, searchSpecHash string, sourceSeq int64) (chunkCount, itemCount int, err error)
 	SearchRetrievalChunks(ctx context.Context, req VectorSearchRequest) ([]RankedHit, error)
 	GetDatasetItemsByIDs(ctx context.Context, datasetID string, sourceSeq int64, ids []string) ([]model.DatasetItem, error)
 

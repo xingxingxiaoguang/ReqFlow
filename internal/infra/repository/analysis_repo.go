@@ -14,45 +14,13 @@ import (
 	"reqflow/internal/domain/model"
 )
 
-func (r *PipelineRepo) CreateAnalysisProfile(ctx context.Context, profile *model.AnalysisProfile) error {
-	if profile.ID == "" {
-		profile.ID = uuid.NewString()
-	}
-	profile.CreatedAt = time.Now()
-	return r.db.WithContext(ctx).Exec(`INSERT INTO analysis_profiles
-		(id, workspace_id, name, instruction, output_schema, profile_hash, created_at)
-		VALUES (?, ?, ?, ?, ?::jsonb, ?, ?)`, profile.ID, profile.WorkspaceID, profile.Name,
-		profile.Instruction, string(profile.OutputSchema), profile.ProfileHash, profile.CreatedAt).Error
-}
-
-func (r *PipelineRepo) GetAnalysisProfile(ctx context.Context, id string) (*model.AnalysisProfile, error) {
-	var row analysisProfileRow
-	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&row).Error; err != nil {
-		return nil, err
-	}
-	return row.toModel(), nil
-}
-
-func (r *PipelineRepo) ListAnalysisProfiles(ctx context.Context, workspaceID string, limit int) ([]model.AnalysisProfile, error) {
-	if limit < 1 || limit > 200 {
-		limit = 100
-	}
-	var rows []analysisProfileRow
-	if err := r.db.WithContext(ctx).Where("workspace_id = ?", workspaceID).
-		Order("created_at DESC, id DESC").Limit(limit).Find(&rows).Error; err != nil {
-		return nil, err
-	}
-	out := make([]model.AnalysisProfile, len(rows))
-	for i := range rows {
-		out[i] = *rows[i].toModel()
-	}
-	return out, nil
-}
-
 func (r *PipelineRepo) BeginAnalysisResult(ctx context.Context, result *model.AnalysisResult,
 	producerAttempt int) (*model.AnalysisResult, error) {
-	if result == nil || result.ProducerNodeRunID == "" || result.ProducerWorkflowRunID == "" || result.AnalysisProfileID == "" {
-		return nil, fmt.Errorf("AnalysisResult 必须绑定 task、step_run 和 profile")
+	if result == nil || result.ProducerNodeRunID == "" || result.ProducerWorkflowRunID == "" ||
+		strings.TrimSpace(result.Instruction) == "" || len(result.OutputContract) == 0 ||
+		strings.TrimSpace(result.OutputContractHash) == "" || len(result.OutputSchema) == 0 ||
+		strings.TrimSpace(result.OutputSchemaHash) == "" {
+		return nil, fmt.Errorf("AnalysisResult 必须绑定 WorkflowRun、NodeRun 和完整输出合同")
 	}
 	if result.ID == "" {
 		result.ID = uuid.NewString()
@@ -69,11 +37,14 @@ func (r *PipelineRepo) BeginAnalysisResult(ctx context.Context, result *model.An
 			return err
 		}
 		if err := tx.Exec(`INSERT INTO analysis_results
-			(id, workspace_id, analysis_profile_id, producer_workflow_run_id, producer_node_run_id,
+			(id, workspace_id, instruction, output_contract, output_contract_hash,
+			 output_schema, output_schema_hash, producer_workflow_run_id, producer_node_run_id,
 			 producer_attempt, status, created_at)
-			VALUES (?, ?, ?, ?, ?, ?, 'running', ?)
+			VALUES (?, ?, ?, ?::jsonb, ?, ?::jsonb, ?, ?, ?, ?, 'running', ?)
 			ON CONFLICT (producer_node_run_id) DO NOTHING`, result.ID, result.WorkspaceID,
-			result.AnalysisProfileID, result.ProducerWorkflowRunID, result.ProducerNodeRunID,
+			result.Instruction, string(result.OutputContract), result.OutputContractHash,
+			string(result.OutputSchema), result.OutputSchemaHash,
+			result.ProducerWorkflowRunID, result.ProducerNodeRunID,
 			producerAttempt, result.CreatedAt).Error; err != nil {
 			return err
 		}
@@ -82,8 +53,10 @@ func (r *PipelineRepo) BeginAnalysisResult(ctx context.Context, result *model.An
 			Where("producer_node_run_id = ?", result.ProducerNodeRunID).First(&row).Error; err != nil {
 			return err
 		}
-		if row.AnalysisProfileID != result.AnalysisProfileID || row.ProducerWorkflowRunID != result.ProducerWorkflowRunID ||
-			row.WorkspaceID != result.WorkspaceID {
+		if row.Instruction != result.Instruction || row.OutputContractHash != result.OutputContractHash ||
+			row.OutputSchemaHash != result.OutputSchemaHash || !equalJSON(row.OutputContract, result.OutputContract) ||
+			!equalJSON(row.OutputSchema, result.OutputSchema) ||
+			row.ProducerWorkflowRunID != result.ProducerWorkflowRunID || row.WorkspaceID != result.WorkspaceID {
 			return fmt.Errorf("NodeRun 已绑定到不同的 AnalysisResult")
 		}
 		if row.Status != model.AnalysisResultSucceeded {
@@ -162,7 +135,7 @@ func (r *PipelineRepo) FailAnalysisResult(ctx context.Context, id, nodeRunID str
 func (r *PipelineRepo) CreateArtifactForNode(ctx context.Context, artifact *model.Artifact,
 	producerAttempt int) (*model.Artifact, error) {
 	if artifact == nil || artifact.ProducerNodeRunID == "" || artifact.ProducerWorkflowRunID == "" || artifact.ContentHash == "" {
-		return nil, fmt.Errorf("Artifact 必须绑定 task、step_run 和 content_hash")
+		return nil, fmt.Errorf("Artifact 必须绑定 WorkflowRun、NodeRun 和 content_hash")
 	}
 	if artifact.ID == "" {
 		artifact.ID = uuid.NewString()
@@ -229,47 +202,36 @@ func (r *PipelineRepo) ListArtifacts(ctx context.Context, workspaceID, kind stri
 	return out, nil
 }
 
-type analysisProfileRow struct {
-	ID           string    `gorm:"column:id;primaryKey"`
-	WorkspaceID  string    `gorm:"column:workspace_id"`
-	Name         string    `gorm:"column:name"`
-	Instruction  string    `gorm:"column:instruction"`
-	OutputSchema string    `gorm:"column:output_schema"`
-	ProfileHash  string    `gorm:"column:profile_hash"`
-	CreatedAt    time.Time `gorm:"column:created_at"`
-}
-
-func (analysisProfileRow) TableName() string { return "analysis_profiles" }
-func (row analysisProfileRow) toModel() *model.AnalysisProfile {
-	return &model.AnalysisProfile{ID: row.ID, WorkspaceID: row.WorkspaceID, Name: row.Name,
-		Instruction: row.Instruction, OutputSchema: json.RawMessage(row.OutputSchema),
-		ProfileHash: row.ProfileHash, CreatedAt: row.CreatedAt}
-}
-
 type analysisResultRow struct {
-	ID                    string     `gorm:"column:id;primaryKey"`
-	WorkspaceID           string     `gorm:"column:workspace_id"`
-	AnalysisProfileID     string     `gorm:"column:analysis_profile_id"`
-	ProducerWorkflowRunID string     `gorm:"column:producer_workflow_run_id"`
-	ProducerNodeRunID     string     `gorm:"column:producer_node_run_id"`
-	ProducerAttempt       int        `gorm:"column:producer_attempt"`
-	Status                string     `gorm:"column:status"`
-	Output                string     `gorm:"column:output"`
-	AgentContext          string     `gorm:"column:agent_context"`
-	Model                 string     `gorm:"column:model"`
-	InputTokens           int        `gorm:"column:input_tokens"`
-	OutputTokens          int        `gorm:"column:output_tokens"`
-	CacheReadTokens       int        `gorm:"column:cache_read_tokens"`
-	CacheWriteTokens      int        `gorm:"column:cache_write_tokens"`
-	ErrorMessage          string     `gorm:"column:error_message"`
-	CreatedAt             time.Time  `gorm:"column:created_at"`
-	FinishedAt            *time.Time `gorm:"column:finished_at"`
+	ID                    string          `gorm:"column:id;primaryKey"`
+	WorkspaceID           string          `gorm:"column:workspace_id"`
+	Instruction           string          `gorm:"column:instruction"`
+	OutputContract        json.RawMessage `gorm:"column:output_contract;type:jsonb"`
+	OutputContractHash    string          `gorm:"column:output_contract_hash"`
+	OutputSchema          json.RawMessage `gorm:"column:output_schema;type:jsonb"`
+	OutputSchemaHash      string          `gorm:"column:output_schema_hash"`
+	ProducerWorkflowRunID string          `gorm:"column:producer_workflow_run_id"`
+	ProducerNodeRunID     string          `gorm:"column:producer_node_run_id"`
+	ProducerAttempt       int             `gorm:"column:producer_attempt"`
+	Status                string          `gorm:"column:status"`
+	Output                string          `gorm:"column:output"`
+	AgentContext          string          `gorm:"column:agent_context"`
+	Model                 string          `gorm:"column:model"`
+	InputTokens           int             `gorm:"column:input_tokens"`
+	OutputTokens          int             `gorm:"column:output_tokens"`
+	CacheReadTokens       int             `gorm:"column:cache_read_tokens"`
+	CacheWriteTokens      int             `gorm:"column:cache_write_tokens"`
+	ErrorMessage          string          `gorm:"column:error_message"`
+	CreatedAt             time.Time       `gorm:"column:created_at"`
+	FinishedAt            *time.Time      `gorm:"column:finished_at"`
 }
 
 func (analysisResultRow) TableName() string { return "analysis_results" }
 func (row analysisResultRow) toModel() *model.AnalysisResult {
 	result := &model.AnalysisResult{ID: row.ID, WorkspaceID: row.WorkspaceID,
-		AnalysisProfileID: row.AnalysisProfileID, ProducerWorkflowRunID: row.ProducerWorkflowRunID,
+		Instruction: row.Instruction, OutputContract: row.OutputContract,
+		OutputContractHash: row.OutputContractHash, OutputSchema: row.OutputSchema,
+		OutputSchemaHash: row.OutputSchemaHash, ProducerWorkflowRunID: row.ProducerWorkflowRunID,
 		ProducerNodeRunID: row.ProducerNodeRunID, ProducerAttempt: row.ProducerAttempt,
 		Status: row.Status, Output: json.RawMessage(row.Output), AgentContext: json.RawMessage(row.AgentContext),
 		Model: row.Model, InputTokens: row.InputTokens, OutputTokens: row.OutputTokens,

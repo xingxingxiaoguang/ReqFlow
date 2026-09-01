@@ -9,8 +9,20 @@ import (
 
 	"reqflow/internal/app/agent"
 	"reqflow/internal/domain/model"
+	domain "reqflow/internal/domain/workflow"
 	"reqflow/internal/port"
 )
+
+func testExecutionContract(schema json.RawMessage) executionContract {
+	data := domain.DataContract{RecordGranularity: "每个产品一条", KeyFields: []string{"sku"},
+		Fields: []domain.FieldContract{{Key: "sku", Type: domain.FieldString, Required: true}}}
+	spec := domain.ExtractionSpec{Instruction: "只抽取有原文证据的字段"}
+	dataRaw, _ := json.Marshal(data)
+	specRaw, _ := json.Marshal(spec)
+	return executionContract{DataContract: data, ExtractionSpec: spec, DataContractRaw: dataRaw,
+		DataContractHash: "data-contract-hash", ExtractionSpecRaw: specRaw,
+		ExtractionSpecHash: "extraction-spec-hash", JSONSchema: schema, SchemaHash: "schema-hash"}
+}
 
 func TestSplitExtractionBlocksNeverTruncatesLargeBlock(t *testing.T) {
 	text := strings.Repeat("产", 25)
@@ -54,9 +66,8 @@ func TestExtractionAgentRepairsRejectedDraftAndFinishes(t *testing.T) {
 	service := &Service{llm: client, model: "test-model", maxTurns: 10}
 	checkpoint := extractionCheckpoint{UnitStates: map[string]unitCheckpoint{}}
 	reports := 0
-	drafts, responseHash, usage, err := service.extractUnitAgent(context.Background(), model.ExtractionProfile{
-		ID: "profile-1", ProfileHash: "profile-hash", RecordGranularity: "每个产品一条",
-	}, model.DatasetSchemaDefinition{ID: "schema-1", JSONSchema: schemaJSON}, plan, &checkpoint,
+	contract := testExecutionContract(schemaJSON)
+	drafts, responseHash, usage, err := service.extractUnitAgent(context.Background(), contract, plan, &checkpoint,
 		func(string, int) error { reports++; return nil }, "test-model")
 	if err != nil {
 		t.Fatalf("extractUnitAgent: %v", err)
@@ -93,9 +104,7 @@ func TestExtractionAgentRepairsRejectedDraftAndFinishes(t *testing.T) {
 	// Agent 已显式完成但后续资源提交失败时，重试直接复用 checkpoint，不再重复请求模型。
 	resumeClient := &extractionAgentScript{}
 	resumeService := &Service{llm: resumeClient, model: "test-model", maxTurns: 10}
-	resumedDrafts, resumedHash, _, err := resumeService.extractUnitAgent(context.Background(), model.ExtractionProfile{
-		ID: "profile-1", ProfileHash: "profile-hash", RecordGranularity: "每个产品一条",
-	}, model.DatasetSchemaDefinition{ID: "schema-1", JSONSchema: schemaJSON}, plan, &checkpoint,
+	resumedDrafts, resumedHash, _, err := resumeService.extractUnitAgent(context.Background(), contract, plan, &checkpoint,
 		func(string, int) error { return nil }, "test-model")
 	if err != nil || resumeClient.calls != 0 || len(resumedDrafts) != 1 || resumedHash != responseHash {
 		t.Fatalf("completed checkpoint should skip llm: calls=%d drafts=%d hash=%q err=%v",
@@ -108,14 +117,13 @@ func TestExtractionAgentResumesCheckpointWithoutDoubleCountingUsage(t *testing.T
 	plan := plannedExtractionUnit{assetID: "asset-1", unit: model.ExtractionUnit{UnitKey: "resume-unit"},
 		blocks: []extractionBlock{{SegmentID: "block-1:0:10", ID: "block-1", Text: "SKU: A-100"}}}
 	checkpoint := extractionCheckpoint{UnitStates: map[string]unitCheckpoint{}}
-	profile := model.ExtractionProfile{ID: "profile-1", ProfileHash: "profile-hash"}
-	schema := model.DatasetSchemaDefinition{ID: "schema-1", JSONSchema: schemaJSON}
+	contract := testExecutionContract(schemaJSON)
 
 	firstClient := &extractionAgentScript{responses: []*port.Message{
 		extractionToolMessage("c1", "list_source_blocks", `{}`, "先列出来源"),
 	}}
 	firstService := &Service{llm: firstClient, model: "test-model", maxTurns: 1}
-	_, _, firstUsage, err := firstService.extractUnitAgent(context.Background(), profile, schema,
+	_, _, firstUsage, err := firstService.extractUnitAgent(context.Background(), contract,
 		plan, &checkpoint, func(string, int) error { return nil }, "test-model")
 	if err == nil || firstUsage.RequestCount != 1 {
 		t.Fatalf("first run must stop at turn limit with accounted usage: usage=%+v err=%v", firstUsage, err)
@@ -131,7 +139,7 @@ func TestExtractionAgentResumesCheckpointWithoutDoubleCountingUsage(t *testing.T
 		extractionToolMessage("c5", "finish_extraction_unit", `{"outcome":"records"}`, "完成"),
 	}}
 	secondService := &Service{llm: secondClient, model: "test-model", maxTurns: 4}
-	drafts, _, secondUsage, err := secondService.extractUnitAgent(context.Background(), profile, schema,
+	drafts, _, secondUsage, err := secondService.extractUnitAgent(context.Background(), contract,
 		plan, &checkpoint, func(string, int) error { return nil }, "test-model")
 	if err != nil || len(drafts) != 1 {
 		t.Fatalf("resumed agent failed: drafts=%+v err=%v", drafts, err)
@@ -166,7 +174,8 @@ func TestExtractionCandidateDraftNormalizesMissingConfidenceToObject(t *testing.
 		ID: "block-1", Text: blockText, fullText: blockText}}}
 	candidate := extractionCandidate{DraftKey: "sku:A-100", Fields: map[string]any{"sku": "A-100"},
 		SourceRefs: []extractionSourceRef{{BlockID: "block-1", Quote: "SKU: A-100"}}}
-	draft, err := extractionCandidateDraft(candidate, plan, model.ExtractionProfile{ID: "p1", ProfileHash: "h1"},
+	draft, err := extractionCandidateDraft(candidate, plan, testExecutionContract(json.RawMessage(
+		`{"type":"object","properties":{"sku":{"type":"string"}},"required":["sku"]}`)),
 		"test-model", "prompt-hash")
 	if err != nil {
 		t.Fatalf("extractionCandidateDraft: %v", err)

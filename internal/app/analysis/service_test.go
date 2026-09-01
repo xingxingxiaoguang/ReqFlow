@@ -9,42 +9,45 @@ import (
 
 	"reqflow/internal/app/agent"
 	"reqflow/internal/domain/model"
+	domain "reqflow/internal/domain/workflow"
 	"reqflow/internal/port"
 )
 
 type analysisMemoryRepo struct {
-	profiles map[string]model.AnalysisProfile
+	result        *model.AnalysisResult
+	failureReason string
 }
 
-func (r *analysisMemoryRepo) CreateAnalysisProfile(_ context.Context, profile *model.AnalysisProfile) error {
-	if r.profiles == nil {
-		r.profiles = map[string]model.AnalysisProfile{}
-	}
-	profile.ID = "profile-1"
-	r.profiles[profile.ID] = *profile
-	return nil
+func (r *analysisMemoryRepo) BeginAnalysisResult(_ context.Context, result *model.AnalysisResult, attempt int) (*model.AnalysisResult, error) {
+	stored := *result
+	stored.ID, stored.Status, stored.ProducerAttempt = "result-1", model.AnalysisResultRunning, attempt
+	r.result = &stored
+	return &stored, nil
 }
-func (r *analysisMemoryRepo) GetAnalysisProfile(_ context.Context, id string) (*model.AnalysisProfile, error) {
-	profile, ok := r.profiles[id]
-	if !ok {
+func (r *analysisMemoryRepo) GetAnalysisResult(context.Context, string) (*model.AnalysisResult, error) {
+	if r.result == nil {
 		return nil, errors.New("not found")
 	}
-	return &profile, nil
-}
-func (r *analysisMemoryRepo) ListAnalysisProfiles(context.Context, string, int) ([]model.AnalysisProfile, error) {
-	return nil, nil
-}
-func (*analysisMemoryRepo) BeginAnalysisResult(context.Context, *model.AnalysisResult, int) (*model.AnalysisResult, error) {
-	return nil, errors.New("not implemented")
-}
-func (*analysisMemoryRepo) GetAnalysisResult(context.Context, string) (*model.AnalysisResult, error) {
-	return nil, errors.New("not implemented")
+	return r.result, nil
 }
 func (*analysisMemoryRepo) CompleteAnalysisResult(context.Context, *model.AnalysisResult, int) error {
 	return errors.New("not implemented")
 }
-func (*analysisMemoryRepo) FailAnalysisResult(context.Context, string, string, int, string) error {
-	return errors.New("not implemented")
+func (r *analysisMemoryRepo) FailAnalysisResult(_ context.Context, _, _ string, _ int, message string) error {
+	r.failureReason = message
+	return nil
+}
+
+func TestAnalyzePersistsFailureWhenModelResolutionFails(t *testing.T) {
+	repo := &analysisMemoryRepo{}
+	service := &Service{repo: repo}
+	_, err := service.Analyze(context.Background(), RunInput{WorkflowRunID: "run-1", NodeRunID: "node-1",
+		ProducerAttempt: 1, Instruction: "生成报告", OutputContract: domain.OutputContract{Fields: []domain.FieldContract{{
+			Key: "report", Label: "报告", Type: domain.FieldString, Required: true,
+		}}}})
+	if err == nil || repo.failureReason == "" {
+		t.Fatalf("模型配置失败必须终结 AnalysisResult: err=%v failure=%q", err, repo.failureReason)
+	}
 }
 func (*analysisMemoryRepo) CreateArtifactForNode(context.Context, *model.Artifact, int) (*model.Artifact, error) {
 	return nil, errors.New("not implemented")
@@ -54,35 +57,6 @@ func (*analysisMemoryRepo) GetArtifact(context.Context, string) (*model.Artifact
 }
 func (*analysisMemoryRepo) ListArtifacts(context.Context, string, string, int) ([]model.Artifact, error) {
 	return nil, nil
-}
-
-func TestCreateProfileNormalizesAndHashesContract(t *testing.T) {
-	repo := &analysisMemoryRepo{}
-	service := &Service{repo: repo}
-	schema := json.RawMessage(`{
-		"type":"object","required":["report"],"properties":{"report":{"type":"string"}}
-	}`)
-	first, err := service.CreateProfile(context.Background(), CreateProfileInput{
-		Name: "  产品方案  ", Instruction: "  生成方案  ", OutputSchema: schema,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.WorkspaceID != "default" || first.Name != "产品方案" || first.Instruction != "生成方案" {
-		t.Fatalf("Profile 未归一化: %+v", first)
-	}
-	if first.ProfileHash == "" || !json.Valid(first.OutputSchema) {
-		t.Fatalf("Profile 合同未固化: %+v", first)
-	}
-	second, err := service.CreateProfile(context.Background(), CreateProfileInput{
-		Name: "另一个展示名", Instruction: "生成方案", OutputSchema: schema,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if first.ProfileHash != second.ProfileHash {
-		t.Fatalf("展示名不应影响执行合同哈希: %s != %s", first.ProfileHash, second.ProfileHash)
-	}
 }
 
 func TestSubmitResultToolReturnsSchemaErrorsToAgent(t *testing.T) {

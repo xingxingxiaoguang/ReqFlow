@@ -84,7 +84,8 @@ type ItemProvenance struct {
 	SourceDatasetID     string            `json:"source_dataset_id,omitempty"`
 	SourceDatasetItemID string            `json:"source_dataset_item_id,omitempty"`
 	SourceFingerprint   string            `json:"source_fingerprint,omitempty"`
-	ExtractionProfileID string            `json:"extraction_profile_id,omitempty"`
+	DataContractHash    string            `json:"data_contract_hash,omitempty"`
+	ExtractionSpecHash  string            `json:"extraction_spec_hash,omitempty"`
 	Model               string            `json:"model,omitempty"`
 	PromptHash          string            `json:"prompt_hash,omitempty"`
 	QualityStatus       string            `json:"quality_status,omitempty"`
@@ -105,28 +106,17 @@ type PipelineCursor struct {
 	UpdatedAt           time.Time
 }
 
-// ExtractionProfile 是创建后不可修改的抽取、归一化和校验配置。
-type ExtractionProfile struct {
-	ID                 string
-	WorkspaceID        string
-	Name               string
-	TargetSchemaID     string
-	RecordGranularity  string
-	SystemInstruction  string
-	FieldGuides        json.RawMessage
-	Examples           json.RawMessage
-	NormalizationRules json.RawMessage
-	ValidationRules    json.RawMessage
-	ProfileHash        string
-	CreatedAt          time.Time
-}
-
-// RecordDraftSet 是 document.extract 的一等输出 Manifest。它与一个解析结果集和一个
-// 不可变 ExtractionProfile 绑定，后续 transform/validate 只读取这个快照资源。
+// RecordDraftSet 是 document.extract 的一等输出 Manifest。执行合同与编译后的
+// JSON Schema 完整固化在资源中，后续节点不反查外部配置。
 type RecordDraftSet struct {
 	ID                  string
 	ParsedDocumentSetID string
-	ExtractionProfileID string
+	DataContract        json.RawMessage
+	DataContractHash    string
+	ExtractionSpec      json.RawMessage
+	ExtractionSpecHash  string
+	JSONSchema          json.RawMessage
+	SchemaHash          string
 	ProducerNodeRunID   string
 	Status              string
 	ProducerAttempt     int
@@ -152,7 +142,7 @@ const (
 )
 
 // ExtractionUnit 是按 DocumentBlock 稳定切分的最小抽取 Agent 运行单元。UnitKey 和
-// InputHash 由输入区块与 Profile 决定，重试时成功单元不会重复调用模型。
+// InputHash 由输入区块与内联合同决定，重试时成功单元不会重复调用模型。
 type ExtractionUnit struct {
 	ID                string
 	RecordDraftSetID  string
@@ -229,20 +219,21 @@ type RecordChange struct {
 // TransformedRecordSet 是 data.transform 的不可变输出 Manifest。存在于表中的
 // TransformedRecord 都已经确定性处理完成；恢复时仅补齐尚未生成的记录。
 type TransformedRecordSet struct {
-	ID                  string
-	RecordDraftSetID    string
-	ExtractionProfileID string
-	TargetSchemaID      string
-	ProducerNodeRunID   string
-	Status              string
-	ProducerAttempt     int
-	EngineVersion       string
-	DraftCount          int
-	TransformedCount    int
-	ChangedRecordCount  int
-	IssueCount          int
-	CreatedAt           time.Time
-	FinishedAt          time.Time
+	ID                 string
+	RecordDraftSetID   string
+	DataContractHash   string
+	ExtractionSpecHash string
+	SchemaHash         string
+	ProducerNodeRunID  string
+	Status             string
+	ProducerAttempt    int
+	EngineVersion      string
+	DraftCount         int
+	TransformedCount   int
+	ChangedRecordCount int
+	IssueCount         int
+	CreatedAt          time.Time
+	FinishedAt         time.Time
 }
 
 const (

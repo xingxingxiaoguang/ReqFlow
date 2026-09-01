@@ -16,6 +16,7 @@ type WorkflowProgressReporter interface {
 }
 
 type WorkflowCapabilityExecution struct {
+	WorkspaceID      string
 	RunID            string
 	NodeRunID        string
 	Attempt          int
