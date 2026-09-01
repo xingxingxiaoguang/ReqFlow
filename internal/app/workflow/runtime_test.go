@@ -197,6 +197,16 @@ func (e blockingRuntimeExecutor) Resume(ctx context.Context, execution NodeExecu
 	return e.Execute(ctx, execution)
 }
 
+type runtimeManualCompleter struct {
+	ref     domain.CapabilityRef
+	outputs []domain.NodeResourceBinding
+}
+
+func (c runtimeManualCompleter) Capability() domain.CapabilityRef { return c.ref }
+func (c runtimeManualCompleter) Complete(context.Context, port.WorkflowManualExecution) ([]domain.NodeResourceBinding, error) {
+	return c.outputs, nil
+}
+
 func TestRuntimeAdvancesLinearNodesAndValidatesOutputs(t *testing.T) {
 	first := testCapability("runtime.first", "raw", "document")
 	second := testCapability("runtime.second", "document", "artifact")
@@ -217,7 +227,11 @@ func TestRuntimeAdvancesLinearNodesAndValidatesOutputs(t *testing.T) {
 		t.Fatal(err)
 	}
 	repo := &runtimeMemoryRepo{}
-	service, err := NewRuntimeService(repo, runtimeRevisionReader{revision: revision}, registry, time.Second, 1)
+	manuals, err := NewManualCompletionRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewRuntimeService(repo, runtimeRevisionReader{revision: revision}, registry, manuals, time.Second, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -256,8 +270,10 @@ func TestRuntimeModelFailureTransitionsToManualCompletion(t *testing.T) {
 		Connections: []domain.Connection{{From: domain.Endpoint{Kind: domain.EndpointWorkflowInput, Port: "source"},
 			To: domain.Endpoint{Kind: domain.EndpointNodeInput, NodeID: "manual", Port: "in"}}}}
 	registry, _ := NewNodeExecutorRegistry(runtimeExecutor{ref: definition.Ref, err: errors.New("LLM HTTP 503: unavailable")})
+	manuals, _ := NewManualCompletionRegistry(runtimeManualCompleter{ref: definition.Ref,
+		outputs: []domain.NodeResourceBinding{{Port: "out", ResourceType: domain.ResourceArtifact, ResourceID: "human-artifact"}}})
 	repo := &runtimeMemoryRepo{}
-	service, _ := NewRuntimeService(repo, runtimeRevisionReader{revision: revision}, registry, time.Second, 1)
+	service, _ := NewRuntimeService(repo, runtimeRevisionReader{revision: revision}, registry, manuals, time.Second, 1)
 	run, err := service.Create(context.Background(), CreateRunRequest{RevisionID: revision.ID, Inputs: []RunInput{{Port: "source", ResourceType: "raw", ResourceID: "raw-1"}}})
 	if err != nil {
 		t.Fatal(err)
@@ -271,7 +287,7 @@ func TestRuntimeModelFailureTransitionsToManualCompletion(t *testing.T) {
 	if repo.snapshot.Run.Status != domain.RunAwaitingManualCompletion || repo.snapshot.Nodes[0].Status != domain.NodeAwaitingManualCompletion {
 		t.Fatalf("未进入人工态: %+v", repo.snapshot)
 	}
-	if err := service.CompleteManual(context.Background(), run.Run.ID, "manual", "user-1", []domain.NodeResourceBinding{{Port: "out", ResourceType: domain.ResourceArtifact, ResourceID: "human-artifact"}}); err != nil {
+	if err := service.CompleteManual(context.Background(), run.Run.ID, "manual", "user-1", json.RawMessage(`{"decision":"approve"}`)); err != nil {
 		t.Fatal(err)
 	}
 	if repo.snapshot.Run.Status != domain.RunSucceeded || len(repo.snapshot.Bindings) != 2 || repo.snapshot.Bindings[1].Provenance == nil {
@@ -288,7 +304,11 @@ func TestRuntimeRejectsMissingRequiredInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := NewRuntimeService(&runtimeMemoryRepo{}, runtimeRevisionReader{revision: revision}, registry, time.Second, 1)
+	manuals, err := NewManualCompletionRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
+	service, err := NewRuntimeService(&runtimeMemoryRepo{}, runtimeRevisionReader{revision: revision}, registry, manuals, time.Second, 1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -308,8 +328,12 @@ func TestRuntimeCancelsExecutionWhenLeaseIsLost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	manuals, err := NewManualCompletionRegistry()
+	if err != nil {
+		t.Fatal(err)
+	}
 	repo := &runtimeMemoryRepo{renewErr: port.ErrRunLeaseLost}
-	service, err := NewRuntimeService(repo, runtimeRevisionReader{revision: revision}, registry, 20*time.Millisecond, 0)
+	service, err := NewRuntimeService(repo, runtimeRevisionReader{revision: revision}, registry, manuals, 20*time.Millisecond, 0)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -72,6 +72,7 @@ type RuntimeService struct {
 		GetRevision(context.Context, string) (*domain.WorkflowRevision, error)
 	}
 	registry *NodeExecutorRegistry
+	manuals  *ManualCompletionRegistry
 	lease    time.Duration
 	retry    int
 	now      func() time.Time
@@ -82,9 +83,10 @@ func NewRuntimeService(repo port.WorkflowRunRepo,
 	revisions interface {
 		GetRevision(context.Context, string) (*domain.WorkflowRevision, error)
 	},
-	registry *NodeExecutorRegistry, lease time.Duration, retry int) (*RuntimeService, error) {
-	if repo == nil || revisions == nil || registry == nil {
-		return nil, fmt.Errorf("workflow runtime: repository, revision reader and executor registry are required")
+	registry *NodeExecutorRegistry, manuals *ManualCompletionRegistry,
+	lease time.Duration, retry int) (*RuntimeService, error) {
+	if repo == nil || revisions == nil || registry == nil || manuals == nil {
+		return nil, fmt.Errorf("workflow runtime: repository, revision reader, executor and manual registries are required")
 	}
 	if lease <= 0 {
 		lease = 30 * time.Second
@@ -92,7 +94,8 @@ func NewRuntimeService(repo port.WorkflowRunRepo,
 	if retry < 0 {
 		retry = 2
 	}
-	return &RuntimeService{repo: repo, revisions: revisions, registry: registry, lease: lease, retry: retry, now: time.Now}, nil
+	return &RuntimeService{repo: repo, revisions: revisions, registry: registry, manuals: manuals,
+		lease: lease, retry: retry, now: time.Now}, nil
 }
 
 func (s *RuntimeService) Create(ctx context.Context, request CreateRunRequest) (*domain.WorkflowRunSnapshot, error) {
@@ -153,8 +156,10 @@ func (s *RuntimeService) Resume(ctx context.Context, id string) error {
 	return s.repo.ResumeWorkflowRun(ctx, id)
 }
 
+// CompleteManual 分发到按 Capability 注册的人工完成处理器。HTTP 只提交
+// 领域 payload；输出绑定全部由处理器在服务端生成。
 func (s *RuntimeService) CompleteManual(ctx context.Context, runID, nodeID, actor string,
-	outputs []domain.NodeResourceBinding) error {
+	payload json.RawMessage) error {
 	snapshot, err := s.repo.GetWorkflowRun(ctx, runID)
 	if err != nil {
 		return err
@@ -165,6 +170,21 @@ func (s *RuntimeService) CompleteManual(ctx context.Context, runID, nodeID, acto
 	}
 	if strings.TrimSpace(actor) == "" {
 		return fmt.Errorf("人工完成必须包含提交者")
+	}
+	completer, registered := s.manuals.Lookup(node.Node.Capability.Ref)
+	if !registered {
+		return fmt.Errorf("Capability %s 未注册人工完成处理器", capabilityKey(node.Node.Capability.Ref))
+	}
+	inputs, err := s.repo.GetNodeInputs(ctx, node.ID)
+	if err != nil {
+		return err
+	}
+	outputs, err := completer.Complete(ctx, port.WorkflowManualExecution{WorkspaceID: snapshot.Run.WorkspaceID,
+		RunID: snapshot.Run.ID, NodeRunID: node.ID, Attempt: node.Attempt, Node: node.Node,
+		Rules: snapshot.Run.Revision.Rules, Inputs: inputs, Actor: actor,
+		Payload: append(json.RawMessage(nil), payload...)})
+	if err != nil {
+		return err
 	}
 	if err := validateNodeOutputs(node, outputs); err != nil {
 		return err

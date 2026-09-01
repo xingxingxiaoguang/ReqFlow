@@ -191,7 +191,7 @@ Agent 和手动 UI 必须调用同一个 WorkflowDraft Command 层。Agent 只�
 - [x] 新建纵向线性流程编辑器；
 - [ ] 新建 DataContract、ExtractionSpec、SearchSpec、OutputContract 编辑器；
 - [ ] 实现规则影响和差异视图；
-- [x] 实现样本预览与验收用例管理（temporary manifest；真实 Capability dry-run 留 Phase 5）。
+- [x] 实现样本预览与验收用例管理（真实 Capability dry-run：确定性内核真实执行，LLM/人工节点显式样本标记 simulated）。
 
 完成标准：关闭 LLM 配置后，从空白创建、预览、验收并发布一条线性流程。
 

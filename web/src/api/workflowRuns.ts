@@ -67,5 +67,5 @@ export const workflowRunsApi = {
   pause: (id: string) => api.post<WorkflowRunSnapshot>(`/api/workflow-runs/${id}/pause`, {}),
   resume: (id: string) => api.post<WorkflowRunSnapshot>(`/api/workflow-runs/${id}/resume`, {}),
   retry: (id: string, nodeID: string) => api.post<WorkflowRunSnapshot>(`/api/workflow-runs/${id}/nodes/${nodeID}/retry`, {}),
-  completeManual: (id: string, nodeID: string, outputs: ResourceBinding[]) => api.post<WorkflowRunSnapshot>(`/api/workflow-runs/${id}/nodes/${nodeID}/manual-completion`, { outputs }),
+  completeManual: (id: string, nodeID: string, payload: unknown) => api.post<WorkflowRunSnapshot>(`/api/workflow-runs/${id}/nodes/${nodeID}/manual-completion`, { payload }),
 }

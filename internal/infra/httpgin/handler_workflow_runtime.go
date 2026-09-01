@@ -2,12 +2,12 @@ package httpgin
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	appworkflow "reqflow/internal/app/workflow"
-	domain "reqflow/internal/domain/workflow"
 )
 
 func (h *handlers) createWorkflowRun(c *gin.Context) {
@@ -82,13 +82,14 @@ func (h *handlers) retryWorkflowNode(c *gin.Context) {
 
 func (h *handlers) completeWorkflowNodeManual(c *gin.Context) {
 	var request struct {
-		Outputs []domain.NodeResourceBinding `json:"outputs"`
+		Payload json.RawMessage `json:"payload"`
 	}
 	if err := c.ShouldBindJSON(&request); err != nil {
-		fail(c, http.StatusUnprocessableEntity, "人工产物参数非法")
+		fail(c, http.StatusUnprocessableEntity, "人工完成参数非法")
 		return
 	}
-	if err := h.svc.WorkflowRuntime.CompleteManual(c.Request.Context(), c.Param("id"), c.Param("node_id"), appworkflow.LocalActorID, request.Outputs); err != nil {
+	if err := h.svc.WorkflowRuntime.CompleteManual(c.Request.Context(), c.Param("id"), c.Param("node_id"),
+		appworkflow.LocalActorID, request.Payload); err != nil {
 		workflowError(c, err)
 		return
 	}

@@ -1,6 +1,7 @@
 package repository
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"gorm.io/gorm/clause"
 
 	"reqflow/internal/domain/model"
+	domain "reqflow/internal/domain/workflow"
+	"reqflow/internal/port"
 )
 
 func (r *PipelineRepo) BeginAnalysisResult(ctx context.Context, result *model.AnalysisResult,
@@ -130,6 +133,73 @@ func (r *PipelineRepo) FailAnalysisResult(ctx context.Context, id, nodeRunID str
 		}
 		return nil
 	})
+}
+
+// CreateHumanApprovedAnalysis 为 human.approve_analysis 的 NodeRun 直接写入
+// 一条 succeeded AnalysisResult。人工节点不持有 lease，因此使用
+// awaiting_manual_completion 状态做 fencing；producer_node_run_id 唯一约束
+// 保证同一人工 Gate 的重试只能复用完全相同的结论。
+func (r *PipelineRepo) CreateHumanApprovedAnalysis(ctx context.Context, result *model.AnalysisResult) (*model.AnalysisResult, error) {
+	if result == nil || result.ProducerNodeRunID == "" || result.ProducerWorkflowRunID == "" ||
+		strings.TrimSpace(result.Instruction) == "" || len(result.OutputContract) == 0 ||
+		strings.TrimSpace(result.OutputContractHash) == "" || len(result.OutputSchema) == 0 ||
+		strings.TrimSpace(result.OutputSchemaHash) == "" || len(result.Output) == 0 ||
+		result.Status != model.AnalysisResultSucceeded {
+		return nil, fmt.Errorf("人工确认 AnalysisResult 必须绑定 WorkflowRun、NodeRun、完整输出合同和已确认输出")
+	}
+	if result.ID == "" {
+		result.ID = uuid.NewString()
+	}
+	now := time.Now()
+	if result.CreatedAt.IsZero() {
+		result.CreatedAt = now
+	}
+	if result.FinishedAt.IsZero() {
+		result.FinishedAt = now
+	}
+	var stored *model.AnalysisResult
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var node struct {
+			CapabilityKind string
+			Status         domain.NodeRunStatus
+			Attempt        int
+		}
+		if err := tx.Raw(`SELECT node #>> '{capability,ref,kind}' AS capability_kind, status, attempt
+			FROM workflow_node_runs WHERE id = ? FOR UPDATE`, result.ProducerNodeRunID).Scan(&node).Error; err != nil {
+			return err
+		}
+		if node.CapabilityKind != "human.approve_analysis" || node.Status != domain.NodeAwaitingManualCompletion ||
+			node.Attempt != result.ProducerAttempt {
+			return fmt.Errorf("%w: 人工确认 Gate 不再处于 awaiting", port.ErrRunInvalidTransition)
+		}
+		if err := tx.Exec(`INSERT INTO analysis_results
+			(id, workspace_id, instruction, output_contract, output_contract_hash,
+			 output_schema, output_schema_hash, producer_workflow_run_id, producer_node_run_id,
+			 producer_attempt, status, output, agent_context, model, created_at, finished_at)
+			VALUES (?, ?, ?, ?::jsonb, ?, ?::jsonb, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, ?, ?)
+			ON CONFLICT (producer_node_run_id) DO NOTHING`, result.ID, result.WorkspaceID,
+			result.Instruction, string(result.OutputContract), result.OutputContractHash,
+			string(result.OutputSchema), result.OutputSchemaHash, result.ProducerWorkflowRunID,
+			result.ProducerNodeRunID, result.ProducerAttempt, result.Status, string(result.Output),
+			string(result.AgentContext), result.Model, result.CreatedAt, result.FinishedAt).Error; err != nil {
+			return err
+		}
+		var row analysisResultRow
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("producer_node_run_id = ?", result.ProducerNodeRunID).First(&row).Error; err != nil {
+			return err
+		}
+		if row.OutputContractHash != result.OutputContractHash ||
+			!bytes.Equal([]byte(row.Output), result.Output) {
+			return fmt.Errorf("人工确认 Gate %s 已存在不同内容的确认结论", result.ProducerNodeRunID)
+		}
+		stored = row.toModel()
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return stored, nil
 }
 
 func (r *PipelineRepo) CreateArtifactForNode(ctx context.Context, artifact *model.Artifact,

@@ -1,24 +1,21 @@
 # ReqFlow 重构执行交接
 
-更新时间：2026-09-01
+更新时间：2026-09-01（第八波完成后）
 
 ## 1. 当前停点
 
-代码停在第八波“真实 Preview 与正式人工审核链”的设计切入点，尚未开始该波代码修改。工作树在写本文档前是干净的；最近一个功能提交是：
-
-- `471db3f refactor: inline workflow resource contracts`
-
-当前主链已完成到：
+第八波「真实 Preview 与正式人工审核链」已完成并随本文档一并提交。主链现状：
 
 1. 新 Workflow Draft、Command、Rule DSL 与发布校验；
 2. Draft 持久化、并发、幂等与新 API；
-3. Preview/Acceptance/Revision 的首版闭环与新前端工作流页面；
+3. Preview/Acceptance/Revision 闭环与新前端工作流页面；
 4. Agent fallback、熔断、`needs_human` 与 DesignSession；
 5. WorkflowRun/NodeRun 线性运行时、lease、checkpoint、retry、pause/resume、attempt/owner fencing；
 6. 业务资源 producer 从旧 Task/StepRun 全量切到 WorkflowRun/NodeRun，旧 Orchestrator 与 Platform Agent 删除；
-7. 全部自动 Capability 接入新运行时，Profile 范式删除，执行合同改为 Revision 内联并由资源冻结。
+7. 全部自动 Capability 接入新运行时，Profile 范式删除，执行合同改为 Revision 内联并由资源冻结；
+8. Preview 改为真实 dry-run（按 CapabilityRef 注册执行器，顺序执行 ResolvedNode，输出全部 temporary）；Acceptance 用用例自身 input 重跑并按结构化 expectation 比较；`human.review_records` / `human.approve_analysis` 人工完成改为按 Capability 注册的领域处理器，通用「客户端提交 outputs」路径已删除。
 
-下一位接手者不要重做以上波次，也不要恢复任何旧 Task、StepRun、Profile、`/api/v2` 兼容层或旧数据迁移。
+下一位接手者不要重做以上波次，也不要恢复任何旧 Task、StepRun、Profile、`/api/v2` 兼容层、旧数据迁移或通用 outputs 提交路径。
 
 ## 2. 已落地提交
 
@@ -31,26 +28,34 @@
 | `0d6aad4` | WorkflowRun/NodeRun 运行时与 Worker |
 | `40beffc` | producer 切到 WorkflowRun/NodeRun，删除旧运行面 |
 | `471db3f` | 内联资源合同、删除 Profile、补齐全部自动 Executor |
+| （本波） | 真实 Preview dry-run、真实 Acceptance、人工完成处理器、债账更新 |
 
 ## 3. 当前系统事实
 
 ### 3.1 唯一运行模型
 
 - 运行真相只有 `workflow_runs`、`workflow_node_runs`、`node_resource_bindings`。
-- 运行时已注册：`source.parse`、`document.extract`、`data.transform`、`data.validate`、`data.publish`、`retrieval.build`、`knowledge.analyze`、`artifact.render`，以及两个人工 Capability。
-- NodeRun 的租约、checkpoint、progress、完成写入均受 `attempt + lease_owner` fencing。
+- 运行时已注册：`source.parse`、`document.extract`、`data.transform`、`data.validate`、`data.publish`、`retrieval.build`、`knowledge.analyze`、`artifact.render`，以及两个人工 Capability（运行时统一进入 awaiting_manual_completion）。
+- NodeRun 的租约、checkpoint、progress、完成写入均受 `attempt + lease_owner` fencing；人工确认类资源写入受 `awaiting_manual_completion` 状态 + `producer_node_run_id` 唯一约束 fencing。
 - Capability execution 的 `workspace_id` 来自已发布 Revision，不由节点请求体提供。
 
 ### 3.2 唯一规则与资源合同
 
 - `DataContract`、`ExtractionSpec`、`SearchSpec`、`OutputContract` 只存在于 Workflow `RuleBundle`。
-- `RecordDraftSet` 冻结 DataContract、ExtractionSpec、编译后的 JSON Schema 及各自哈希。
-- `TransformedRecordSet` 继承合同哈希；转换和校验直接消费领域规则类型，不再经过私有 JSON DTO。
-- `RetrievalSnapshot` 冻结 SearchSpec、SearchSpecHash、DataContractHash 与 embedding model。
-- `AnalysisResult` 冻结 instruction、OutputContract、编译后的 OutputSchema 及哈希。
+- `RecordDraftSet` 冻结 DataContract、ExtractionSpec、编译后的 JSON Schema 及各自哈希；`TransformedRecordSet` 继承合同哈希；`RetrievalSnapshot` 冻结 SearchSpec 与 embedding model；`AnalysisResult` 冻结 instruction、OutputContract、编译 Schema 及哈希。
 - 后端代码和数据库定义中不存在 Extraction/Retrieval/Analysis Profile 表或 Profile ID。
 
-### 3.3 仍在的开发期结构
+### 3.3 Preview / Acceptance / 人工完成合同（第八波新事实）
+
+- Preview 输入是 `{"inputs":{<流程输入端口>:{resource_id,boundary}},"samples":{<节点ID>:{<端口>:<样本载荷>}}}`，DisallowUnknownFields 严格解码。
+- Preview 引擎（`internal/app/workflow/dry_run.go`）按 `DryRunRegistry` 顺序执行节点；任一节点失败即停止并把下游标记 `skipped`；全部输出进入 `workflow_previews.output_manifest`，`temporary=true`，样本嵌入上限 64KiB。
+- dry-run 真实性分级：`source.parse` 内存真实解析；`data.transform`/`data.validate` 运行 `internal/domain/logic` 真实内核并只读复查目标 Dataset；`data.publish`/`retrieval.build`/`artifact.render` 专用 dry-run（不落库、不建索引）；LLM/人工节点只接受 `samples` 显式样本，标记 `simulated` 并按冻结合同 Schema 校验（真实模型 dry-run 是 `WF-8`）。
+- Acceptance endpoint `POST /api/workflows/:id/acceptance-cases/:case_id/run` 不再接收 `preview_id`：服务端用用例自身 input 重跑、按 expectation（`{"nodes":{<节点>:{status,simulated,outputs:{<端口>:{metrics:{…}}}}}}`，只比较声明过的字段）比较真实 manifest，通过才原子更新 `LastPassedRevision/LastPreviewID`；未通过返回 422 + mismatches，不盖章。
+- 人工完成 endpoint `POST /api/workflow-runs/:id/nodes/:node_id/manual-completion` 只提交 `{"payload":{…}}`；actor/workspace 由服务端注入，输出绑定全部由处理器生成。
+- `human.review_records` 处理器（`internal/app/pipeline/manual_review.go`）：载荷 `{rationale,decisions:[{validation_result_id,action,fields?,note?}]}` 必须覆盖 ValidationResultSet 全部记录；approve 沿用结果字段、edit 服务端按 Schema 规范化并重算 ItemKey/Fingerprint、exclude 保留审核时字段；生成不可变 `ApprovedRecordSet`（`producer_node_run_id` 幂等，review_hash 不同即拒绝）。
+- `human.approve_analysis` 处理器（`internal/app/analysis/manual_approval.go`）：不复用客户端 AnalysisResult ID，而是为新 `analysis_results` 行（`CreateHumanApprovedAnalysis`，状态 fencing + 幂等）写入 succeeded 人工结果，合同哈希必须与 Revision 一致、输出按 OutputContract 校验。
+
+### 3.4 仍在的开发期结构
 
 - 数据能力 handler 文件、函数和依赖字段仍带 `v2`/`V2` 内部命名，但唯一公开根路由已是 `/api`。
 - 前端仍保留 `web/src/pages/v2/**`、`web/src/pages/agent/**`、`web/src/api/v2/**`、旧导航与 Profile UI；这些应整体删除，不能改造成兼容适配器。
@@ -58,7 +63,7 @@
 
 ## 4. 最近验证结果
 
-第七波提交前已执行：
+第八波提交前已执行：
 
 ```bash
 make test
@@ -73,35 +78,17 @@ go test -tags integration ./internal/infra/database \
 - Go test、vet、架构约束、密钥扫描全部通过；
 - TypeScript 类型检查通过；
 - `git diff --check` 通过；
-- fresh migration 测试因本机 `127.0.0.1:5432` 连接拒绝，按测试内既有约定跳过，其余结果通过。
+- fresh migration 测试按本机 PostgreSQL 可用性决定是否跳过；未启动只能记录为跳过，不能伪称实际迁移成功。
 
-每个后续功能波次仍必须独立执行同一组门禁并单独提交。涉及迁移时必须再次运行 fresh migration 测试；PostgreSQL 未启动只能记录为跳过，不能伪称实际迁移成功。
+每个后续功能波次仍必须独立执行同一组门禁并单独提交。涉及迁移时必须再次运行 fresh migration 测试。
 
-## 5. 下一波：真实 Preview 与正式人工审核
+## 5. 下一波：确定性画像与 Design Agent 工具
 
-### 5.1 已确认的问题
+优先做 §6.1（样本画像 + Design Agent 只读工具 + 前端证据展示，销账 `WF-4`）。要点重申：
 
-当前 `internal/app/workflow/preview.go` 仍生成静态 temporary manifest，没有调用 Capability。当前 Acceptance 只检查一个 Preview 是否属于当前 Draft revision 后直接盖章：
-
-- 没有用 AcceptanceCase 自己的 input 重跑；
-- 没有比较 `expectation`；
-- 因而不能证明样本行为。
-
-当前 `/workflow-runs/:id/nodes/:node_id/manual-completion` 接受客户端直接提交 `NodeResourceBinding`，只校验端口和资源类型，仍允许伪造任意同类型资源 ID。`review_repo.go` 已能创建不可变 `ApprovedRecordSet`，但对应应用服务在旧 Orchestrator 删除时一并移除了。
-
-### 5.2 推荐实现边界
-
-1. 建立按 `CapabilityRef` 注册的 Preview dry-run 接口和临时资源绑定；Preview 顺序执行 Draft 的 ResolvedNode。
-2. 所有 Preview 输出必须带 `temporary=true`，不得进入正式 Dataset、Artifact、OpenSearch 索引或正式资源表。
-3. `HasSideEffects=true` 的 Capability 必须有专用 dry-run；禁止调用正式 publish。
-4. LLM/人工节点在模型不可用时允许显式样本输出，但必须标记为人工模拟并按冻结 Schema 校验，不能默默伪造成功。
-5. Acceptance endpoint 应读取并重跑目标 case 的 input，按结构化 expectation 比较真实 manifest；只有本次运行通过才能原子更新 `LastPassedRevision/LastPreviewID`。
-6. 建立按 Capability 注册的 ManualCompletion handler；HTTP 只提交领域 payload，actor/workspace 由服务端上下文注入。
-7. `human.review_records` handler 根据节点真实 `ValidationResultSet` 输入创建不可变 `ApprovedRecordSet`，完整覆盖每条记录并复查 Dataset 冲突，然后返回服务端生成的资源绑定。
-8. `human.approve_analysis` 不应复用任意客户端 AnalysisResult ID。长期最干净的做法是在 `analysis_results` 中创建一条由人工 NodeRun 生产、合同一致且 Schema 校验通过的 succeeded 结果，供 `artifact.render` 正常消费。
-9. 通用“客户端提交 outputs”路径完成替换后直接删除，不保留兼容参数。
-
-第八波建议提交边界：真实 Preview、真实 Acceptance、两个人工 handler、相关 API/测试和债账更新一起完成并独立提交。
+- 画像必须可缓存：文件/区块统计、字段候选、空值率、唯一率、类型与长度分布、key 候选、检索字段候选和证据样本。
+- 给 Design Agent 注入只读 profile/sample/evidence/validate/preview 工具；Proposal 仍只能经用户接受后走 Draft Command，Agent 不能直接获得 Repository。
+- `WF-8`（LLM 节点真实模型 dry-run）可在画像波次一并评估：抽取/分析服务需要一个不落库的样本级模型执行入口，接入前 Preview 的 LLM 节点保持显式样本。
 
 ## 6. 后续剩余波次
 
@@ -140,22 +127,23 @@ go test -tags integration ./internal/infra/database \
 以 `docs/DEBT.md` 为唯一账本。当前活跃项：
 
 - `WF-2`：固定 local actor 与 workspace 授权边界；
-- `WF-3`：Preview 尚非真实 dry-run；
 - `WF-4`：缺确定性画像、样本和证据工具；
 - `WF-6`：migration 尚未压平；
-- `WF-7`：内部仍有 V2 命名。
+- `WF-7`：内部仍有 V2 命名；
+- `WF-8`：Preview 的 LLM 节点尚未接入真实模型 dry-run（现为显式样本 + simulated 标记）。
 
-`WF-1` 与 `WF-5` 已销账，不要重新登记为“待兼容”的工作。
+`WF-1`、`WF-3` 与 `WF-5` 已销账，不要重新登记为"待兼容"的工作。
 
 ## 8. 继续工作时的第一组命令
 
 ```bash
 git status --short
 git log --oneline -8
-sed -n '1,240p' docs/REFACTOR_HANDOFF.md
-sed -n '1,220p' internal/app/workflow/preview.go
-sed -n '1,240p' internal/app/workflow/runtime.go
-sed -n '1,260p' internal/infra/repository/review_repo.go
+sed -n '1,260p' docs/REFACTOR_HANDOFF.md
+sed -n '1,260p' internal/app/workflow/dry_run.go
+sed -n '1,180p' internal/app/workflow/preview.go
+sed -n '1,240p' internal/app/pipeline/manual_review.go
+sed -n '1,180p' internal/app/analysis/manual_approval.go
 ```
 
 继续时先确认工作树只包含预期变更；不要 reset，也不要覆盖用户改动。

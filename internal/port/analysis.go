@@ -13,6 +13,9 @@ type AnalysisRepo interface {
 	GetAnalysisResult(ctx context.Context, id string) (*model.AnalysisResult, error)
 	CompleteAnalysisResult(ctx context.Context, result *model.AnalysisResult, producerAttempt int) error
 	FailAnalysisResult(ctx context.Context, id, nodeRunID string, producerAttempt int, message string) error
+	// CreateHumanApprovedAnalysis 为 human.approve_analysis 的 NodeRun 写入
+	// succeeded 结果；幂等键是 producer_node_run_id，重复提交必须内容一致。
+	CreateHumanApprovedAnalysis(ctx context.Context, result *model.AnalysisResult) (*model.AnalysisResult, error)
 
 	CreateArtifactForNode(ctx context.Context, artifact *model.Artifact, producerAttempt int) (*model.Artifact, error)
 	GetArtifact(ctx context.Context, id string) (*model.Artifact, error)

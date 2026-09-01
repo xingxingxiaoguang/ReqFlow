@@ -158,7 +158,8 @@ func TestPreviewAcceptanceAndPublicationStayOnDraftRevision(t *testing.T) {
 	catalog := editorCatalog(t)
 	repo := &memoryWorkflowRepo{draft: editorDraft()}
 	service, _ := NewDraftService(repo, catalog)
-	previewService, err := NewPreviewService(repo, catalog)
+	dryRuns := editorDryRuns(t)
+	previewService, err := NewPreviewService(repo, catalog, dryRuns)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,19 +168,25 @@ func TestPreviewAcceptanceAndPublicationStayOnDraftRevision(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := service.ExecuteCommand(context.Background(), repo.draft.ID, CommandRequest{CommandID: "case-command", ExpectedRevision: 1,
-		Type: "upsert_acceptance_case", Payload: json.RawMessage(`{"id":"case_one","name":"样本","input":{},"expectation":{}}`)}); err != nil {
+		Type: "upsert_acceptance_case", Payload: json.RawMessage(`{"id":"case_one","name":"样本","input":{"inputs":{"input":{"resource_id":"raw-1"}}},"expectation":{"nodes":{"sink":{"status":"succeeded","simulated":true,"outputs":{"out":{"metrics":{"items":1}}}}}}}`)}); err != nil {
 		t.Fatal(err)
 	}
 	preview, err := previewService.Create(context.Background(), repo.draft.ID, CreatePreviewRequest{DraftRevision: 2, Input: json.RawMessage(`{}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	acceptance, err := previewService.RunAcceptance(context.Background(), repo.draft.ID, "case_one", preview.ID)
+	if preview.Status != domain.PreviewFailed {
+		t.Fatalf("缺少流程输入时预览应失败: %+v", preview)
+	}
+	acceptance, err := previewService.RunAcceptance(context.Background(), repo.draft.ID, "case_one")
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !acceptance.Passed {
+		t.Fatalf("验收用例应按自身 input 通过: %+v %v", acceptance.Preview, acceptance.Mismatches)
+	}
 	passed := acceptance.Draft.AcceptanceCases[0]
-	if !passed.LastPassed || passed.LastPassedRevision != 2 || passed.LastPreviewID != preview.ID {
+	if !passed.LastPassed || passed.LastPassedRevision != 2 || passed.LastPreviewID != acceptance.Preview.ID {
 		t.Fatalf("验收结果没有绑定当前 draft revision: %+v", passed)
 	}
 	revision, err := publication.Publish(context.Background(), repo.draft.ID, PublishRequest{ExpectedRevision: 2})

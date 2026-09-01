@@ -12,9 +12,10 @@ export default function WorkflowDesigner() {
   const client = useQueryClient()
   const workflow = useQuery({ queryKey: ['workflow', id], queryFn: () => workflowsApi.get(id), enabled: Boolean(id) })
   const capabilities = useQuery({ queryKey: ['workflow-capabilities'], queryFn: workflowsApi.capabilities })
-  const [preview, setPreview] = useState<{ id: string; draft_revision: number }>()
+  const [preview, setPreview] = useState<{ id: string; draft_revision: number; status: string }>()
   const [caseName, setCaseName] = useState('代表性样本')
   const [caseInput, setCaseInput] = useState('{}')
+  const [caseExpectation, setCaseExpectation] = useState('{}')
   const [contract, setContractText] = useState('{}')
   const draft = workflow.data?.draft
   const catalog = capabilities.data?.capabilities ?? []
@@ -55,19 +56,26 @@ export default function WorkflowDesigner() {
     try {
       const value = JSON.parse(caseInput)
       const result = await workflowsApi.preview(id, draft.revision, value)
-      setPreview({ id: result.id, draft_revision: result.draft_revision })
-      message.success('临时预览已通过')
+      setPreview({ id: result.id, draft_revision: result.draft_revision, status: result.status })
+      message.success('真实 dry-run 预览已通过')
     } catch (error) { message.error((error as Error).message) }
   }
   const saveCase = () => {
     if (!draft) return
     try {
-      command.mutate({ type: 'upsert_acceptance_case', payload: { id: 'sample_case', name: caseName, input: JSON.parse(caseInput), expectation: {} } })
-    } catch { message.error('样本输入必须是合法 JSON') }
+      const input = JSON.parse(caseInput)
+      const expectation = JSON.parse(caseExpectation)
+      command.mutate({ type: 'upsert_acceptance_case', payload: { id: 'sample_case', name: caseName, input, expectation } })
+    } catch { message.error('样本 input 和 expectation 必须是合法 JSON') }
   }
   const runCase = async () => {
-    if (!preview) return message.warning('先运行当前 revision 的预览')
-    try { await workflowsApi.runAcceptance(id, 'sample_case', preview.id); await client.invalidateQueries({ queryKey: ['workflow', id] }); message.success('验收用例已通过') } catch (error) { message.error((error as Error).message) }
+    if (!draft?.acceptance_cases?.some((item) => item.id === 'sample_case')) return message.warning('先保存验收用例')
+    try {
+      const result = await workflowsApi.runAcceptance(id, 'sample_case')
+      await client.invalidateQueries({ queryKey: ['workflow', id] })
+      if (result.passed) message.success('验收用例按自身样本重跑并通过')
+      else message.error(`验收未通过：${result.mismatches?.map((item) => `${item.path} 期望 ${JSON.stringify(item.expected)} 实际 ${JSON.stringify(item.actual)}`).join('；') || '预览失败'}`)
+    } catch (error) { message.error((error as Error).message) }
   }
   const publish = async () => {
     if (!draft) return
@@ -93,7 +101,17 @@ export default function WorkflowDesigner() {
           </Card>
           <Collapse items={[{ key: 'contract', label: 'DataContract（内联）', children: <Space direction="vertical" style={{ width: '100%' }}><Typography.Text type="secondary">规则保存在 Workflow Draft 中，发布后随 Revision 固化。</Typography.Text><Input.TextArea rows={7} value={contract} onChange={(event) => setContractText(event.target.value)} placeholder='{"record_granularity":"一条记录","key_fields":["id"],"fields":[]}' /><Button onClick={saveContract}>保存合同</Button></Space> }]} />
           <Card title="样本验收" extra={<Tag color={draft.acceptance_cases?.some((item) => item.last_passed) ? 'green' : 'gold'}>{draft.acceptance_cases?.some((item) => item.last_passed) ? '已通过' : '待运行'}</Tag>}>
-            <Space direction="vertical" style={{ width: '100%' }}><Input value={caseName} onChange={(event) => setCaseName(event.target.value)} placeholder="用例名称" /><Input.TextArea rows={3} value={caseInput} onChange={(event) => setCaseInput(event.target.value)} placeholder="样本 input JSON" /><Space wrap><Button onClick={saveCase}>保存用例</Button><Button icon={<EyeOutlined />} onClick={() => void createPreview()}>预览</Button><Button icon={<CheckCircleOutlined />} disabled={!preview} onClick={() => void runCase()}>通过验收</Button></Space></Space>
+            <Space direction="vertical" style={{ width: '100%' }}>
+              <Input value={caseName} onChange={(event) => setCaseName(event.target.value)} placeholder="用例名称" />
+              <Input.TextArea rows={4} value={caseInput} onChange={(event) => setCaseInput(event.target.value)} placeholder='样本 input JSON：{"inputs":{"<流程输入>":{"resource_id":"…"}},"samples":{"<节点ID>":{"<端口>":…}}}' />
+              <Input.TextArea rows={3} value={caseExpectation} onChange={(event) => setCaseExpectation(event.target.value)} placeholder='expectation JSON：{"nodes":{"<节点ID>":{"status":"succeeded","simulated":false,"outputs":{"<端口>":{"metrics":{"records":1}}}}}}' />
+              <Space wrap>
+                <Button onClick={saveCase}>保存用例</Button>
+                <Button icon={<EyeOutlined />} onClick={() => void createPreview()}>预览</Button>
+                <Button icon={<CheckCircleOutlined />} onClick={() => void runCase()}>通过验收</Button>
+              </Space>
+              {preview && <Alert type={preview.status === 'passed' ? 'success' : 'error'} message={`Preview ${preview.id.slice(0, 8)}：${preview.status}`} showIcon />}
+            </Space>
           </Card>
           <Button type="primary" size="large" block icon={<RocketOutlined />} disabled={errors.length > 0 || !draft.acceptance_cases?.some((item) => item.last_passed)} onClick={() => void publish()}>发布不可变 Revision</Button>
         </Space>

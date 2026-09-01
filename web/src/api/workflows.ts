@@ -55,6 +55,8 @@ export type WorkflowDraft = {
 export type ValidationIssue = { code: string; path: string; message: string; severity: 'warning' | 'error' }
 export type WorkflowView = { draft: WorkflowDraft; issues: ValidationIssue[]; active_revision_id?: string }
 export type Preview = { id: string; workflow_id: string; draft_revision: number; status: 'passed' | 'failed'; output_manifest: unknown; issues?: ValidationIssue[] }
+export type AcceptanceMismatch = { path: string; expected: unknown; actual: unknown }
+export type RunAcceptanceResult = { draft: WorkflowDraft; preview: Preview; passed: boolean; mismatches?: AcceptanceMismatch[] }
 export type Revision = WorkflowDraft & { revision_no: number; content_hash: string; published_by: string; published_at: string }
 
 export const workflowsApi = {
@@ -65,7 +67,7 @@ export const workflowsApi = {
   command: (id: string, expectedRevision: number, type: string, payload: unknown) => api.post<{ draft: WorkflowDraft; issues: ValidationIssue[] }>(`/api/workflows/${id}/commands`, { command_id: crypto.randomUUID(), expected_revision: expectedRevision, type, payload }),
   validate: (id: string, mode: 'draft' | 'publish') => api.post<{ draft: WorkflowDraft; issues: ValidationIssue[]; valid: boolean }>(`/api/workflows/${id}/validate`, { mode }),
   preview: (id: string, draftRevision: number, input: unknown) => api.post<Preview>(`/api/workflows/${id}/previews`, { draft_revision: draftRevision, input }),
-  runAcceptance: (id: string, caseID: string, previewID: string) => api.post<{ draft: WorkflowDraft; preview: Preview }>(`/api/workflows/${id}/acceptance-cases/${caseID}/run`, { preview_id: previewID }),
+  runAcceptance: (id: string, caseID: string) => api.post<RunAcceptanceResult>(`/api/workflows/${id}/acceptance-cases/${caseID}/run`, {}),
   publish: (id: string, expectedRevision: number) => api.post<Revision>(`/api/workflows/${id}/publish`, { expected_revision: expectedRevision }),
   revisions: (id: string) => api.get<{ revisions: Revision[] }>(`/api/workflows/${id}/revisions`),
 }

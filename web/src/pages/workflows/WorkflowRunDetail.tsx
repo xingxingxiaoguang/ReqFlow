@@ -12,7 +12,7 @@ export default function WorkflowRunDetail() {
   const navigate = useNavigate()
   const { message } = App.useApp()
   const client = useQueryClient()
-	const [manualText, setManualText] = useState('[]')
+	const [manualText, setManualText] = useState('{}')
   const query = useQuery({ queryKey: ['workflow-run', id], queryFn: () => workflowRunsApi.get(id), enabled: Boolean(id) })
   const change = useMutation({
     mutationFn: (action: 'start' | 'pause' | 'resume') => workflowRunsApi[action](id),
@@ -21,8 +21,8 @@ export default function WorkflowRunDetail() {
   })
   const retry = useMutation({ mutationFn: (nodeID: string) => workflowRunsApi.retry(id, nodeID), onSuccess: () => { void client.invalidateQueries({ queryKey: ['workflow-run', id] }) }, onError: (error) => message.error((error as Error).message) })
   const manual = useMutation({
-    mutationFn: async ({ nodeID, text }: { nodeID: string; text: string }) => workflowRunsApi.completeManual(id, nodeID, JSON.parse(text) as ResourceBinding[]),
-	onSuccess: () => { void client.invalidateQueries({ queryKey: ['workflow-run', id] }); setManualText('[]') },
+    mutationFn: async ({ nodeID, text }: { nodeID: string; text: string }) => workflowRunsApi.completeManual(id, nodeID, JSON.parse(text)),
+    onSuccess: () => { void client.invalidateQueries({ queryKey: ['workflow-run', id] }); setManualText('{}') },
     onError: (error) => message.error((error as Error).message),
   })
   const snapshot = query.data
@@ -48,7 +48,13 @@ export default function WorkflowRunDetail() {
           <Space direction="vertical" align="end">
             {(bindingsByNode.get(node.id) ?? []).length > 0 && <Collapse size="small" items={[{ key: node.id, label: `${(bindingsByNode.get(node.id) ?? []).length} 个产物`, children: <List size="small" dataSource={bindingsByNode.get(node.id) ?? []} renderItem={(binding) => <List.Item><Typography.Text code>{binding.port}</Typography.Text><Typography.Text>{binding.resource_type}:{binding.resource_id}</Typography.Text></List.Item>} /> }]} />}
             {node.status === 'failed' && <Button size="small" onClick={() => retry.mutate(node.node_id)} loading={retry.isPending}>重试节点</Button>}
-            {node.status === 'awaiting_manual_completion' && <Space direction="vertical" align="end"><Input.TextArea rows={3} value={manualText} onChange={(event) => setManualText(event.target.value)} placeholder='[{"port":"out","resource_type":"artifact","resource_id":"..."}]' /><Button type="primary" size="small" onClick={() => manual.mutate({ nodeID: node.node_id, text: manualText })} loading={manual.isPending}>提交人工产物</Button></Space>}
+            {node.status === 'awaiting_manual_completion' && <Space direction="vertical" align="end">
+              <Input.TextArea rows={4} value={manualText} onChange={(event) => setManualText(event.target.value)}
+                placeholder={node.node.capability.ref.kind === 'human.review_records'
+                  ? '{"rationale":"…","decisions":[{"validation_result_id":"…","action":"approve|edit|exclude","fields":{…},"note":"…"}]}'
+                  : '{"decision":"approve|edit","output":{…},"rationale":"…"}'} />
+              <Button type="primary" size="small" onClick={() => manual.mutate({ nodeID: node.node_id, text: manualText })} loading={manual.isPending}>提交人工确认</Button>
+            </Space>}
           </Space>
         </List.Item>} />
       </Card>

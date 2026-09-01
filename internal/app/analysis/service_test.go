@@ -37,6 +37,18 @@ func (r *analysisMemoryRepo) FailAnalysisResult(_ context.Context, _, _ string, 
 	r.failureReason = message
 	return nil
 }
+func (r *analysisMemoryRepo) CreateHumanApprovedAnalysis(_ context.Context, result *model.AnalysisResult) (*model.AnalysisResult, error) {
+	if r.result != nil && r.result.ProducerNodeRunID == result.ProducerNodeRunID &&
+		string(r.result.Output) != string(result.Output) {
+		return nil, errors.New("人工确认 Gate 已存在不同内容的确认结论")
+	}
+	stored := *result
+	if stored.ID == "" {
+		stored.ID = "human-result-1"
+	}
+	r.result = &stored
+	return &stored, nil
+}
 
 func TestAnalyzePersistsFailureWhenModelResolutionFails(t *testing.T) {
 	repo := &analysisMemoryRepo{}

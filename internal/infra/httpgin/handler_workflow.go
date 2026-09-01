@@ -99,14 +99,9 @@ func (h *handlers) getWorkflowPreview(c *gin.Context) {
 }
 
 func (h *handlers) runWorkflowAcceptance(c *gin.Context) {
-	var request struct {
-		PreviewID string `json:"preview_id"`
-	}
-	if err := c.ShouldBindJSON(&request); err != nil || request.PreviewID == "" {
-		fail(c, http.StatusUnprocessableEntity, "验收必须提供 preview_id")
-		return
-	}
-	result, err := h.svc.WorkflowPreviews.RunAcceptance(c.Request.Context(), c.Param("id"), c.Param("case_id"), request.PreviewID)
+	// 用例自己的 input/expectation 就是重跑依据，客户端无需再提交 preview_id。
+	// 业务结果（passed=false + mismatches）随 200 返回，只有请求本身非法才报错。
+	result, err := h.svc.WorkflowPreviews.RunAcceptance(c.Request.Context(), c.Param("id"), c.Param("case_id"))
 	if err != nil {
 		workflowError(c, err)
 		return

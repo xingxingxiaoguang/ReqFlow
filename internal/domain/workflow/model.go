@@ -7,6 +7,7 @@ package workflow
 
 import (
 	"encoding/json"
+	"fmt"
 	"time"
 )
 
@@ -340,6 +341,12 @@ const (
 	PreviewPassed PreviewStatus = "passed"
 	PreviewFailed PreviewStatus = "failed"
 )
+
+// TemporaryResourceID 生成 Preview 临时资源的确定性 ID。它只出现在
+// OutputManifest 的 temporary 绑定里，数据库中不存在对应资源行。
+func TemporaryResourceID(previewID, nodeID, port string) string {
+	return fmt.Sprintf("preview:%s:nodes:%s:%s", previewID, nodeID, port)
+}
 
 type WorkflowPreview struct {
 	ID             string            `json:"id"`

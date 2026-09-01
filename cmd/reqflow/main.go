@@ -225,7 +225,22 @@ func main() {
 		logger.Error("Workflow Executor Registry 初始化失败", "err", err)
 		os.Exit(1)
 	}
-	runtime, err := appworkflow.NewRuntimeService(workflowRepo, workflowRepo, registry,
+	reviewCompleter, err := pipeline.NewWorkflowReviewManualCompleter(pipelineRepo)
+	if err != nil {
+		logger.Error("人工审核完成处理器初始化失败", "err", err)
+		os.Exit(1)
+	}
+	approveAnalysisCompleter, err := appanalysis.NewWorkflowApproveAnalysisManualCompleter(pipelineRepo)
+	if err != nil {
+		logger.Error("人工确认分析完成处理器初始化失败", "err", err)
+		os.Exit(1)
+	}
+	manuals, err := appworkflow.NewManualCompletionRegistry(reviewCompleter, approveAnalysisCompleter)
+	if err != nil {
+		logger.Error("Workflow Manual Completion Registry 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	runtime, err := appworkflow.NewRuntimeService(workflowRepo, workflowRepo, registry, manuals,
 		time.Duration(cfg.Worker.LeaseSeconds)*time.Second, 2)
 	if err != nil {
 		logger.Error("Workflow Runtime 初始化失败", "err", err)
@@ -246,7 +261,64 @@ func main() {
 		logger.Error("Workflow Draft 服务初始化失败", "err", err)
 		os.Exit(1)
 	}
-	previews, err := appworkflow.NewPreviewService(workflowRepo, catalog)
+	sourceParseDryRun, err := pipeline.NewWorkflowSourceParseDryRunner(assets)
+	if err != nil {
+		logger.Error("source.parse dry-run 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	documentExtractDryRun, err := appextraction.NewWorkflowDocumentExtractDryRunner()
+	if err != nil {
+		logger.Error("document.extract dry-run 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	transformDryRun, err := pipeline.NewWorkflowDataTransformDryRunner()
+	if err != nil {
+		logger.Error("data.transform dry-run 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	validateDryRun, err := pipeline.NewWorkflowDataValidateDryRunner(cleaning)
+	if err != nil {
+		logger.Error("data.validate dry-run 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	reviewRecordsDryRun, err := pipeline.NewWorkflowReviewRecordsDryRunner()
+	if err != nil {
+		logger.Error("human.review_records dry-run 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	dataPublishDryRun, err := pipeline.NewWorkflowDataPublishDryRunner(cleaning)
+	if err != nil {
+		logger.Error("data.publish dry-run 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	retrievalBuildDryRun, err := appretrieval.NewWorkflowBuildDryRunner(pipelineRepo)
+	if err != nil {
+		logger.Error("retrieval.build dry-run 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	knowledgeAnalyzeDryRun, err := appanalysis.NewWorkflowKnowledgeAnalyzeDryRunner()
+	if err != nil {
+		logger.Error("knowledge.analyze dry-run 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	approveAnalysisDryRun, err := appanalysis.NewWorkflowApproveAnalysisDryRunner()
+	if err != nil {
+		logger.Error("human.approve_analysis dry-run 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	artifactRenderDryRun, err := appanalysis.NewWorkflowArtifactRenderDryRunner()
+	if err != nil {
+		logger.Error("artifact.render dry-run 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	dryRuns, err := appworkflow.NewDryRunRegistry(sourceParseDryRun, documentExtractDryRun,
+		transformDryRun, validateDryRun, reviewRecordsDryRun, dataPublishDryRun,
+		retrievalBuildDryRun, knowledgeAnalyzeDryRun, approveAnalysisDryRun, artifactRenderDryRun)
+	if err != nil {
+		logger.Error("Workflow DryRun Registry 初始化失败", "err", err)
+		os.Exit(1)
+	}
+	previews, err := appworkflow.NewPreviewService(workflowRepo, catalog, dryRuns)
 	if err != nil {
 		logger.Error("Workflow Preview 服务初始化失败", "err", err)
 		os.Exit(1)
