@@ -9,6 +9,8 @@ import (
 type ExtractionProfileRepo interface {
 	CreateExtractionProfile(ctx context.Context, profile *model.ExtractionProfile) error
 	GetExtractionProfile(ctx context.Context, id string) (*model.ExtractionProfile, error)
+	CountExtractionProfileUsage(ctx context.Context, id string) (int, error)
+	DeleteExtractionProfile(ctx context.Context, id string) (bool, error)
 }
 
 type RecordDraftRepo interface {

@@ -3,12 +3,13 @@ import {
   Alert, App, Button, Drawer, Empty, Popconfirm, Select, Space, Table, Tag, Typography,
 } from 'antd'
 import type { ColumnsType } from 'antd/es/table'
-import { PlusOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { EyeOutlined, PlusOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { v2CatalogApi } from '../../api/v2/catalog'
 import { v2TasksApi } from '../../api/v2/tasks'
 import type { V2Dataset, V2RetrievalSnapshot } from '../../api/v2/types'
 import EmbeddedResourceCreate, { type EmbeddedResource } from './EmbeddedResourceCreate'
+import RetrievalProfileDetailModal from './RetrievalProfileDetailModal'
 
 const { Text } = Typography
 
@@ -43,6 +44,7 @@ export default function DatasetIndexDrawer({ dataset, open, onCancel, onSucceede
   const [submitting, setSubmitting] = useState(false)
   const [indexTaskID, setIndexTaskID] = useState<string>()
   const [ruleFilter, setRuleFilter] = useState<string>()
+  const [ruleDetailOpen, setRuleDetailOpen] = useState(false)
   const handledTaskRef = useRef<string>()
 
   const profiles = useQuery({
@@ -54,6 +56,8 @@ export default function DatasetIndexDrawer({ dataset, open, onCancel, onSucceede
     () => new Map((profiles.data?.retrieval_profiles ?? []).map((item) => [item.id, item.name])),
     [profiles.data],
   )
+  const schemas = useQuery({ queryKey: ['v2-schemas'], queryFn: v2CatalogApi.listSchemas, enabled: open })
+  const selectedProfile = (profiles.data?.retrieval_profiles ?? []).find((item) => item.id === selectedProfileID)
   const fixed = useQuery({
     queryKey: ['v2-definitions', 'retrieval_index'],
     queryFn: () => v2CatalogApi.listDefinitions({ status: 'active', limit: 200 }),
@@ -211,6 +215,7 @@ export default function DatasetIndexDrawer({ dataset, open, onCancel, onSucceede
           options={(profiles.data?.retrieval_profiles ?? []).map((item) => ({ value: item.id, label: item.name }))}
           style={{ flex: 1 }}
         />
+        <Button icon={<EyeOutlined />} disabled={!selectedProfile} onClick={() => setRuleDetailOpen(true)}>预览</Button>
         <Button icon={<PlusOutlined />} onClick={() => setProfileCreateOpen(true)}>新建规则</Button>
         <Button type="primary" icon={<ThunderboltOutlined />} loading={submitting || running}
           disabled={!selectedProfileID || fixed.isLoading} onClick={() => void startIndexing()}>
@@ -251,6 +256,14 @@ export default function DatasetIndexDrawer({ dataset, open, onCancel, onSucceede
         void queryClient.invalidateQueries({ queryKey: ['v2-retrieval-profiles'] })
         setProfileCreateOpen(false)
       }}
+    />
+
+    <RetrievalProfileDetailModal
+      profile={selectedProfile}
+      schemaName={(schemas.data?.schemas ?? []).find((item) => item.id === dataset?.schema_id)?.name}
+      open={ruleDetailOpen && Boolean(dataset)}
+      onClose={() => setRuleDetailOpen(false)}
+      onDeleted={() => setRuleDetailOpen(false)}
     />
   </>
 }

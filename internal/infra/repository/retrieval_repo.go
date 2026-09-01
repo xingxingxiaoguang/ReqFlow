@@ -77,6 +77,29 @@ func (r *PipelineRepo) ListRetrievalProfiles(ctx context.Context, workspaceID, d
 	return out, nil
 }
 
+func (r *PipelineRepo) CountRetrievalSnapshotsByProfile(ctx context.Context, profileID string) (int, error) {
+	var count int64
+	if err := r.db.WithContext(ctx).Model(&retrievalSnapshotRow{}).
+		Where("retrieval_profile_id = ?", profileID).Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return int(count), nil
+}
+
+func (r *PipelineRepo) DeleteRetrievalProfile(ctx context.Context, id string) (bool, error) {
+	result := r.db.WithContext(ctx).Where("id = ?", id).Delete(&retrievalProfileRow{})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+// DeleteRetrievalChunksByProfile 清理该规则的残留向量 Chunk（快照行可能已被单独删除）。
+// BM25 物理索引按（数据集, 规则 ID）命名且规则 ID 不复用，遗留索引不再被读写。
+func (r *PipelineRepo) DeleteRetrievalChunksByProfile(ctx context.Context, profileID string) error {
+	return r.db.WithContext(ctx).Exec(`DELETE FROM retrieval_chunks WHERE retrieval_profile_id = ?`, profileID).Error
+}
+
 func (r *PipelineRepo) GetOrCreateRetrievalSnapshotForStep(ctx context.Context, snapshot *model.RetrievalSnapshot,
 	producerAttempt int) (*model.RetrievalSnapshot, error) {
 	if snapshot == nil || strings.TrimSpace(snapshot.DatasetID) == "" || strings.TrimSpace(snapshot.RetrievalProfileID) == "" ||

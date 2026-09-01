@@ -318,6 +318,47 @@ func (f *fakeLexical) Search(_ context.Context, _ port.LexicalSearchRequest) ([]
 	return append([]port.RankedHit(nil), f.searchHits...), nil
 }
 
+func TestDeleteProfileGuardsSnapshotsAndCleansChunks(t *testing.T) {
+	ctx := context.Background()
+	repo := newRetrievalMemoryRepo()
+	schema := retrievalTestSchema()
+	repo.schemas[schema.ID] = &schema
+	dataset := &model.Dataset{ID: "dataset-1", WorkspaceID: "default", SchemaID: schema.ID,
+		Status: model.DatasetStatusActive, CurrentSeq: 1}
+	repo.datasets[dataset.ID] = dataset
+	service, err := NewService(repo, newFakeLexical(), fakeRetrievalEmbedder{available: true},
+		&fakeReranker{available: true}, Options{EmbeddingModel: "BAAI/bge-m3", PageSize: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+	profile, err := service.CreateProfile(ctx, retrievalTestProfileInput(schema.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	repo.snapshots["snapshot-1"] = &model.RetrievalSnapshot{ID: "snapshot-1", DatasetID: dataset.ID,
+		RetrievalProfileID: profile.ID, Status: model.RetrievalSnapshotActive}
+	if _, err := service.DeleteProfile(ctx, profile.ID); !errors.Is(err, ErrProfileInUse) {
+		t.Fatalf("want ErrProfileInUse, got %v", err)
+	}
+
+	repo.snapshots = map[string]*model.RetrievalSnapshot{}
+	repo.chunks["chunk-1"] = model.RetrievalChunk{ID: "chunk-1", DatasetID: dataset.ID, RetrievalProfileID: profile.ID}
+	deleted, err := service.DeleteProfile(ctx, profile.ID)
+	if err != nil || !deleted {
+		t.Fatalf("deleted=%v err=%v", deleted, err)
+	}
+	if len(repo.chunks) != 0 {
+		t.Fatalf("chunks not cleaned: %d", len(repo.chunks))
+	}
+	if _, ok := repo.profiles[profile.ID]; ok {
+		t.Fatal("profile still exists")
+	}
+	if _, err := service.DeleteProfile(ctx, profile.ID); err == nil {
+		t.Fatal("deleting a missing profile should fail")
+	}
+}
+
 type retrievalMemoryRepo struct {
 	next       int
 	schemas    map[string]*model.DatasetSchemaDefinition
@@ -422,6 +463,30 @@ func (r *retrievalMemoryRepo) DeleteRetrievalSnapshot(_ context.Context, id stri
 	}
 	delete(r.snapshots, id)
 	return true, nil
+}
+func (r *retrievalMemoryRepo) CountRetrievalSnapshotsByProfile(_ context.Context, profileID string) (int, error) {
+	count := 0
+	for _, snapshot := range r.snapshots {
+		if snapshot.RetrievalProfileID == profileID {
+			count++
+		}
+	}
+	return count, nil
+}
+func (r *retrievalMemoryRepo) DeleteRetrievalProfile(_ context.Context, id string) (bool, error) {
+	if _, ok := r.profiles[id]; !ok {
+		return false, nil
+	}
+	delete(r.profiles, id)
+	return true, nil
+}
+func (r *retrievalMemoryRepo) DeleteRetrievalChunksByProfile(_ context.Context, profileID string) error {
+	for chunkID, chunk := range r.chunks {
+		if chunk.RetrievalProfileID == profileID {
+			delete(r.chunks, chunkID)
+		}
+	}
+	return nil
 }
 
 func (r *retrievalMemoryRepo) ListRetrievalSnapshots(_ context.Context, datasetID, profileID, status string, limit int) ([]model.RetrievalSnapshot, error) {

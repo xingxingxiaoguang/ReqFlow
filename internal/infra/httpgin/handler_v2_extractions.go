@@ -1,12 +1,30 @@
 package httpgin
 
 import (
+	"errors"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
 
 	appextraction "reqflow/internal/app/extraction"
 )
+
+func (h *handlers) v2DeleteExtractionProfile(c *gin.Context) {
+	deleted, err := h.svc.V2Extractions.DeleteProfile(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, appextraction.ErrProfileInUse) {
+			fail(c, http.StatusConflict, err.Error())
+			return
+		}
+		fail(c, http.StatusNotFound, "ExtractionProfile 不存在")
+		return
+	}
+	if !deleted {
+		fail(c, http.StatusNotFound, "ExtractionProfile 不存在")
+		return
+	}
+	ok(c, gin.H{"deleted": true})
+}
 
 func (h *handlers) v2CreateExtractionProfile(c *gin.Context) {
 	var request appextraction.CreateExtractionProfileRequest

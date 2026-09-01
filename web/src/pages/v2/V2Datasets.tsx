@@ -13,6 +13,7 @@ import EmbeddedResourceCreate, { type EmbeddedResource, type EmbeddedResourceKin
 import { DATASET_PURPOSE_FIXED, datasetPurposeLabel } from './datasetPurpose'
 import { schemaFieldOptions } from './SchemaFieldEditor'
 import DatasetIndexDrawer from './DatasetIndexDrawer'
+import RetrievalProfileDetailModal from './RetrievalProfileDetailModal'
 
 const { Paragraph, Text, Title } = Typography
 
@@ -39,6 +40,7 @@ export default function V2Datasets() {
   const [schemaDataset, setSchemaDataset] = useState<V2Dataset>()
   const [resourceRequest, setResourceRequest] = useState<ResourceRequest>()
   const [indexDataset, setIndexDataset] = useState<V2Dataset>()
+  const [ruleDetail, setRuleDetail] = useState<V2RetrievalProfile>()
   const [creating, setCreating] = useState(false)
   const datasets = useQuery({ queryKey: ['v2-datasets'], queryFn: () => v2CatalogApi.listDatasets({ status: 'active' }) })
   const schemas = useQuery({ queryKey: ['v2-schemas'], queryFn: v2CatalogApi.listSchemas })
@@ -207,7 +209,7 @@ export default function V2Datasets() {
           />
         </Card>
         <Card size="small" title={<Space><span>索引规则</span><Tag>{drawerRules.length}</Tag></Space>}>
-          {drawerRules.length ? <Space direction="vertical" style={{ width: '100%' }}>{drawerRules.map((rule) => <IndexRuleCard key={rule.id} rule={rule} />)}</Space> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未为这些字段建立索引规则"><Button type="primary" onClick={() => setResourceRequest({ kind: 'retrieval', target: 'schema-drawer', fixedSchemaId: drawerSchema?.id })}>建立第一条规则</Button></Empty>}
+          {drawerRules.length ? <Space direction="vertical" style={{ width: '100%' }}>{drawerRules.map((rule) => <IndexRuleCard key={rule.id} rule={rule} onPreview={() => setRuleDetail(rule)} />)}</Space> : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚未为这些字段建立索引规则"><Button type="primary" onClick={() => setResourceRequest({ kind: 'retrieval', target: 'schema-drawer', fixedSchemaId: drawerSchema?.id })}>建立第一条规则</Button></Empty>}
         </Card>
       </Space>}
     </Drawer>
@@ -216,6 +218,14 @@ export default function V2Datasets() {
       dataset={indexDataset}
       open={Boolean(indexDataset)}
       onCancel={() => setIndexDataset(undefined)}
+    />
+
+    <RetrievalProfileDetailModal
+      profile={ruleDetail}
+      schemaName={ruleDetail ? schemaMap.get(ruleDetail.dataset_schema_id)?.name : undefined}
+      open={Boolean(ruleDetail)}
+      onClose={() => setRuleDetail(undefined)}
+      onDeleted={() => setRuleDetail(undefined)}
     />
 
     <EmbeddedResourceCreate
@@ -236,10 +246,14 @@ function fieldColumns(required: string[]): ColumnsType<{ name: string; property:
   ]
 }
 
-function IndexRuleCard({ rule }: { rule: V2RetrievalProfile }) {
+function IndexRuleCard({ rule, onPreview }: { rule: V2RetrievalProfile; onPreview: () => void }) {
   const lexical = Object.keys((rule.lexical.fields ?? {}) as Record<string, unknown>)
   const vector = (rule.vector.fields ?? []) as string[]
-  return <Card size="small" title={rule.name}>
+  return <Card
+    size="small"
+    title={rule.name}
+    extra={<Button size="small" type="text" icon={<EyeOutlined />} onClick={onPreview}>预览</Button>}
+  >
     <Space wrap><Tag color="blue">精准：{lexical.join('、') || '未配置'}</Tag><Tag color="purple">语义：{vector.join('、') || '未配置'}</Tag>{rule.filter_fields.length > 0 && <Tag>筛选：{rule.filter_fields.join('、')}</Tag>}</Space>
   </Card>
 }

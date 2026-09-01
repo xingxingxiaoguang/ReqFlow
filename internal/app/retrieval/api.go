@@ -2,10 +2,15 @@ package retrieval
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"time"
 
 	"reqflow/internal/domain/model"
 )
+
+// ErrProfileInUse 表示索引规则仍被索引快照引用，拒绝删除。
+var ErrProfileInUse = errors.New("索引规则仍在使用中")
 
 type CreateProfileRequest struct {
 	WorkspaceID     string              `json:"workspace_id,omitempty"`
@@ -75,6 +80,27 @@ func (s *Service) CloneProfileView(ctx context.Context, id string, request Clone
 	}
 	view := profileView(profile)
 	return &view, nil
+}
+
+// DeleteProfile 删除索引规则。已有快照的规则不允许删除——快照是流程任务产物，
+// 保留后才能审计每次索引建立了什么；先在数据集索引抽屉删除快照即可解除引用。
+// 删除规则时顺带清理残留的向量 Chunk；BM25 物理索引按规则 ID 命名且不复用，无需清理。
+func (s *Service) DeleteProfile(ctx context.Context, id string) (bool, error) {
+	profile, err := s.GetProfile(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	count, err := s.repo.CountRetrievalSnapshotsByProfile(ctx, profile.ID)
+	if err != nil {
+		return false, err
+	}
+	if count > 0 {
+		return false, fmt.Errorf("%w：仍有 %d 个索引快照，请先在数据集索引抽屉删除对应快照", ErrProfileInUse, count)
+	}
+	if err := s.repo.DeleteRetrievalChunksByProfile(ctx, profile.ID); err != nil {
+		return false, err
+	}
+	return s.repo.DeleteRetrievalProfile(ctx, profile.ID)
 }
 
 type SnapshotView struct {

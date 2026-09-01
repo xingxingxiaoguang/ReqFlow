@@ -168,6 +168,7 @@ func New(svc Services) *gin.Engine {
 	if svc.V2Extractions != nil {
 		v2.POST("/extraction-profiles", h.v2CreateExtractionProfile)
 		v2.GET("/extraction-profiles/:id", h.v2GetExtractionProfile)
+		v2.DELETE("/extraction-profiles/:id", h.v2DeleteExtractionProfile)
 		if svc.V2Catalog != nil {
 			v2.GET("/extraction-profiles", h.v2ListExtractionProfiles)
 		}
@@ -184,6 +185,7 @@ func New(svc Services) *gin.Engine {
 		v2.POST("/retrieval-profiles", h.v2CreateRetrievalProfile)
 		v2.GET("/retrieval-profiles", h.v2ListRetrievalProfiles)
 		v2.GET("/retrieval-profiles/:id", h.v2GetRetrievalProfile)
+		v2.DELETE("/retrieval-profiles/:id", h.v2DeleteRetrievalProfile)
 		v2.POST("/retrieval-profiles/:id/clone", h.v2CloneRetrievalProfile)
 		v2.GET("/retrieval-snapshots", h.v2ListRetrievalSnapshots)
 		v2.GET("/retrieval-snapshots/:id", h.v2GetRetrievalSnapshot)

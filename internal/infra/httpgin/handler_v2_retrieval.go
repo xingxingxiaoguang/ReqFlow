@@ -1,6 +1,7 @@
 package httpgin
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -71,6 +72,23 @@ func (h *handlers) v2CloneRetrievalProfile(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusCreated, gin.H{"success": true, "data": gin.H{"retrieval_profile": profile}})
+}
+
+func (h *handlers) v2DeleteRetrievalProfile(c *gin.Context) {
+	deleted, err := h.svc.V2Retrieval.DeleteProfile(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, appretrieval.ErrProfileInUse) {
+			fail(c, http.StatusConflict, err.Error())
+			return
+		}
+		fail(c, http.StatusNotFound, "RetrievalProfile 不存在")
+		return
+	}
+	if !deleted {
+		fail(c, http.StatusNotFound, "RetrievalProfile 不存在")
+		return
+	}
+	ok(c, gin.H{"deleted": true})
 }
 
 func (h *handlers) v2DeleteRetrievalSnapshot(c *gin.Context) {

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import {
   Alert, App, Button, Card, Col, Empty, Form, Input, Modal, Radio, Row, Select, Space, Steps, Tag, Typography, Upload,
 } from 'antd'
-import { ArrowLeftOutlined, InboxOutlined, PlusOutlined, RocketOutlined, SaveOutlined, ThunderboltOutlined } from '@ant-design/icons'
+import { ArrowLeftOutlined, EyeOutlined, InboxOutlined, PlusOutlined, RocketOutlined, SaveOutlined, ThunderboltOutlined } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import type { UploadFile } from 'antd/es/upload/interface'
 import { useNavigate } from 'react-router-dom'
@@ -14,6 +14,7 @@ import { schemaFieldOptions } from './SchemaFieldEditor'
 import { STEP_KIND_LABEL } from './status'
 import { RESOURCE_TYPE_LABEL } from './workflowBlocks'
 import EmbeddedResourceCreate, { type EmbeddedResource } from './EmbeddedResourceCreate'
+import ExtractionProfileDetailModal from './ExtractionProfileDetailModal'
 
 const { Paragraph, Text, Title } = Typography
 
@@ -44,6 +45,7 @@ export default function NoCodeTaskNew() {
   const [creating, setCreating] = useState<'create' | 'run'>()
   const [flow, setFlow] = useState<FlowKey>()
   const [profileCreator, setProfileCreator] = useState<'extraction'>()
+  const [profileDetailOpen, setProfileDetailOpen] = useState(false)
   const [form] = Form.useForm<FormValues>()
 
   const definitions = useQuery({
@@ -220,7 +222,10 @@ export default function NoCodeTaskNew() {
                         notFoundContent={<Empty description="还没有抽取规则" />}
                       />
                     </Form.Item>
-                    <Button size="small" icon={<PlusOutlined />} onClick={() => setProfileCreator('extraction')}>就地创建抽取规则</Button>
+                    <Space style={{ marginBottom: 8 }}>
+                      <Button size="small" icon={<EyeOutlined />} disabled={!extractionProfileID} onClick={() => setProfileDetailOpen(true)}>预览规则</Button>
+                      <Button size="small" icon={<PlusOutlined />} onClick={() => setProfileCreator('extraction')}>就地创建抽取规则</Button>
+                    </Space>
                   </Col>
                   <Col xs={24} lg={12}>
                     <Form.Item
@@ -299,6 +304,19 @@ export default function NoCodeTaskNew() {
           void queryClient.invalidateQueries({ queryKey: ['v2-extraction-profiles'] })
           void queryClient.invalidateQueries({ queryKey: ['v2-schemas'] })
           setProfileCreator(undefined)
+        }}
+      />
+
+      <ExtractionProfileDetailModal
+        profileID={extractionProfileID}
+        schemaName={targetSchema?.name}
+        open={profileDetailOpen}
+        onClose={() => setProfileDetailOpen(false)}
+        onDeleted={(deletedID) => {
+          if (form.getFieldValue('extraction_profile_id') === deletedID) {
+            form.setFieldValue('extraction_profile_id', undefined)
+          }
+          setProfileDetailOpen(false)
         }}
       />
     </Space>

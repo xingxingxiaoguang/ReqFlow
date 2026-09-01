@@ -70,6 +70,9 @@ type RetrievalRepo interface {
 	CreateRetrievalProfile(ctx context.Context, profile *model.RetrievalProfile) error
 	GetRetrievalProfile(ctx context.Context, id string) (*model.RetrievalProfile, error)
 	ListRetrievalProfiles(ctx context.Context, workspaceID, datasetSchemaID string, limit int) ([]model.RetrievalProfile, error)
+	CountRetrievalSnapshotsByProfile(ctx context.Context, profileID string) (int, error)
+	DeleteRetrievalProfile(ctx context.Context, id string) (bool, error)
+	DeleteRetrievalChunksByProfile(ctx context.Context, profileID string) error
 
 	GetOrCreateRetrievalSnapshotForStep(ctx context.Context, snapshot *model.RetrievalSnapshot, producerAttempt int) (*model.RetrievalSnapshot, error)
 	GetRetrievalSnapshot(ctx context.Context, id string) (*model.RetrievalSnapshot, error)

@@ -1,7 +1,7 @@
 import { api } from '../client'
 import type {
   V2AnalysisProfile, V2Artifact, V2AssetSet, V2Dataset, V2DatasetBatch,
-  V2ExtractionProfile, V2JSONSchema, V2RetrievalProfile, V2RetrievalSnapshot,
+  V2ExtractionProfile, V2ExtractionProfileDetail, V2JSONSchema, V2RetrievalProfile, V2RetrievalSnapshot,
   V2Schema, V2Task, V2TaskDefinition,
 } from './types'
 
@@ -71,6 +71,9 @@ export const v2CatalogApi = {
       limit: params.limit ?? 200,
     })}`),
   createExtractionProfile: (input: ExtractionProfileInput) => api.post<{ extraction_profile: V2ExtractionProfile }>('/api/v2/extraction-profiles', input),
+  getExtractionProfile: (id: string) =>
+    api.get<{ extraction_profile: V2ExtractionProfileDetail }>(`/api/v2/extraction-profiles/${id}`),
+  deleteExtractionProfile: (id: string) => api.del<{ deleted: boolean }>(`/api/v2/extraction-profiles/${id}`),
   listRetrievalProfiles: () => api.get<{ retrieval_profiles: V2RetrievalProfile[] }>('/api/v2/retrieval-profiles?limit=200'),
   queryRetrievalProfiles: (params: { workspaceId?: string; datasetSchemaId?: string; limit?: number } = {}) =>
     api.get<{ retrieval_profiles: V2RetrievalProfile[] }>(`/api/v2/retrieval-profiles?${query({
@@ -87,6 +90,7 @@ export const v2CatalogApi = {
       limit: params.limit ?? 200,
     })}`),
   createRetrievalProfile: (input: Record<string, unknown>) => api.post<{ retrieval_profile: V2RetrievalProfile }>('/api/v2/retrieval-profiles', input),
+  deleteRetrievalProfile: (id: string) => api.del<{ deleted: boolean }>(`/api/v2/retrieval-profiles/${id}`),
   deleteRetrievalSnapshot: (id: string) => api.del<{ deleted: boolean }>(`/api/v2/retrieval-snapshots/${id}`),
   search: (input: Record<string, unknown>) => api.post<{ search: Record<string, unknown> }>('/api/v2/retrieval/search', input),
   listAnalysisProfiles: () => api.get<{ analysis_profiles: V2AnalysisProfile[] }>('/api/v2/analysis-profiles?limit=200'),

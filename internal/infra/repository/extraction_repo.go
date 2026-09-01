@@ -41,6 +41,29 @@ func (r *PipelineRepo) GetExtractionProfile(ctx context.Context, id string) (*mo
 	return &profile, nil
 }
 
+// CountExtractionProfileUsage 统计引用该规则的抽取产物（草稿集 + 转换集），
+// 作为删除防护：已有产物的规则保留血缘，不可删除。
+func (r *PipelineRepo) CountExtractionProfileUsage(ctx context.Context, id string) (int, error) {
+	var draftCount, transformedCount int64
+	if err := r.db.WithContext(ctx).Raw(`SELECT COUNT(*) FROM record_draft_sets WHERE extraction_profile_id = ?`,
+		id).Scan(&draftCount).Error; err != nil {
+		return 0, err
+	}
+	if err := r.db.WithContext(ctx).Raw(`SELECT COUNT(*) FROM transformed_record_sets WHERE extraction_profile_id = ?`,
+		id).Scan(&transformedCount).Error; err != nil {
+		return 0, err
+	}
+	return int(draftCount + transformedCount), nil
+}
+
+func (r *PipelineRepo) DeleteExtractionProfile(ctx context.Context, id string) (bool, error) {
+	result := r.db.WithContext(ctx).Where("id = ?", id).Delete(&extractionProfileRow{})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
 func (r *PipelineRepo) BeginRecordDraftSet(ctx context.Context, set *model.RecordDraftSet, units []model.ExtractionUnit) (*model.RecordDraftSet, error) {
 	var stored model.RecordDraftSet
 	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {

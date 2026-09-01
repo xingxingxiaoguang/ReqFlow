@@ -145,6 +145,15 @@ export interface V2ExtractionProfile {
   created_at: string
 }
 
+/** GET /extraction-profiles/:id 返回的完整配置（列表接口只返回元数据）。 */
+export interface V2ExtractionProfileDetail extends V2ExtractionProfile {
+  system_instruction?: string
+  field_guides?: Record<string, unknown> | null
+  examples?: unknown[] | null
+  normalization_rules?: unknown[] | null
+  validation_rules?: unknown[] | null
+}
+
 export interface V2RetrievalProfile {
   id: string
   workspace_id: string

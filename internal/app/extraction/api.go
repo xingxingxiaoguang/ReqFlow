@@ -3,10 +3,15 @@ package extraction
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
 	"reqflow/internal/domain/model"
 )
+
+// ErrProfileInUse 表示抽取规则仍被历史抽取产物引用，拒绝删除。
+var ErrProfileInUse = errors.New("抽取规则仍在使用中")
 
 type CreateExtractionProfileRequest struct {
 	WorkspaceID        string          `json:"workspace_id,omitempty"`
@@ -51,6 +56,23 @@ func (s *Service) ViewProfile(ctx context.Context, id string) (*ExtractionProfil
 	}
 	view := extractionProfileView(profile)
 	return &view, nil
+}
+
+// DeleteProfile 删除抽取规则。已被任务产物（草稿集/转换集）引用的规则不可删除，
+// 保证历史任务与已入库数据的抽取血缘可追溯；未使用过的规则可直接删除。
+func (s *Service) DeleteProfile(ctx context.Context, id string) (bool, error) {
+	profile, err := s.GetProfile(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	usage, err := s.repo.CountExtractionProfileUsage(ctx, profile.ID)
+	if err != nil {
+		return false, err
+	}
+	if usage > 0 {
+		return false, fmt.Errorf("%w：已被 %d 个历史抽取产物引用，无法删除", ErrProfileInUse, usage)
+	}
+	return s.repo.DeleteExtractionProfile(ctx, profile.ID)
 }
 
 type ExtractionUnitView struct {
