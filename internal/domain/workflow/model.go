@@ -148,17 +148,64 @@ type FieldGuide struct {
 	EvidenceOnly bool     `json:"evidence_only,omitempty"`
 }
 
-type RuleExpression struct {
-	ID          string `json:"id"`
-	Description string `json:"description"`
-	Expression  string `json:"expression"`
+type NormalizationOperation string
+
+const (
+	NormalizeEnumAlias    NormalizationOperation = "enum_alias"
+	NormalizeBooleanAlias NormalizationOperation = "boolean_alias"
+	NormalizeDate         NormalizationOperation = "date"
+	NormalizeUnitScale    NormalizationOperation = "unit_scale"
+	NormalizeSplit        NormalizationOperation = "split"
+	NormalizeConcat       NormalizationOperation = "concat"
+)
+
+type NormalizationRule struct {
+	ID           string                 `json:"id"`
+	Description  string                 `json:"description"`
+	Field        string                 `json:"field"`
+	Operation    NormalizationOperation `json:"operation"`
+	Aliases      map[string]any         `json:"aliases,omitempty"`
+	TrueValues   []string               `json:"true_values,omitempty"`
+	FalseValues  []string               `json:"false_values,omitempty"`
+	Layouts      []string               `json:"layouts,omitempty"`
+	Units        map[string]float64     `json:"units,omitempty"`
+	Separator    string                 `json:"separator,omitempty"`
+	SourceFields []string               `json:"source_fields,omitempty"`
+}
+
+type ValidationOperation string
+
+const (
+	ValidateRequired ValidationOperation = "required"
+	ValidateRegex    ValidationOperation = "regex"
+	ValidateRange    ValidationOperation = "range"
+	ValidateLength   ValidationOperation = "length"
+	ValidateOneOf    ValidationOperation = "one_of"
+	ValidateCompare  ValidationOperation = "compare"
+)
+
+type ValidationRule struct {
+	ID          string              `json:"id"`
+	Description string              `json:"description"`
+	Field       string              `json:"field"`
+	Operation   ValidationOperation `json:"operation"`
+	Severity    IssueSeverity       `json:"severity,omitempty"`
+	Message     string              `json:"message,omitempty"`
+	Pattern     string              `json:"pattern,omitempty"`
+	Minimum     *float64            `json:"minimum,omitempty"`
+	Maximum     *float64            `json:"maximum,omitempty"`
+	MinLength   *int                `json:"min_length,omitempty"`
+	MaxLength   *int                `json:"max_length,omitempty"`
+	Values      []any               `json:"values,omitempty"`
+	OtherField  string              `json:"other_field,omitempty"`
+	Operator    string              `json:"operator,omitempty"`
 }
 
 type ExtractionSpec struct {
 	Instruction        string                `json:"instruction"`
 	FieldGuides        map[string]FieldGuide `json:"field_guides,omitempty"`
-	NormalizationRules []RuleExpression      `json:"normalization_rules,omitempty"`
-	ValidationRules    []RuleExpression      `json:"validation_rules,omitempty"`
+	NormalizationRules []NormalizationRule   `json:"normalization_rules,omitempty"`
+	ValidationRules    []ValidationRule      `json:"validation_rules,omitempty"`
 }
 
 type WeightedField struct {
@@ -234,12 +281,14 @@ type RuleBundle struct {
 }
 
 type AcceptanceCase struct {
-	ID          string          `json:"id"`
-	Name        string          `json:"name"`
-	Input       json.RawMessage `json:"input"`
-	Expectation json.RawMessage `json:"expectation"`
-	LastPassed  bool            `json:"last_passed"`
-	LastRunAt   time.Time       `json:"last_run_at,omitempty"`
+	ID                 string          `json:"id"`
+	Name               string          `json:"name"`
+	Input              json.RawMessage `json:"input"`
+	Expectation        json.RawMessage `json:"expectation"`
+	LastPassed         bool            `json:"last_passed"`
+	LastPassedRevision int64           `json:"last_passed_revision,omitempty"`
+	LastPreviewID      string          `json:"last_preview_id,omitempty"`
+	LastRunAt          time.Time       `json:"last_run_at,omitempty"`
 }
 
 type WorkflowDraft struct {

@@ -154,7 +154,7 @@ func (v *draftValidator) indexDefinition() {
 			continue
 		}
 		v.capabilities[node.ID] = capability
-		if err := validateJSONObject("节点配置", node.Config); err != nil {
+		if err := ValidateCapabilityConfig(capability, node.Config); err != nil {
 			v.add("node_config_invalid", path+".config", err.Error(), SeverityError)
 		}
 	}
@@ -379,8 +379,8 @@ func (v *draftValidator) validateExtraction(spec ExtractionSpec) {
 				"字段指南引用了不存在的数据字段", SeverityError)
 		}
 	}
-	v.validateRuleExpressions("rules.extraction.normalization_rules", spec.NormalizationRules)
-	v.validateRuleExpressions("rules.extraction.validation_rules", spec.ValidationRules)
+	v.validateNormalizationRules("rules.extraction.normalization_rules", spec.NormalizationRules, fields)
+	v.validateValidationRules("rules.extraction.validation_rules", spec.ValidationRules, fields)
 }
 
 func (v *draftValidator) validateSearch(spec SearchSpec) {
@@ -439,20 +439,108 @@ func (v *draftValidator) validateSearchFieldList(path string, values []string,
 	}
 }
 
-func (v *draftValidator) validateRuleExpressions(path string, rules []RuleExpression) {
+func (v *draftValidator) validateNormalizationRules(path string, rules []NormalizationRule, fields map[string]bool) {
 	seen := map[string]bool{}
 	for i, rule := range rules {
 		itemPath := fmt.Sprintf("%s[%d]", path, i)
-		if !validIdentifier(rule.ID) {
-			v.add("rule_id_invalid", itemPath+".id", "规则 ID 必须是小写 snake_case", SeverityError)
-		}
-		if seen[rule.ID] {
-			v.add("rule_id_duplicate", itemPath+".id", "规则 ID 重复", SeverityError)
-		}
-		if strings.TrimSpace(rule.Description) == "" || strings.TrimSpace(rule.Expression) == "" {
-			v.add("rule_definition_incomplete", itemPath, "规则说明和表达式不能为空", v.requiredSeverity())
+		v.validateRuleIdentity(itemPath, rule.ID, rule.Description, rule.Field, fields, seen)
+		switch rule.Operation {
+		case NormalizeEnumAlias:
+			if len(rule.Aliases) == 0 {
+				v.add("normalization_parameters_invalid", itemPath+".aliases", "枚举别名不能为空", SeverityError)
+			}
+		case NormalizeBooleanAlias:
+			if len(rule.TrueValues) == 0 || len(rule.FalseValues) == 0 {
+				v.add("normalization_parameters_invalid", itemPath, "布尔别名必须同时声明 true_values 和 false_values", SeverityError)
+			}
+		case NormalizeDate:
+			if len(rule.Layouts) == 0 {
+				v.add("normalization_parameters_invalid", itemPath+".layouts", "日期规则必须声明 layouts", SeverityError)
+			}
+		case NormalizeUnitScale:
+			if len(rule.Units) == 0 {
+				v.add("normalization_parameters_invalid", itemPath+".units", "单位换算规则必须声明 units", SeverityError)
+			}
+		case NormalizeSplit:
+			if rule.Separator == "" {
+				v.add("normalization_parameters_invalid", itemPath+".separator", "拆分规则必须声明 separator", SeverityError)
+			}
+		case NormalizeConcat:
+			if len(rule.SourceFields) == 0 {
+				v.add("normalization_parameters_invalid", itemPath+".source_fields", "拼接规则必须声明 source_fields", SeverityError)
+			}
+			for sourceIndex, source := range rule.SourceFields {
+				if !fields[source] {
+					v.add("rule_field_not_found", fmt.Sprintf("%s.source_fields[%d]", itemPath, sourceIndex), "拼接来源字段不存在", SeverityError)
+				}
+			}
+		default:
+			v.add("normalization_operation_invalid", itemPath+".operation", "归一化操作不在受控 DSL 中", SeverityError)
 		}
 		seen[rule.ID] = true
+	}
+}
+
+func (v *draftValidator) validateValidationRules(path string, rules []ValidationRule, fields map[string]bool) {
+	seen := map[string]bool{}
+	for i, rule := range rules {
+		itemPath := fmt.Sprintf("%s[%d]", path, i)
+		v.validateRuleIdentity(itemPath, rule.ID, rule.Description, rule.Field, fields, seen)
+		if rule.Severity != "" && rule.Severity != SeverityWarning && rule.Severity != SeverityError {
+			v.add("validation_severity_invalid", itemPath+".severity", "校验严重级别只能是 warning 或 error", SeverityError)
+		}
+		switch rule.Operation {
+		case ValidateRequired:
+		case ValidateRegex:
+			if rule.Pattern == "" {
+				v.add("validation_parameters_invalid", itemPath+".pattern", "正则校验必须声明 pattern", SeverityError)
+			} else if _, err := regexp.Compile(rule.Pattern); err != nil {
+				v.add("validation_parameters_invalid", itemPath+".pattern", "正则表达式非法", SeverityError)
+			}
+		case ValidateRange:
+			if rule.Minimum == nil && rule.Maximum == nil {
+				v.add("validation_parameters_invalid", itemPath, "范围校验至少声明 minimum 或 maximum", SeverityError)
+			} else if rule.Minimum != nil && rule.Maximum != nil && *rule.Minimum > *rule.Maximum {
+				v.add("validation_parameters_invalid", itemPath, "minimum 不能大于 maximum", SeverityError)
+			}
+		case ValidateLength:
+			if rule.MinLength == nil && rule.MaxLength == nil {
+				v.add("validation_parameters_invalid", itemPath, "长度校验至少声明 min_length 或 max_length", SeverityError)
+			} else if rule.MinLength != nil && rule.MaxLength != nil && *rule.MinLength > *rule.MaxLength {
+				v.add("validation_parameters_invalid", itemPath, "min_length 不能大于 max_length", SeverityError)
+			}
+		case ValidateOneOf:
+			if len(rule.Values) == 0 {
+				v.add("validation_parameters_invalid", itemPath+".values", "枚举校验必须声明 values", SeverityError)
+			}
+		case ValidateCompare:
+			if !fields[rule.OtherField] || rule.OtherField == rule.Field {
+				v.add("rule_field_not_found", itemPath+".other_field", "比较字段不存在或与当前字段相同", SeverityError)
+			}
+			switch rule.Operator {
+			case "eq", "ne", "lt", "lte", "gt", "gte":
+			default:
+				v.add("validation_parameters_invalid", itemPath+".operator", "比较运算符非法", SeverityError)
+			}
+		default:
+			v.add("validation_operation_invalid", itemPath+".operation", "校验操作不在受控 DSL 中", SeverityError)
+		}
+		seen[rule.ID] = true
+	}
+}
+
+func (v *draftValidator) validateRuleIdentity(path, id, description, field string, fields, seen map[string]bool) {
+	if !validIdentifier(id) {
+		v.add("rule_id_invalid", path+".id", "规则 ID 必须是小写 snake_case", SeverityError)
+	}
+	if seen[id] {
+		v.add("rule_id_duplicate", path+".id", "规则 ID 重复", SeverityError)
+	}
+	if strings.TrimSpace(description) == "" {
+		v.add("rule_definition_incomplete", path+".description", "规则说明不能为空", v.requiredSeverity())
+	}
+	if !fields[field] {
+		v.add("rule_field_not_found", path+".field", "规则引用了不存在的数据字段", SeverityError)
 	}
 }
 
@@ -532,6 +620,9 @@ func (v *draftValidator) validateAcceptanceCases() {
 			if !testCase.LastPassed {
 				v.add("acceptance_case_not_passed", fmt.Sprintf("acceptance_cases[%d]", i),
 					"发布前所有验收用例必须通过", SeverityError)
+			} else if testCase.LastPassedRevision != v.draft.Revision || strings.TrimSpace(testCase.LastPreviewID) == "" {
+				v.add("acceptance_case_result_stale", fmt.Sprintf("acceptance_cases[%d]", i),
+					"验收结果不是由当前草稿版本的预览产生", SeverityError)
 			}
 		}
 	}

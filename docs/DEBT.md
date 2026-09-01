@@ -5,6 +5,12 @@
 
 > **V2 口径**：Legacy 元数据与数据集体系已于 2026-09-01 随切割整体删除（见下方销账记录）；本台账只登记现存代码的债务。
 
+## 线性工作流重建专项（2026-09）
+
+| 编号 | 债 | 影响 | 处置方向 | 优先级 |
+|------|-----|------|----------|--------|
+| WF-1 | 新 Workflow 受控规则 DSL 已在 `internal/domain/workflow` 成为设计事实源，但旧 `record_cleaning.go` 仍维护私有 JSON DTO | Phase 5 接入执行器前存在合同镜像漂移风险；当前新 Draft 尚未调用旧执行路径 | 新 Capability Executor 直接消费 Workflow DSL，并把旧清洗实现改为执行纯函数或随 Phase 6 旧模型删除 | 高（Phase 5 销账） |
+
 ## 已销账记录（Legacy 切割，2026-09-01）
 
 **元数据模块专项债（MD-1~MD-8）与数据集归属化专项债（DA-1~DA-4）已整体销账**：两账描述的 Legacy 元数据体系（metadata_registry / seed→override→effective / 兼容规则引擎 / 动态 FTS 索引）与 Legacy 数据集体系（datasets.schema 字段定义归属、受控编辑、merge/upsert/replace 写入、archived_* 归档表）已随 V2 切割整体删除——相关服务、仓储、端口、handler、前端页面、配置组（match/fts）与数据库表不复存在，V2 以不可变 DatasetSchemaDefinition + ExtractionProfile + 只追加 Batch + 状态归档重新表达全部能力。旧债不再适用，不再登记。

@@ -70,11 +70,14 @@ func validateCapability(definition CapabilityDefinition) error {
 	if definition.RequiresLLM && !definition.ManualCompletion {
 		return fmt.Errorf("capability %s 依赖 LLM，但未声明人工完成能力", capabilityKey(definition.Ref))
 	}
-	if err := validateJSONDocument("config_schema", definition.ConfigSchema); err != nil {
+	if err := validateConfigSchema(definition.ConfigSchema); err != nil {
 		return fmt.Errorf("capability %s: %w", capabilityKey(definition.Ref), err)
 	}
 	if err := validateJSONObject("default_config", definition.DefaultConfig); err != nil {
 		return fmt.Errorf("capability %s: %w", capabilityKey(definition.Ref), err)
+	}
+	if err := ValidateCapabilityConfig(definition, definition.DefaultConfig); err != nil {
+		return fmt.Errorf("capability %s 的 default_config: %w", capabilityKey(definition.Ref), err)
 	}
 	requirements := map[RuleSection]bool{}
 	for _, requirement := range definition.RuleRequirements {

@@ -179,7 +179,7 @@ Agent 和手动 UI 必须调用同一个 WorkflowDraft Command 层。Agent 只�
 
 - [x] 新建 `internal/app/workflow`；
 - [ ] 实现 Draft Command、乐观并发、撤销所需事件；
-- [ ] 实现插入、删除、替换、连接和规则编辑命令（已完成原子插入与可桥接删除）；
+- [x] 实现插入、删除、替换、追加、前置、连接和规则编辑命令；
 - [x] 注册首期线性 Capability；
 - [ ] 提供 Capability、Draft、Validate、Preview API。
 
@@ -275,7 +275,7 @@ Bug 分析的双产出和知识图谱的分支/汇聚不进入首期；不得用
 - [x] 实现节点原子插入和可桥接删除；
 - [x] 添加覆盖无 LLM、断链、分支、能力版本、高风险决策和编辑原子性的测试。
 
-下一执行切片是补齐 Draft Command（替换、追加、规则编辑、乐观并发与事件），然后暴露新的 Draft/Validate API；在这之前不接旧 API，也不建立任何兼容层。
+下一执行切片是建立 Draft Command 的持久化事务边界（幂等、乐观并发与事件），然后暴露新的 Draft/Validate API；在这之前不接旧 API，也不建立任何兼容层。
 
 ## 11. 当前代码基线
 

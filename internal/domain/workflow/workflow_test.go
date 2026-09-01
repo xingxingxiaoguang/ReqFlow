@@ -226,7 +226,7 @@ func validDraft() domain.WorkflowDraft {
 		},
 		AcceptanceCases: []domain.AcceptanceCase{{ID: "sample_product", Name: "产品样本",
 			Input: json.RawMessage(`{"asset":"product-a.pdf"}`), Expectation: json.RawMessage(`{"records":1}`),
-			LastPassed: true, LastRunAt: confirmedAt}},
+			LastPassed: true, LastPassedRevision: 3, LastPreviewID: "preview-1", LastRunAt: confirmedAt}},
 	}
 }
 
