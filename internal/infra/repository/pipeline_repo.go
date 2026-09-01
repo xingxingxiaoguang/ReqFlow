@@ -43,6 +43,30 @@ func (r *PipelineRepo) GetDatasetSchema(ctx context.Context, id string) (*model.
 	return row.toModel(), nil
 }
 
+// CountDatasetSchemaUsage 统计引用该结构的资源：数据集（含归档）、抽取规则、索引规则，
+// 作为删除防护——三者分别对应已入库数据、抽取血缘与检索血缘。
+func (r *PipelineRepo) CountDatasetSchemaUsage(ctx context.Context, id string) (datasets, extractionProfiles, retrievalProfiles int, err error) {
+	var datasetCount, extractionCount, retrievalCount int64
+	if err = r.db.WithContext(ctx).Raw(`SELECT COUNT(*) FROM datasets WHERE schema_id = ?`, id).Scan(&datasetCount).Error; err != nil {
+		return 0, 0, 0, err
+	}
+	if err = r.db.WithContext(ctx).Raw(`SELECT COUNT(*) FROM extraction_profiles WHERE target_schema_id = ?`, id).Scan(&extractionCount).Error; err != nil {
+		return 0, 0, 0, err
+	}
+	if err = r.db.WithContext(ctx).Raw(`SELECT COUNT(*) FROM retrieval_profiles WHERE dataset_schema_id = ?`, id).Scan(&retrievalCount).Error; err != nil {
+		return 0, 0, 0, err
+	}
+	return int(datasetCount), int(extractionCount), int(retrievalCount), nil
+}
+
+func (r *PipelineRepo) DeleteDatasetSchema(ctx context.Context, id string) (bool, error) {
+	result := r.db.WithContext(ctx).Where("id = ?", id).Delete(&pipelineSchemaRow{})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
 func (r *PipelineRepo) CreateAppendDataset(ctx context.Context, dataset *model.Dataset) error {
 	if dataset.ID == "" {
 		dataset.ID = uuid.NewString()

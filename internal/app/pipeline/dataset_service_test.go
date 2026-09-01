@@ -146,6 +146,24 @@ func (r *memoryPipelineRepo) GetDatasetSchema(_ context.Context, id string) (*mo
 	return &clone, nil
 }
 
+func (r *memoryPipelineRepo) CountDatasetSchemaUsage(_ context.Context, id string) (int, int, int, error) {
+	datasets, extractionProfiles, retrievalProfiles := 0, 0, 0
+	for _, dataset := range r.datasets {
+		if dataset.SchemaID == id {
+			datasets++
+		}
+	}
+	return datasets, extractionProfiles, retrievalProfiles, nil
+}
+
+func (r *memoryPipelineRepo) DeleteDatasetSchema(_ context.Context, id string) (bool, error) {
+	if _, ok := r.schemas[id]; !ok {
+		return false, nil
+	}
+	delete(r.schemas, id)
+	return true, nil
+}
+
 func (r *memoryPipelineRepo) CreateAppendDataset(_ context.Context, dataset *model.Dataset) error {
 	dataset.ID = r.id("dataset")
 	clone := *dataset

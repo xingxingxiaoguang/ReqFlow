@@ -3,10 +3,15 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"time"
 
 	"reqflow/internal/domain/model"
 )
+
+// ErrSchemaInUse 表示数据结构仍被数据集或规则引用，拒绝删除。
+var ErrSchemaInUse = errors.New("数据结构仍在使用中")
 
 type CreateSchemaRequest struct {
 	WorkspaceID string          `json:"workspace_id,omitempty"`
@@ -43,6 +48,23 @@ func (s *DatasetService) GetSchemaView(ctx context.Context, id string) (*SchemaV
 	}
 	view := schemaView(schema)
 	return &view, nil
+}
+
+// DeleteSchema 删除数据结构。仍被数据集（含归档）、抽取规则或索引规则引用的结构
+// 不允许删除，保证已入库数据与抽取/检索血缘可追溯；未使用过的结构可直接删除。
+func (s *DatasetService) DeleteSchema(ctx context.Context, id string) (bool, error) {
+	if _, err := s.repo.GetDatasetSchema(ctx, id); err != nil {
+		return false, err
+	}
+	datasets, extractionProfiles, retrievalProfiles, err := s.repo.CountDatasetSchemaUsage(ctx, id)
+	if err != nil {
+		return false, err
+	}
+	if datasets > 0 || extractionProfiles > 0 || retrievalProfiles > 0 {
+		return false, fmt.Errorf("%w：仍有 %d 个数据集、%d 个抽取规则、%d 个索引规则引用它，请先删除对应资源",
+			ErrSchemaInUse, datasets, extractionProfiles, retrievalProfiles)
+	}
+	return s.repo.DeleteDatasetSchema(ctx, id)
 }
 
 type CreateDatasetRequest struct {

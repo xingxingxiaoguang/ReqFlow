@@ -110,6 +110,7 @@ func New(svc Services) *gin.Engine {
 			v2.GET("/schemas", h.v2ListSchemas)
 		}
 		v2.GET("/schemas/:id", h.v2GetSchema)
+		v2.DELETE("/schemas/:id", h.v2DeleteSchema)
 		v2.POST("/datasets", h.v2CreateDataset)
 		if svc.V2Catalog != nil {
 			v2.GET("/datasets", h.v2ListDatasets)

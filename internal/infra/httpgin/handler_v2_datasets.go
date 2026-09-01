@@ -1,6 +1,7 @@
 package httpgin
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -30,6 +31,23 @@ func (h *handlers) v2GetSchema(c *gin.Context) {
 		return
 	}
 	ok(c, gin.H{"schema": schema})
+}
+
+func (h *handlers) v2DeleteSchema(c *gin.Context) {
+	deleted, err := h.svc.V2Datasets.DeleteSchema(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		if errors.Is(err, apppipeline.ErrSchemaInUse) {
+			fail(c, http.StatusConflict, err.Error())
+			return
+		}
+		fail(c, http.StatusNotFound, "V2 Dataset Schema 不存在")
+		return
+	}
+	if !deleted {
+		fail(c, http.StatusNotFound, "V2 Dataset Schema 不存在")
+		return
+	}
+	ok(c, gin.H{"deleted": true})
 }
 
 func (h *handlers) v2CreateDataset(c *gin.Context) {

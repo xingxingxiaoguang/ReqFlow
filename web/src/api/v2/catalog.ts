@@ -47,6 +47,7 @@ export const v2CatalogApi = {
   archiveDefinition: (id: string) => api.post<{ archived: boolean }>(`/api/v2/task-definitions/${id}/archive`, {}),
   restoreDefinition: (id: string) => api.post<{ restored: boolean }>(`/api/v2/task-definitions/${id}/restore`, {}),
   listSchemas: () => api.get<{ schemas: V2Schema[] }>('/api/v2/schemas?limit=200'),
+  deleteSchema: (id: string) => api.del<{ deleted: boolean }>(`/api/v2/schemas/${id}`),
   createSchema: (input: { name: string; description?: string; json_schema: V2JSONSchema; ui_schema?: Record<string, unknown> }) =>
     api.post<{ schema: V2Schema }>('/api/v2/schemas', input),
   listDatasets: (params: { status?: string; purpose?: string } = {}) =>

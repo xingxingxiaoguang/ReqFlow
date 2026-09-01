@@ -1,8 +1,10 @@
+import { useState } from 'react'
 import { App, Button, Descriptions, Empty, Modal, Popconfirm, Space, Spin, Tag, Typography } from 'antd'
-import { DeleteOutlined } from '@ant-design/icons'
+import { DeleteOutlined, EyeOutlined } from '@ant-design/icons'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { v2CatalogApi } from '../../api/v2/catalog'
-import type { V2ExtractionProfileDetail } from '../../api/v2/types'
+import type { V2ExtractionProfileDetail, V2Schema } from '../../api/v2/types'
+import SchemaDetailModal from './SchemaDetailModal'
 
 const { Paragraph, Text } = Typography
 
@@ -27,12 +29,15 @@ const guideText = (value: unknown) => {
 export default function ExtractionProfileDetailModal({ profileID, schemaName, open, onClose, onDeleted }: Props) {
   const { message } = App.useApp()
   const queryClient = useQueryClient()
+  const [schemaDetail, setSchemaDetail] = useState<V2Schema>()
   const profileQuery = useQuery({
     queryKey: ['v2-extraction-profile', profileID],
     queryFn: () => v2CatalogApi.getExtractionProfile(profileID!),
     enabled: open && Boolean(profileID),
   })
   const profile: V2ExtractionProfileDetail | undefined = profileQuery.data?.extraction_profile
+  const schemasQuery = useQuery({ queryKey: ['v2-schemas'], queryFn: v2CatalogApi.listSchemas, enabled: open })
+  const targetSchema = (schemasQuery.data?.schemas ?? []).find((item) => item.id === profile?.target_schema_id)
 
   const remove = async () => {
     if (!profile) return
@@ -52,9 +57,10 @@ export default function ExtractionProfileDetailModal({ profileID, schemaName, op
   const normalizationRules = profile?.normalization_rules ?? []
   const examples = profile?.examples ?? []
 
-  return <Modal
-    width={680}
-    title={`抽取规则 · ${profile?.name ?? ''}`}
+  return <>
+    <Modal
+      width={680}
+      title={`抽取规则 · ${profile?.name ?? ''}`}
     open={open && Boolean(profileID)}
     onCancel={onClose}
     footer={<Space>
@@ -71,7 +77,12 @@ export default function ExtractionProfileDetailModal({ profileID, schemaName, op
     {profileQuery.isLoading ? <Space style={{ width: '100%', justifyContent: 'center', padding: 32 }}><Spin /></Space>
       : profile ? <Space direction="vertical" size={16} style={{ width: '100%' }}>
         <Descriptions bordered size="small" column={2}>
-          <Descriptions.Item label="目标数据结构">{schemaName || profile.target_schema_id}</Descriptions.Item>
+          <Descriptions.Item label="目标数据结构">
+            <Space size={4}>
+              <span>{schemaName || profile.target_schema_id}</span>
+              {targetSchema && <Button size="small" type="text" icon={<EyeOutlined />} onClick={() => setSchemaDetail(targetSchema)}>预览</Button>}
+            </Space>
+          </Descriptions.Item>
           <Descriptions.Item label="创建时间">{new Date(profile.created_at).toLocaleString('zh-CN')}</Descriptions.Item>
           <Descriptions.Item label="一条记录代表" span={2}>{profile.record_granularity || '—'}</Descriptions.Item>
         </Descriptions>
@@ -97,4 +108,11 @@ export default function ExtractionProfileDetailModal({ profileID, schemaName, op
       </Space>
         : <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="规则不存在或已被删除" />}
   </Modal>
+
+    <SchemaDetailModal
+      schema={schemaDetail}
+      open={Boolean(schemaDetail)}
+      onClose={() => setSchemaDetail(undefined)}
+    />
+  </>
 }

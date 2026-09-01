@@ -8,12 +8,13 @@ import type { ColumnsType } from 'antd/es/table'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import { v2CatalogApi } from '../../api/v2/catalog'
-import type { JSONSchemaProperty, V2Dataset, V2RetrievalProfile } from '../../api/v2/types'
+import type { JSONSchemaProperty, V2Dataset, V2RetrievalProfile, V2Schema } from '../../api/v2/types'
 import EmbeddedResourceCreate, { type EmbeddedResource, type EmbeddedResourceKind } from './EmbeddedResourceCreate'
 import { DATASET_PURPOSE_FIXED, datasetPurposeLabel } from './datasetPurpose'
 import { schemaFieldOptions } from './SchemaFieldEditor'
 import DatasetIndexDrawer from './DatasetIndexDrawer'
 import RetrievalProfileDetailModal from './RetrievalProfileDetailModal'
+import SchemaDetailModal from './SchemaDetailModal'
 
 const { Paragraph, Text, Title } = Typography
 
@@ -41,6 +42,7 @@ export default function V2Datasets() {
   const [resourceRequest, setResourceRequest] = useState<ResourceRequest>()
   const [indexDataset, setIndexDataset] = useState<V2Dataset>()
   const [ruleDetail, setRuleDetail] = useState<V2RetrievalProfile>()
+  const [schemaDetail, setSchemaDetail] = useState<V2Schema>()
   const [creating, setCreating] = useState(false)
   const datasets = useQuery({ queryKey: ['v2-datasets'], queryFn: () => v2CatalogApi.listDatasets({ status: 'active' }) })
   const schemas = useQuery({ queryKey: ['v2-schemas'], queryFn: v2CatalogApi.listSchemas })
@@ -156,9 +158,10 @@ export default function V2Datasets() {
                 showSearch optionFilterProp="label" placeholder="选择已有数据结构"
                 options={(schemas.data?.schemas ?? []).map((item) => ({ value: item.id, label: item.name }))}
                 onChange={() => form.setFieldsValue({ retrieval_profile_id: undefined, key_fields: [] })}
-                style={{ width: 'calc(100% - 112px)' }}
+                style={{ flex: 1, minWidth: 0 }}
               />
             </Form.Item>
+            <Button icon={<EyeOutlined />} disabled={!selectedCreateSchema} onClick={() => setSchemaDetail(selectedCreateSchema)}>预览</Button>
             <Button icon={<PlusOutlined />} onClick={() => setResourceRequest({ kind: 'schema', target: 'dataset' })}>新建结构</Button>
           </Space.Compact>
         </Form.Item>
@@ -226,6 +229,18 @@ export default function V2Datasets() {
       open={Boolean(ruleDetail)}
       onClose={() => setRuleDetail(undefined)}
       onDeleted={() => setRuleDetail(undefined)}
+    />
+
+    <SchemaDetailModal
+      schema={schemaDetail}
+      open={Boolean(schemaDetail)}
+      onClose={() => setSchemaDetail(undefined)}
+      onDeleted={(deletedID) => {
+        if (form.getFieldValue('schema_id') === deletedID) {
+          form.setFieldsValue({ schema_id: undefined, retrieval_profile_id: undefined, key_fields: [] })
+        }
+        setSchemaDetail(undefined)
+      }}
     />
 
     <EmbeddedResourceCreate

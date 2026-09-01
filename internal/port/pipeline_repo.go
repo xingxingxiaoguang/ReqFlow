@@ -17,6 +17,8 @@ var (
 type DatasetPipelineRepo interface {
 	CreateDatasetSchema(ctx context.Context, schema *model.DatasetSchemaDefinition) error
 	GetDatasetSchema(ctx context.Context, id string) (*model.DatasetSchemaDefinition, error)
+	CountDatasetSchemaUsage(ctx context.Context, id string) (datasets, extractionProfiles, retrievalProfiles int, err error)
+	DeleteDatasetSchema(ctx context.Context, id string) (bool, error)
 
 	CreateAppendDataset(ctx context.Context, dataset *model.Dataset) error
 	GetAppendDataset(ctx context.Context, id string) (*model.Dataset, error)
