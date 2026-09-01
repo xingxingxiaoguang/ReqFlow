@@ -16,7 +16,6 @@ import (
 
 	"log/slog"
 
-	"reqflow/internal/app"
 	appanalysis "reqflow/internal/app/analysis"
 	appcatalog "reqflow/internal/app/catalog"
 	appextraction "reqflow/internal/app/extraction"
@@ -136,28 +135,11 @@ func main() {
 		os.Exit(1)
 	}
 
-	datasetRepo := repository.NewDatasetRepo(db, cfg.FTS.TSConfig)
-	taskRepo := repository.NewTaskRepo(db)
-	archiveRepo := repository.NewArchiveRepo(db)
-	metadataRepo := repository.NewMetadataRepo(db)
 	pipelineRepo := repository.NewPipelineRepo(db)
 	agentSessionRepo := repository.NewAgentSessionRepo(db)
 	agentConfigRepo := repository.NewAgentConfigRepo(db)
-	// 数据集动态索引管理器：FTS/筛选索引随数据集 schema 建删（表达式索引）
-	datasetIndexer := repository.NewDatasetIndexer(db, cfg.FTS.TSConfig)
 
 	/* ---- app 用例 ---- */
-	matchSvc := app.NewMatchService(datasetRepo, embedClient, cfg.Match.DuplicateThreshold)
-	datasetQuery := app.NewDatasetQueryService(datasetRepo, embedClient)
-	datasetAdmin := app.NewDatasetAdminService(datasetRepo, datasetIndexer, metadataRepo)
-	archiveSvc := app.NewArchiveService(taskRepo, datasetRepo, archiveRepo, datasetIndexer)
-	overviewSvc := app.NewOverviewService(datasetRepo, taskRepo)
-	metadataSvc := app.NewMetadataService(metadataRepo, datasetRepo)
-	// 元数据覆盖层装载（seed → override → effective）：先于任何用例构造之后、服务就绪之前
-	if err := metadataSvc.Reload(context.Background()); err != nil {
-		logger.Error("元数据覆盖层装载失败", "err", err)
-		os.Exit(1)
-	}
 	v2Assets, err := apppipeline.NewAssetService(pipelineRepo, localBlobs, docParser,
 		int64(cfg.Parser.MaxFileMB)<<20)
 	if err != nil {
@@ -331,8 +313,7 @@ func main() {
 
 	/* ---- HTTP ---- */
 	engine := httpgin.New(httpgin.Services{
-		Match: matchSvc, PlatformConfigs: platformConfigs, Overview: overviewSvc,
-		DatasetQuery: datasetQuery, DatasetAdmin: datasetAdmin, Archive: archiveSvc, Metadata: metadataSvc,
+		PlatformConfigs: platformConfigs,
 		V2Definitions: v2Definitions, V2TaskBatches: v2TaskBatches,
 		V2Runtime: v2Runtime, V2TaskQueries: v2TaskQueries,
 		V2Datasets: v2Datasets, V2QueryDatasets: v2QueryDatasets,

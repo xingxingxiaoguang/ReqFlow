@@ -69,13 +69,13 @@ export interface PlatformConfigInput {
 }
 
 export const platformConfigsApi = {
-  catalog: () => api.get<PlatformConfigCatalog>('/api/platform-configs'),
+  catalog: () => api.get<PlatformConfigCatalog>('/api/v2/platform-configs'),
   create: (kind: PlatformConfigKind, input: PlatformConfigInput) =>
-    api.post<PlatformConfigItem>(`/api/platform-configs/${kind}`, input),
+    api.post<PlatformConfigItem>(`/api/v2/platform-configs/${kind}`, input),
   update: (kind: PlatformConfigKind, id: string, input: PlatformConfigInput) =>
-    api.put<PlatformConfigItem>(`/api/platform-configs/${kind}/${id}`, input),
+    api.put<PlatformConfigItem>(`/api/v2/platform-configs/${kind}/${id}`, input),
   activate: (kind: PlatformConfigKind, id: string) =>
-    api.post<{ active: boolean }>(`/api/platform-configs/${kind}/${id}/activate`),
+    api.post<{ active: boolean }>(`/api/v2/platform-configs/${kind}/${id}/activate`),
   remove: (kind: PlatformConfigKind, id: string) =>
-    api.del<{ deleted: boolean }>(`/api/platform-configs/${kind}/${id}`),
+    api.del<{ deleted: boolean }>(`/api/v2/platform-configs/${kind}/${id}`),
 }

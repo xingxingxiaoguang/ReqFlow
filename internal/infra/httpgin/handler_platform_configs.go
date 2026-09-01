@@ -7,7 +7,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	appplatformconfig "reqflow/internal/app/platformconfig"
-	"reqflow/internal/port"
 )
 
 func (h *handlers) listPlatformConfigs(c *gin.Context) {
@@ -67,7 +66,7 @@ func (h *handlers) activatePlatformConfig(c *gin.Context) {
 }
 
 func platformConfigErrorStatus(err error) int {
-	if errors.Is(err, port.ErrPlatformConfigNotFound) {
+	if errors.Is(err, appplatformconfig.ErrNotFound) {
 		return http.StatusNotFound
 	}
 	return http.StatusBadRequest

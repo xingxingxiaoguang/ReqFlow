@@ -3,7 +3,6 @@ package httpgin
 import (
 	"github.com/gin-gonic/gin"
 
-	"reqflow/internal/app"
 	appanalysis "reqflow/internal/app/analysis"
 	appcatalog "reqflow/internal/app/catalog"
 	appextraction "reqflow/internal/app/extraction"
@@ -16,13 +15,7 @@ import (
 
 // Services 组装点注入的全部业务用例（cmd 负责构造）。
 type Services struct {
-	Match           *app.MatchService
 	PlatformConfigs *appplatformconfig.Service
-	Overview        *app.OverviewService
-	DatasetQuery    *app.DatasetQueryService
-	DatasetAdmin    *app.DatasetAdminService
-	Archive         *app.ArchiveService
-	Metadata        *app.MetadataService
 	V2Definitions   *apporchestrator.DefinitionService
 	V2TaskBatches   *apporchestrator.TaskBatchService
 	V2Runtime       *apporchestrator.RuntimeService
@@ -42,7 +35,7 @@ type Services struct {
 	MaxFileMB int64 // 上传大小上限
 }
 
-// New 构造 HTTP 路由。
+// New 构造 HTTP 路由：业务能力一律挂 /api/v2，/api 下只保留健康检查。
 func New(svc Services) *gin.Engine {
 	gin.SetMode(gin.ReleaseMode)
 	r := gin.New()
@@ -50,49 +43,16 @@ func New(svc Services) *gin.Engine {
 
 	h := &handlers{svc: svc}
 	api := r.Group("/api")
-	{
-		api.GET("/health", h.health)
-		api.GET("/overview", h.overview)
+	api.GET("/health", h.health)
 
-		api.POST("/datasets", h.createDataset)                       // 新建数据集（字段定义从模板带出或自定义）
-		api.POST("/datasets/:id/search", h.searchDatasetFTS)         // 字段全文检索（FTS 动态索引）
-		api.POST("/datasets/:id/schema/check", h.datasetSchemaCheck) // 字段定义 dry-run
-		api.PUT("/datasets/:id/schema", h.datasetSchemaUpdate)       // 字段定义受控保存
-		api.DELETE("/datasets/:id", h.archiveDataset)                // 归档（含条目与向量，可恢复）
-
-		api.GET("/archives", h.listArchives)                      // 归档列表
-		api.POST("/archives/:kind/:id/restore", h.restoreArchive) // 归档恢复
-
-		api.GET("/metadata", h.metadataCatalog)                       // 元数据目录总览
-		api.GET("/metadata/task-types/:type", h.metadataTaskType)     // 任务类型聚合视图
-		api.POST("/metadata/render/preview", h.metadataPromptPreview) // 提示词预览
-
-		// 元数据受控编辑（M3）：写路径是显式管理动作，每次写必记审计
-		api.POST("/metadata/schemas/:type/check", h.metadataSchemaCheck)      // 兼容性 dry-run
-		api.PUT("/metadata/schemas/:type", h.metadataSchemaUpdate)            // schema 受控保存
-		api.DELETE("/metadata/schemas/:type", h.metadataSchemaReset)          // 回退到内置
-		api.PUT("/metadata/profiles/:type", h.metadataProfileUpdate)          // 指令头/示例编辑
-		api.DELETE("/metadata/profiles/:type", h.metadataProfileReset)        // 回退到内置
-		api.POST("/metadata/workflows/:type/check", h.metadataWorkflowCheck)  // 工作流 dry-run（M4）
-		api.PUT("/metadata/workflows/:type", h.metadataWorkflowUpdate)        // 工作流受控保存（M4）
-		api.DELETE("/metadata/workflows/:type", h.metadataWorkflowReset)      // 回退到内置工作流（M4）
-		api.PUT("/metadata/workflows/:type/status", h.metadataWorkflowStatus) // 启用/停用向导类型（M4）
-		api.POST("/metadata/task-types", h.metadataTaskTypeRegister)          // 新任务类型向导注册（M4）
-		api.GET("/metadata/history/:kind/:key", h.metadataHistory)            // 版本历史
-		api.GET("/metadata/export", h.metadataExport)                         // effective 视图导出
-		api.POST("/metadata/import", h.metadataImport)                        // 导入（同一守卫）
-
-		api.POST("/match/duplicates", h.checkDuplicates)
-
-		if svc.PlatformConfigs != nil {
-			api.GET("/platform-configs", h.listPlatformConfigs)
-			api.POST("/platform-configs/:kind", h.createPlatformConfig)
-			api.PUT("/platform-configs/:kind/:id", h.updatePlatformConfig)
-			api.DELETE("/platform-configs/:kind/:id", h.deletePlatformConfig)
-			api.POST("/platform-configs/:kind/:id/activate", h.activatePlatformConfig)
-		}
-	}
 	v2 := api.Group("/v2")
+	if svc.PlatformConfigs != nil {
+		v2.GET("/platform-configs", h.listPlatformConfigs)
+		v2.POST("/platform-configs/:kind", h.createPlatformConfig)
+		v2.PUT("/platform-configs/:kind/:id", h.updatePlatformConfig)
+		v2.DELETE("/platform-configs/:kind/:id", h.deletePlatformConfig)
+		v2.POST("/platform-configs/:kind/:id/activate", h.activatePlatformConfig)
+	}
 	if svc.V2Agent != nil {
 		v2.GET("/agent/sessions", h.v2ListAgentSessions)
 		v2.POST("/agent/sessions", h.v2CreateAgentSession)
