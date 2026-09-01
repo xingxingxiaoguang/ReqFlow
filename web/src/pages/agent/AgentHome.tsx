@@ -1,6 +1,6 @@
 import {
   ArrowRightOutlined, BookOutlined, BranchesOutlined, CheckCircleFilled, ClockCircleOutlined,
-  DatabaseOutlined, ExclamationCircleFilled, HistoryOutlined, LoadingOutlined,
+  DatabaseOutlined, ExclamationCircleFilled, FormOutlined, HistoryOutlined, LoadingOutlined,
   PlusOutlined, RobotOutlined, SearchOutlined, SendOutlined, StopOutlined,
   SettingOutlined, ThunderboltFilled, ToolOutlined, UnorderedListOutlined,
 } from '@ant-design/icons'
@@ -29,6 +29,11 @@ const quickPrompts = [
     icon: <SearchOutlined />, slug: 'query-analysis', label: '查询分析', builtin: true,
     description: '确定查询范围和查询索引，多步搜索逐步收敛；召回不理想时提取原文关键词与关键语义再次搜索。',
     prompt: '帮我查询分析数据集：先确定查询范围和要用的查询索引，然后多步搜索逐步收敛；如果召回不理想，请提取描述原文的关键词和关键语义再次搜索。',
+  },
+  {
+    icon: <FormOutlined />, slug: 'create-skill', label: '创建 Skill', builtin: true,
+    description: '把稳定的工作方法沉淀为可复用的纯文本 Skill；我帮你设计 slug、标题与提示词。',
+    prompt: '请引导我创建一个自己的 Skill：先帮我明确适用场景、所需输入和输出形式，再帮我拟好 slug、标题、简介和完整提示词。',
   },
 ]
 

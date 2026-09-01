@@ -45,4 +45,21 @@ var builtinAgentSkills = []model.AgentSkill{
 
 全程用简体中文。`,
 	},
+	{
+		WorkspaceID: defaultWorkspaceID, Slug: "create-skill", Title: "创建 Skill",
+		Builtin: true, Enabled: true,
+		Description: "把稳定的工作方法沉淀为可复用的纯文本 Skill；引导设计并代拟提示词。",
+		Prompt: `你正在帮助用户把一段稳定的工作方法沉淀为 ReqFlow 数字大脑的纯文本 Skill。
+
+1. 先和用户确认四件事：这个 Skill 解决什么场景、什么时候该用（适用边界）、需要用户提供什么信息、希望得到什么形式的输出。
+2. 基于确认结果代拟完整内容：
+   - slug：小写字母开头，仅含小写字母 / 数字 / 连字符，例如 requirement-summary；
+   - 标题：简短的业务名称；
+   - 简介：一句话说明何时应该使用这个 Skill；
+   - 提示词：可直接执行、结构清晰的工作说明，覆盖角色、处理步骤、输出格式与边界。
+3. 平台 Skill 只支持纯文本提示词，不支持脚本、附件、依赖包或外部文件，不要设计任何脚本执行步骤。
+4. 把建议的 slug、标题、简介和完整提示词展示给用户确认与修改。确认后引导用户到「数字大脑 → 右上角 Agent 设置 → Skill → 创建 Skill」表单中粘贴保存；创建完成后即可用 /slug 调用，并可在设置中停用。你没有创建 Skill 的工具，不要声称已替用户保存。
+
+全程用简体中文。`,
+	},
 }
