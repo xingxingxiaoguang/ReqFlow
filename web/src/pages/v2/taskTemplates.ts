@@ -36,7 +36,7 @@ export function createDefinition(template: NoCodeTemplateId, name: string, value
       { id: 'transform', name: '确定性清洗', kind: 'data.transform', depends_on: ['extract'], inputs: { drafts: '$step.extract.drafts' }, outputs: { records: 'transformed_records' }, config: {} },
       { id: 'validate', name: 'Schema 与业务校验', kind: 'data.validate', depends_on: ['transform'], inputs: { records: '$step.transform.records', dataset: '$task.target' }, outputs: { validation: 'validation_results' }, config: {} },
       { id: 'review', name: '人工审核', kind: 'human.review', depends_on: ['validate'], inputs: { validation: '$step.validate.validation' }, outputs: { approved: 'approved_records' }, config: { allow_edit: true } },
-      { id: 'publish', name: '原子发布', kind: 'data.publish', depends_on: ['review'], inputs: { approved: '$step.review.approved' }, outputs: { batch: 'dataset_batch' }, config: {} },
+      { id: 'publish', name: '原子发布', kind: 'data.publish', depends_on: ['review'], inputs: { approved: '$step.review.approved' }, outputs: { batch: 'dataset_batch', dataset: 'dataset_boundary' }, config: {} },
     ],
   }
   if (template === 'retrieval_index') return {
