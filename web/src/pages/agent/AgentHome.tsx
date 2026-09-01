@@ -1,5 +1,5 @@
 import {
-  ArrowRightOutlined, BranchesOutlined, CheckCircleFilled, ClockCircleOutlined,
+  ArrowRightOutlined, BookOutlined, BranchesOutlined, CheckCircleFilled, ClockCircleOutlined,
   DatabaseOutlined, ExclamationCircleFilled, HistoryOutlined, LoadingOutlined,
   PlusOutlined, RobotOutlined, SearchOutlined, SendOutlined, StopOutlined,
   SettingOutlined, ThunderboltFilled, ToolOutlined, UnorderedListOutlined,
@@ -20,10 +20,16 @@ const { Text, Title } = Typography
 const { TextArea } = Input
 
 const quickPrompts = [
-  { icon: <BranchesOutlined />, label: '发起数据清洗', prompt: '我想把一批文件清洗入库。请按平台使用规则告诉我要准备什么（文件集、抽取规则、目标数据集），以及在哪里发起数据清洗任务。' },
-  { icon: <UnorderedListOutlined />, label: '查看运行任务', prompt: '查询当前正在运行和等待处理的任务，按优先级告诉我需要关注什么。' },
-  { icon: <SearchOutlined />, label: '查询平台数据', prompt: '先列出平台里可查询的数据集和索引，帮助我选择要分析的数据。' },
-  { icon: <DatabaseOutlined />, label: '建立数据索引', prompt: '查询还没有可用检索索引的数据集，并告诉我如何在数据管理页的数据集上用「索引」操作直接建立。' },
+  {
+    icon: <BookOutlined />, slug: 'platform-guide', label: '平台指南', builtin: true,
+    description: '怎么建立数据集、查询数据集、发起数据提取任务；提醒你追加的数据要先建索引再检索。',
+    prompt: '请给我讲讲平台操作指南：怎么建立数据集、怎么查询数据集、怎么发起数据提取任务，以及索引的注意事项（追加的数据在索引查询前要先建索引）。',
+  },
+  {
+    icon: <SearchOutlined />, slug: 'query-analysis', label: '查询分析', builtin: true,
+    description: '确定查询范围和查询索引，多步搜索逐步收敛；召回不理想时提取原文关键词与关键语义再次搜索。',
+    prompt: '帮我查询分析数据集：先确定查询范围和要用的查询索引，然后多步搜索逐步收敛；如果召回不理想，请提取描述原文的关键词和关键语义再次搜索。',
+  },
 ]
 
 const toolMeta: Record<string, { label: string; group: string; path?: string }> = {
@@ -528,18 +534,24 @@ function Welcome({ onPrompt }: { onPrompt: (prompt: string) => void }) {
     <div className="agent-orb"><RobotOutlined /><span /><span /></div>
     <Text className="agent-welcome-kicker">REQFLOW PLATFORM INTELLIGENCE</Text>
     <Title>今天想让数字大脑<br />帮你完成什么？</Title>
-    <Text className="agent-welcome-subtitle">它不仅回答问题，还会调用平台能力创建流程、运行任务、查询和分析真实数据。</Text>
+    <Text className="agent-welcome-subtitle">熟悉平台操作规则，带你建立数据集、发起数据提取任务、避开索引陷阱；也能直接查询并分析数据集里的真实数据。</Text>
     <div className="agent-quick-grid">
       {quickPrompts.map((item) => <button key={item.label} onClick={() => onPrompt(item.prompt)}>
         <span className="quick-icon">{item.icon}</span>
-        <span><b>{item.label}</b><small>{item.prompt.slice(0, 25)}…</small></span>
+        <span className="quick-text">
+          <span className="quick-title">
+            <b>{item.label}</b>
+            {item.builtin && <Tag color="purple" bordered={false}>内置 /{item.slug}</Tag>}
+          </span>
+          <small>{item.description}</small>
+        </span>
         <ArrowRightOutlined />
       </button>)}
     </div>
     <div className="agent-tools-strip">
-      <span><BranchesOutlined /> 流程 <b>查 · 增</b></span>
-      <span><UnorderedListOutlined /> 任务 <b>查 · 增 · 运行</b></span>
-      <span><DatabaseOutlined /> 数据 <b>查询 · 索引</b></span>
+      <span><BranchesOutlined /> 流程 <b>查</b></span>
+      <span><UnorderedListOutlined /> 任务 <b>查</b></span>
+      <span><DatabaseOutlined /> 数据 <b>查询 · 分析</b></span>
     </div>
   </div>
 }

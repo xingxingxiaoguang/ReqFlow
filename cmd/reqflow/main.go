@@ -327,6 +327,9 @@ func main() {
 	if err := v2Agent.Recover(context.Background()); err != nil {
 		logger.Warn("ReqFlow Agent 会话恢复失败", "err", err)
 	}
+	if err := v2Agent.SeedBuiltinSkills(context.Background()); err != nil {
+		logger.Warn("内置 Skill 种子失败", "err", err)
+	}
 	workerCtx, stopWorker := context.WithCancel(context.Background())
 	workerDone := make(chan struct{})
 	go func() {

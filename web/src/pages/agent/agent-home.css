@@ -269,3 +269,5 @@
   .agent-composer-wrap { padding-inline: 12px; }
   .agent-message.user > div { max-width: 88%; }
 }
+.quick-title { display: flex; gap: 6px; align-items: center; min-width: 0; }
+.quick-title .ant-tag { margin-inline-end: 0; flex: 0 0 auto; }
