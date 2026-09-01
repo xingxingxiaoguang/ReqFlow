@@ -135,12 +135,60 @@ func TestSearchRuntimeStrategyAndRerank(t *testing.T) {
 	if len(response.Hits) != 1 || response.Hits[0].DatasetItemID != "item-b" {
 		t.Fatalf("rerank_top_n 未限制最终结果: %+v", response.Hits)
 	}
+	// 阈值必须作用于 rerank 后的最终分数：rerank 分 0.95/0.4，阈值 0.5 只保留 0.95。
+	response, err = service.Search(ctx, SearchRequest{RetrievalSnapshotID: snapshot.ID, Query: "shutdown",
+		Strategy: model.RetrievalSearchStrategy{Mode: model.RetrievalModeHybrid,
+			LexicalWeight: 8, SemanticWeight: 2, RecallLimit: 10, TopK: 2,
+			RerankEnabled: true, RerankTopN: 2, ScoreThreshold: 0.5}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Hits) != 1 || response.Hits[0].DatasetItemID != "item-b" ||
+		response.Hits[0].Score < 0.9 || response.Hits[0].RerankScore == nil {
+		t.Fatalf("score_threshold 未过滤 rerank 后的最终分数: %+v", response.Hits)
+	}
 
 	_, err = service.Search(ctx, SearchRequest{RetrievalSnapshotID: snapshot.ID, Query: "x",
 		Filters:  map[string][]string{"forbidden": {"x"}},
 		Strategy: model.RetrievalSearchStrategy{Mode: model.RetrievalModeLexical, RecallLimit: 5, TopK: 2}})
 	if err == nil || !strings.Contains(err.Error(), "白名单") {
 		t.Fatalf("非法 filter 应拒绝: %v", err)
+	}
+
+	// 默认不开 rerank：最终分保持原始 RRF 量纲（≈0.01x），不调用 reranker，阈值被归零。
+	quietReranker := &fakeReranker{available: true}
+	quietService, _ := NewService(repo, lexical, fakeRetrievalEmbedder{available: true}, quietReranker,
+		Options{EmbeddingModel: "BAAI/bge-m3"})
+	response, err = quietService.Search(ctx, SearchRequest{RetrievalSnapshotID: snapshot.ID, Query: "shutdown",
+		Strategy: model.RetrievalSearchStrategy{Mode: model.RetrievalModeHybrid,
+			LexicalWeight: 8, SemanticWeight: 2, RecallLimit: 10, TopK: 2, ScoreThreshold: 0.5}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(response.Hits) != 2 || quietReranker.documents != nil {
+		t.Fatalf("未开 rerank 不应调用 reranker，也不应被阈值误杀: hits=%d reranked=%v",
+			len(response.Hits), quietReranker.documents)
+	}
+	if response.Hits[0].Score <= 0 || response.Hits[0].Score > 0.05 {
+		t.Fatalf("融合分应保持原始 RRF 量纲: %v", response.Hits[0].Score)
+	}
+	if response.Strategy.RerankEnabled || response.Strategy.ScoreThreshold != 0 {
+		t.Fatalf("无 rerank 时策略应回退: %+v", response.Strategy)
+	}
+
+	// reranker 未配置：显式开启 rerank 也应降级为纯融合，而不是让搜索失败。
+	offlineService, _ := NewService(repo, lexical, fakeRetrievalEmbedder{available: true},
+		&fakeReranker{available: false}, Options{EmbeddingModel: "BAAI/bge-m3"})
+	response, err = offlineService.Search(ctx, SearchRequest{RetrievalSnapshotID: snapshot.ID, Query: "shutdown",
+		Strategy: model.RetrievalSearchStrategy{Mode: model.RetrievalModeHybrid,
+			LexicalWeight: 8, SemanticWeight: 2, RecallLimit: 10, TopK: 2,
+			RerankEnabled: true, RerankTopN: 2, ScoreThreshold: 0.5}})
+	if err != nil {
+		t.Fatalf("reranker 缺失应降级而不是失败: %v", err)
+	}
+	if len(response.Hits) != 2 || response.Strategy.RerankEnabled || response.Strategy.ScoreThreshold != 0 {
+		t.Fatalf("降级后应返回全量融合结果并回显降级策略: hits=%d strategy=%+v",
+			len(response.Hits), response.Strategy)
 	}
 }
 

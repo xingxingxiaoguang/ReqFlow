@@ -336,6 +336,16 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (*SearchRes
 	if err != nil {
 		return nil, err
 	}
+	// reranker 未配置时降级为纯融合结果而不是报错——rerank 是默认产品路径，
+	// 缺配置不应让搜索直接不可用；降级后策略回显 RerankEnabled=false 可被调用方感知。
+	if strategy.RerankEnabled && !s.reranker.Available() {
+		strategy.RerankEnabled = false
+	}
+	if !strategy.RerankEnabled {
+		// 原始 RRF 融合分未校准（量级 ≈0.01x），0..1 阈值对它只会全量误杀；
+		// 阈值只对 rerank 后的校准分数生效。
+		strategy.ScoreThreshold = 0
+	}
 	if err := validateFilters(request.Filters, profile.FilterFields); err != nil {
 		return nil, err
 	}
@@ -405,9 +415,6 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (*SearchRes
 			Score: candidate.FusionScore, FusionScore: candidate.FusionScore, Ranks: candidate.Ranks})
 	}
 	if strategy.RerankEnabled && len(hits) > 0 {
-		if !s.reranker.Available() {
-			return nil, fmt.Errorf("请求启用了 rerank，但 reranker 未配置")
-		}
 		documents := make([]string, len(hits))
 		for i := range hits {
 			documents[i] = rerankDocument(hits[i].Fields, profile.Vector.Fields)
@@ -427,6 +434,17 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (*SearchRes
 			reranked = append(reranked, hit)
 		}
 		sort.SliceStable(reranked, func(i, j int) bool { return reranked[i].Score > reranked[j].Score })
+		// score_threshold 语义是"过滤最终展示分数"：rerank 后分数已被覆盖为 rerank 分，
+		// 必须再过滤一次，否则界面分值低于阈值的结果仍会返回，阈值看起来不生效。
+		if strategy.ScoreThreshold > 0 {
+			kept := reranked[:0]
+			for _, hit := range reranked {
+				if hit.Score+1e-12 >= strategy.ScoreThreshold {
+					kept = append(kept, hit)
+				}
+			}
+			reranked = kept
+		}
 		if len(reranked) > strategy.RerankTopN {
 			reranked = reranked[:strategy.RerankTopN]
 		}
@@ -469,15 +487,13 @@ func fuseRRF(lexical, semantic []port.RankedHit, strategy model.RetrievalSearchS
 	}
 	add("lexical", strategy.LexicalWeight, lexical)
 	add("semantic", strategy.SemanticWeight, semantic)
-	theoreticalMax := (strategy.LexicalWeight + strategy.SemanticWeight) / float64(rankConstant+1)
+	// RRF 只看名次不看分差，融合分保留原始量纲（量级 ≈ 1/(k+rank)，约 0.006..0.017），
+	// 刻意不做归一化：它衡量的是双路共识，不是校准的相关性分。除以"理论满分"式的
+	// 归一化会把分数压进 0.5..1.0 的窄带（两路中等靠前 ≈0.67，单路第一 ≈0.5），
+	// 阈值随之失效。用户可见的最终分数由 rerank 决定；阈值过滤也只作用于最终分数。
 	out := make([]fusedCandidate, 0, len(byID))
 	for _, candidate := range byID {
-		if theoreticalMax > 0 {
-			candidate.FusionScore /= theoreticalMax
-		}
-		if candidate.FusionScore+1e-12 >= strategy.ScoreThreshold {
-			out = append(out, *candidate)
-		}
+		out = append(out, *candidate)
 	}
 	sort.SliceStable(out, func(i, j int) bool {
 		if out[i].FusionScore == out[j].FusionScore {

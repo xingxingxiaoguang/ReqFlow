@@ -48,6 +48,7 @@ export default function V2DatasetDetail() {
   const { message } = App.useApp()
   const client = useQueryClient()
   const [form] = Form.useForm<SearchForm>()
+  const rerankEnabled = Form.useWatch('rerank_enabled', form)
   const [advanced, setAdvanced] = useState(false)
   const [searching, setSearching] = useState(false)
   const [result, setResult] = useState<SearchResult>()
@@ -152,7 +153,10 @@ export default function V2DatasetDetail() {
   }
 
   const search = async (values: SearchForm) => {
-    if (!values.snapshot) {
+    // snapshot 选择器藏在"展开搜索参数"里，未展开时字段未挂载、表单值可能为空：
+    // 与界面承诺一致地回退到覆盖数据最多的最新快照。
+    const snapshotID = values.snapshot ?? activeSnapshots[0]?.id
+    if (!snapshotID) {
       message.warning('该数据集还没有可用索引快照，请先通过流程构建索引')
       return
     }
@@ -166,7 +170,7 @@ export default function V2DatasetDetail() {
     setSearching(true)
     try {
       const response = await v2CatalogApi.search({
-        retrieval_snapshot_id: values.snapshot,
+        retrieval_snapshot_id: snapshotID,
         query: values.query,
         filters,
         strategy: {
@@ -221,19 +225,21 @@ export default function V2DatasetDetail() {
         form={form}
         layout="vertical"
         onFinish={search}
-        initialValues={{ mode: 'hybrid', lexical_weight: 0.5, score_threshold: 0, recall_limit: 100, top_k: 20, rerank_enabled: true, rerank_top_n: 10, filters: '' }}
+        initialValues={{ mode: 'hybrid', lexical_weight: 0.5, score_threshold: 0.3, recall_limit: 100, top_k: 20, rerank_enabled: true, rerank_top_n: 20, filters: '' }}
       >
         <Form.Item name="query" rules={[{ required: true, whitespace: true, message: '请输入搜索内容' }]} style={{ marginBottom: advanced ? 18 : 0 }}>
           <Input.Search size="large" enterButton="搜索" loading={searching} disabled={!snapshots.isLoading && activeSnapshots.length === 0} placeholder={activeSnapshots.length > 0 ? '输入关键词或业务问题' : '请先为当前数据集建立索引'} onSearch={() => form.submit()} />
         </Form.Item>
-        {advanced && <Card size="small" type="inner" title="混合检索参数">
+        {/* 高级参数用 CSS 隐藏而不是条件渲染：条件渲染时未展开的字段不随表单提交，
+            后端拿自己的默认值兜底，界面显示的阈值/重排序等参数形同虚设。 */}
+        <Card size="small" type="inner" title="混合检索参数" style={{ display: advanced ? undefined : 'none' }}>
           <Row gutter={16}>
             <Col xs={24} lg={14}><Form.Item name="snapshot" label="索引版本" extra="默认自动使用覆盖数据最多的最新版本"><Select loading={snapshots.isLoading} disabled={activeSnapshots.length === 0} placeholder="暂无可用索引" options={activeSnapshots.map((item) => ({ value: item.id, label: `数据边界 ${item.source_seq} · ${new Date(item.activated_at ?? item.created_at).toLocaleString('zh-CN')}` }))} /></Form.Item></Col>
             <Col xs={24} lg={10}><Form.Item name="mode" label="检索模式"><Segmented block options={[{ label: '精准', value: 'lexical' }, { label: '语义', value: 'semantic' }, { label: '混合', value: 'hybrid' }]} /></Form.Item></Col>
           </Row>
           <Row gutter={24}>
             <Col xs={24} md={12}><Form.Item name="lexical_weight" label="精准权重（其余为语义权重）"><Slider min={0} max={1} step={0.05} marks={{ 0: '纯语义', 0.5: '均衡', 1: '纯精准' }} /></Form.Item></Col>
-            <Col xs={24} md={12}><Form.Item name="score_threshold" label="最低召回分数"><Slider min={0} max={1} step={0.05} /></Form.Item></Col>
+            <Col xs={24} md={12}><Form.Item name="score_threshold" label="相关性阈值（重排序分）" extra="过滤重排序后的最终分数（校准的 0..1 相关性）；关闭重排序时阈值不生效"><Slider min={0} max={1} step={0.05} disabled={!rerankEnabled} /></Form.Item></Col>
           </Row>
           <Row gutter={16}>
             <Col xs={12} md={6}><Form.Item name="recall_limit" label="召回数"><InputNumber min={1} max={1000} style={{ width: '100%' }} /></Form.Item></Col>
@@ -242,7 +248,7 @@ export default function V2DatasetDetail() {
             <Col xs={12} md={6}><Form.Item name="rerank_top_n" label="重排 Top N"><InputNumber min={1} max={200} style={{ width: '100%' }} /></Form.Item></Col>
           </Row>
           <Form.Item name="filters" label="字段筛选（JSON，可选）"><Input.TextArea rows={2} placeholder={'例如：{"status":"active"}'} /></Form.Item>
-        </Card>}
+        </Card>
       </Form>
       {!snapshots.isLoading && activeSnapshots.length === 0 && <Alert
         type="warning"
