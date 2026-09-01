@@ -1,5 +1,7 @@
 # ReqFlow 交接文档
 
+> 当前重构执行状态、已完成提交与下一落点以 [REFACTOR_HANDOFF.md](./REFACTOR_HANDOFF.md) 为准；本文保留产品与历史架构背景。
+
 > 本文只维护当前事实、长期不变量、运行方式和正在执行的工作。已经完成的阶段记录由 Git 历史保存，不在交接文档中维护。
 
 当前权威设计是 [线性工作流重建落地计划](./WORKFLOW_REBUILD_PLAN.md)。`PRODUCT.md` 仍包含旧 `TaskDefinition/DAG/Profile` 口径，完成新系统切换前不得将其作为工作流实现依据。
