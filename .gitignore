@@ -28,3 +28,6 @@ output/playwright/
 # CodeGraph 本地索引
 .codegraph/
 .zcode/
+
+# 运行时守护进程日志
+logs/
