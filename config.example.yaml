@@ -31,11 +31,8 @@ llm:
   temperature: 0.9
   max_tokens: 128000
   timeout_ms: 600000
-  agent_mode: true     # true 时需求分析启用 agent loop：模型经工具自主工作——
-                       # read_document 分批阅读 / search_document 检索定位 /
-                       # write_work_items 分批产出草稿 / ask_human 关键决策点问人
-                       # （草稿落库仍需人工确认）
-  agent_max_iterations: 32  # agent loop 迭代上限（分批阅读大文档需多轮）
+  agent_mode: true     # true 时需求分析启用 agent loop：模型经工具自主工作
+  agent_max_iterations: 64  # agent loop 迭代上限（分批阅读大文档需多轮）
 
 # 向量 embedding（OpenAI 兼容 /embeddings；不配置则语义匹配自动降级为仅精确匹配）
 embedding:
