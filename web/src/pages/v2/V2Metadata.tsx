@@ -182,7 +182,7 @@ export default function V2Metadata() {
 
   const schemas = useQuery({ queryKey: ['v2-schemas'], queryFn: v2CatalogApi.listSchemas })
   const analysis = useQuery({ queryKey: ['v2-analysis-profiles'], queryFn: v2CatalogApi.listAnalysisProfiles })
-  const extraction = useQuery({ queryKey: ['v2-extraction-profiles'], queryFn: v2CatalogApi.listExtractionProfiles })
+  const extraction = useQuery({ queryKey: ['v2-extraction-profiles'], queryFn: () => v2CatalogApi.listExtractionProfiles() })
   const retrieval = useQuery({ queryKey: ['v2-retrieval-profiles'], queryFn: v2CatalogApi.listRetrievalProfiles })
   const assets = useQuery({ queryKey: ['v2-asset-sets'], queryFn: v2CatalogApi.listAssetSets })
 

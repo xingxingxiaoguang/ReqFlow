@@ -64,7 +64,12 @@ export const v2CatalogApi = {
     return api.post<{ asset: { id: string; filename: string }; created: boolean }>('/api/v2/assets', body)
   },
   createAssetSet: (input: { name: string; asset_ids: string[] }) => api.post<{ asset_set: V2AssetSet }>('/api/v2/asset-sets', input),
-  listExtractionProfiles: () => api.get<{ extraction_profiles: V2ExtractionProfile[] }>('/api/v2/extraction-profiles?limit=200'),
+  listExtractionProfiles: (params: { workspaceId?: string; targetSchemaId?: string; limit?: number } = {}) =>
+    api.get<{ extraction_profiles: V2ExtractionProfile[] }>(`/api/v2/extraction-profiles?${query({
+      workspace_id: params.workspaceId,
+      target_schema_id: params.targetSchemaId,
+      limit: params.limit ?? 200,
+    })}`),
   createExtractionProfile: (input: ExtractionProfileInput) => api.post<{ extraction_profile: V2ExtractionProfile }>('/api/v2/extraction-profiles', input),
   listRetrievalProfiles: () => api.get<{ retrieval_profiles: V2RetrievalProfile[] }>('/api/v2/retrieval-profiles?limit=200'),
   queryRetrievalProfiles: (params: { workspaceId?: string; datasetSchemaId?: string; limit?: number } = {}) =>

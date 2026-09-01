@@ -13,14 +13,20 @@ export const v2TasksApi = {
     return api.get<{ tasks: V2Task[] }>(`/api/v2/tasks?${query}`)
   },
   get: (id: string) => api.get<V2TaskSnapshot>(`/api/v2/tasks/${id}`),
-  create: (input: { definition_id: string; title?: string; bindings: Array<{ port_name: string; resource_type: string; resource_id: string }> }) =>
-    api.post<{ task: V2Task }>('/api/v2/tasks', input),
+  /** 任务级步骤配置覆盖（step_id → config 浅合并），用于把抽取/检索规则按数据集 schema 在创建任务时落实。 */
+  create: (input: {
+    definition_id: string
+    title?: string
+    bindings: Array<{ port_name: string; resource_type: string; resource_id: string }>
+    step_configs?: Record<string, Record<string, unknown>>
+  }) => api.post<{ task: V2Task }>('/api/v2/tasks', input),
   createBatch: (input: {
     definition_id: string
     title?: string
     bindings: Array<{ port_name: string; resource_type: string; resource_id: string }>
     split_port_name: string
     start_now: boolean
+    step_configs?: Record<string, Record<string, unknown>>
   }) => api.post<{ batch: { id: string; size: number; tasks: V2Task[] } }>('/api/v2/task-batches', input),
   start: (id: string) => api.post<V2TaskSnapshot>(`/api/v2/tasks/${id}/start`, {}),
   pause: (id: string) => api.post<V2TaskSnapshot>(`/api/v2/tasks/${id}/pause`, {}),

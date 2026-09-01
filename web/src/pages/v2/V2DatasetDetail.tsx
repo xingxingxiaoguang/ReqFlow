@@ -5,11 +5,11 @@ import {
 } from 'antd'
 import { ArrowLeftOutlined, DownOutlined, PlusOutlined, RocketOutlined, SearchOutlined, UpOutlined } from '@ant-design/icons'
 import type { ColumnsType } from 'antd/es/table'
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { useQuery } from '@tanstack/react-query'
 import { useNavigate, useParams } from 'react-router-dom'
 import { v2CatalogApi } from '../../api/v2/catalog'
 import { v2TasksApi } from '../../api/v2/tasks'
-import type { V2RetrievalProfile, V2TaskDefinition } from '../../api/v2/types'
+import type { V2RetrievalProfile } from '../../api/v2/types'
 import EmbeddedResourceCreate, { type EmbeddedResource } from './EmbeddedResourceCreate'
 
 const { Paragraph, Text, Title } = Typography
@@ -46,7 +46,6 @@ export default function V2DatasetDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const { message } = App.useApp()
-  const client = useQueryClient()
   const [form] = Form.useForm<SearchForm>()
   const rerankEnabled = Form.useWatch('rerank_enabled', form)
   const [advanced, setAdvanced] = useState(false)
@@ -124,17 +123,15 @@ export default function V2DatasetDetail() {
     if (!dataset || !selectedProfileID) return
     setIndexing(true)
     try {
-      const availableDefinitions = definitions.data?.task_definitions ?? []
-      let match = findIndexDefinition(availableDefinitions, selectedProfileID)
-      if (!match) {
-        const created = await v2CatalogApi.createDefinition(indexDefinitionInput(dataset.name, selectedProfileID))
-        match = { definition: created.definition, portName: 'dataset', resourceType: 'dataset_boundary' }
-        await client.invalidateQueries({ queryKey: ['v2-definitions'] })
-      }
+      const fixed = (definitions.data?.task_definitions ?? []).find((item) => item.key === 'retrieval_index')
+      if (!fixed) throw new Error('固定索引流程未就绪，请稍后重试或联系管理员')
+      const buildStep = fixed.steps.find((item) => item.kind === 'retrieval.build')
+      if (!buildStep) throw new Error('固定索引流程缺少 retrieval.build 步骤')
       const created = await v2TasksApi.create({
-        definition_id: match.definition.id,
+        definition_id: fixed.id,
         title: `为「${dataset.name}」建立检索索引`,
-        bindings: [{ port_name: match.portName, resource_type: match.resourceType, resource_id: dataset.id }],
+        bindings: [{ port_name: 'dataset', resource_type: 'dataset_boundary', resource_id: dataset.id }],
+        step_configs: { [buildStep.id]: { retrieval_profile_id: selectedProfileID } },
       })
       await v2TasksApi.start(created.task.id)
       setIndexTaskID(created.task.id)
@@ -322,35 +319,6 @@ export default function V2DatasetDetail() {
       onCreated={profileCreated}
     />
   </Space>
-}
-
-function findIndexDefinition(definitions: V2TaskDefinition[], profileID: string) {
-  for (const definition of definitions) {
-    const step = definition.steps.find((item) => item.kind === 'retrieval.build' && item.config?.retrieval_profile_id === profileID)
-    if (!step) continue
-    const input = Object.entries(definition.input_ports).find(([portName, port]) =>
-      (port.resource_type === 'dataset' || port.resource_type === 'dataset_boundary')
-      && Object.values(step.inputs ?? {}).includes(`$task.${portName}`))
-    if (input) return { definition, portName: input[0], resourceType: input[1].resource_type }
-  }
-  return undefined
-}
-
-function indexDefinitionInput(datasetName: string, profileID: string) {
-  return {
-    key: `index_dataset_${Date.now().toString(36)}`,
-    name: `为「${datasetName}」建立检索索引`,
-    description: '由数据管理按需创建的单步骤索引流程',
-    status: 'active' as const,
-    input_ports: { dataset: { resource_type: 'dataset_boundary', required: true, description: '待建立索引的数据集边界' } },
-    output_ports: { snapshot: { resource_type: 'retrieval_snapshot', description: '激活后的检索快照' } },
-    output_bindings: { snapshot: '$step.build_index.snapshot' },
-    steps: [{
-      id: 'build_index', name: '建立检索索引', kind: 'retrieval.build',
-      inputs: { dataset: '$task.dataset' }, outputs: { snapshot: 'retrieval_snapshot' },
-      config: { retrieval_profile_id: profileID },
-    }],
-  }
 }
 
 function renderValue(value: unknown) {

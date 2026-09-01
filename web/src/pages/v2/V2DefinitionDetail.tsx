@@ -15,7 +15,7 @@ export default function V2DefinitionDetail() {
   const navigate = useNavigate()
   const client = useQueryClient()
   const definitionQuery = useQuery({ queryKey: ['v2-definition', id], queryFn: () => v2CatalogApi.getDefinition(id!), enabled: Boolean(id) })
-  const extraction = useQuery({ queryKey: ['v2-extraction-profiles'], queryFn: v2CatalogApi.listExtractionProfiles })
+  const extraction = useQuery({ queryKey: ['v2-extraction-profiles'], queryFn: () => v2CatalogApi.listExtractionProfiles() })
   const retrieval = useQuery({ queryKey: ['v2-retrieval-profiles'], queryFn: v2CatalogApi.listRetrievalProfiles })
   const analysis = useQuery({ queryKey: ['v2-analysis-profiles'], queryFn: v2CatalogApi.listAnalysisProfiles })
   const definition = definitionQuery.data?.definition

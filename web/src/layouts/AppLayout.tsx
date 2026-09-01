@@ -2,7 +2,7 @@ import { Outlet, useLocation, useNavigate } from 'react-router-dom'
 import { ProLayout } from '@ant-design/pro-components'
 import {
   DatabaseOutlined, UnorderedListOutlined, ThunderboltFilled, InboxOutlined,
-  BranchesOutlined, RobotOutlined, SettingOutlined,
+  RobotOutlined, SettingOutlined,
 } from '@ant-design/icons'
 import type React from 'react'
 import { Badge, Tooltip, Typography } from 'antd'
@@ -13,7 +13,6 @@ const menu = {
   path: '/',
   routes: [
     { path: '/agent', name: '数字大脑', icon: <RobotOutlined /> },
-    { path: '/definitions', name: '流程管理', icon: <BranchesOutlined /> },
     { path: '/datasets', name: '数据管理', icon: <DatabaseOutlined /> },
     { path: '/tasks', name: '任务管理', icon: <UnorderedListOutlined /> },
     { path: '/archives', name: '归档管理', icon: <InboxOutlined /> },

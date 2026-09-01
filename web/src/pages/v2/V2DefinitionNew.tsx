@@ -221,7 +221,7 @@ export default function V2DefinitionNew() {
     stepIndex: number
   }>()
   const [inputForm] = Form.useForm<InputPortForm>()
-  const extractionProfiles = useQuery({ queryKey: ['v2-extraction-profiles'], queryFn: v2CatalogApi.listExtractionProfiles })
+  const extractionProfiles = useQuery({ queryKey: ['v2-extraction-profiles'], queryFn: () => v2CatalogApi.listExtractionProfiles() })
   const retrievalProfiles = useQuery({ queryKey: ['v2-retrieval-profiles'], queryFn: v2CatalogApi.listRetrievalProfiles })
   const analysisProfiles = useQuery({ queryKey: ['v2-analysis-profiles'], queryFn: v2CatalogApi.listAnalysisProfiles })
   const copySource = useQuery({
