@@ -21,10 +21,11 @@ func NewService(repo port.V2CatalogRepo) (*Service, error) {
 }
 
 type Query struct {
-	WorkspaceID string
-	Status      string
-	Purpose     string
-	Limit       int
+	WorkspaceID    string
+	Status         string
+	Purpose        string
+	TargetSchemaID string
+	Limit          int
 }
 
 type SchemaView struct {
@@ -171,7 +172,7 @@ func (s *Service) ListAssetSets(ctx context.Context, query Query) ([]AssetSetVie
 
 func (s *Service) ListExtractionProfiles(ctx context.Context, query Query) ([]ExtractionProfileView, error) {
 	query = normalize(query)
-	items, err := s.repo.ListExtractionProfiles(ctx, query.WorkspaceID, query.Limit)
+	items, err := s.repo.ListExtractionProfiles(ctx, query.WorkspaceID, query.TargetSchemaID, query.Limit)
 	if err != nil {
 		return nil, err
 	}
@@ -214,6 +215,7 @@ func normalize(query Query) Query {
 		query.WorkspaceID = "default"
 	}
 	query.Status = strings.TrimSpace(query.Status)
+	query.TargetSchemaID = strings.TrimSpace(query.TargetSchemaID)
 	query.Limit = normalizeLimit(query.Limit)
 	return query
 }

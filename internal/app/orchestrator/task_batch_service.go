@@ -32,11 +32,12 @@ func NewTaskBatchService(definitions *DefinitionService, assets TaskBatchAssetSe
 }
 
 type CreateBatchExecutionInput struct {
-	DefinitionID  string                 `json:"definition_id"`
-	Title         string                 `json:"title,omitempty"`
-	Bindings      []ResourceBindingInput `json:"bindings"`
-	SplitPortName string                 `json:"split_port_name"`
-	StartNow      bool                   `json:"start_now,omitempty"`
+	DefinitionID  string                     `json:"definition_id"`
+	Title         string                     `json:"title,omitempty"`
+	Bindings      []ResourceBindingInput     `json:"bindings"`
+	SplitPortName string                     `json:"split_port_name"`
+	StartNow      bool                       `json:"start_now,omitempty"`
+	StepConfigs   map[string]json.RawMessage `json:"step_configs,omitempty"`
 }
 
 type TaskBatchView struct {
@@ -105,6 +106,7 @@ func (s *TaskBatchService) CreateExecutions(ctx context.Context, input CreateBat
 			DefinitionID: input.DefinitionID,
 			Title:        fmt.Sprintf("%s · %s", baseTitle, entry.Asset.Filename),
 			Bindings:     bindings,
+			StepConfigs:  input.StepConfigs,
 		}))
 		if err != nil {
 			return nil, fmt.Errorf("为文件 %s 创建子任务: %w", entry.Asset.Filename, err)

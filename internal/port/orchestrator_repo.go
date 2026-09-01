@@ -25,6 +25,7 @@ var (
 type OrchestratorDefinitionRepo interface {
 	CreateTaskDefinition(ctx context.Context, definition *model.TaskDefinition, snapshot []byte) error
 	GetTaskDefinition(ctx context.Context, id string) (*model.TaskDefinition, error)
+	GetTaskDefinitionByKey(ctx context.Context, workspaceID, key string) (*model.TaskDefinition, bool, error)
 	SetTaskDefinitionStatus(ctx context.Context, id, fromStatus, toStatus string) error
 
 	CreateTaskExecution(ctx context.Context, task *model.Task, bindings []model.TaskResourceBinding, steps []model.StepRun) error

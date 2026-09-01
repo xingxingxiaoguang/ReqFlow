@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"reqflow/internal/domain/model"
 )
@@ -103,11 +104,14 @@ func (r *PipelineRepo) ListAssetSets(ctx context.Context, workspaceID string, li
 	return out, nil
 }
 
-func (r *PipelineRepo) ListExtractionProfiles(ctx context.Context, workspaceID string,
+func (r *PipelineRepo) ListExtractionProfiles(ctx context.Context, workspaceID, targetSchemaID string,
 	limit int) ([]model.ExtractionProfile, error) {
+	query := r.db.WithContext(ctx).Where("workspace_id = ?", workspaceID)
+	if strings.TrimSpace(targetSchemaID) != "" {
+		query = query.Where("target_schema_id = ?", targetSchemaID)
+	}
 	var rows []extractionProfileRow
-	if err := r.db.WithContext(ctx).Where("workspace_id = ?", workspaceID).
-		Order("created_at DESC, id DESC").Limit(catalogLimit(limit)).Find(&rows).Error; err != nil {
+	if err := query.Order("created_at DESC, id DESC").Limit(catalogLimit(limit)).Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	out := make([]model.ExtractionProfile, len(rows))

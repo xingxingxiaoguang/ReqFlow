@@ -271,6 +271,14 @@ func main() {
 		os.Exit(1)
 	}
 	v2Definitions := apporchestrator.NewDefinitionService(pipelineRepo, v2Registry, pipelineRepo)
+	seeded, err := v2Definitions.EnsureBuiltinDefinitions(context.Background())
+	if err != nil {
+		logger.Error("固定流程种子失败", "err", err)
+		os.Exit(1)
+	}
+	if len(seeded) > 0 {
+		logger.Info("已种子固定任务流程", "keys", strings.Join(seeded, ","))
+	}
 	v2TaskBatches, err := apporchestrator.NewTaskBatchService(v2Definitions, v2Assets)
 	if err != nil {
 		logger.Error("V2 Task Batch 初始化失败", "err", err)

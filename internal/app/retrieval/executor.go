@@ -33,21 +33,52 @@ type buildConfig struct {
 }
 
 func (e *BuildExecutor) ValidateDefinition(ctx context.Context, step model.StepDefinition) error {
-	if len(step.Inputs) != 1 || strings.TrimSpace(step.Inputs["dataset"]) == "" {
-		return fmt.Errorf("retrieval.build 必须且只能声明 dataset 输入")
-	}
-	if len(step.Outputs) != 1 || step.Outputs["snapshot"] != model.ResourceRetrievalSnapshot {
-		return fmt.Errorf("retrieval.build 必须且只能声明 snapshot: retrieval_snapshot 输出")
+	if err := validateBuildPorts(step); err != nil {
+		return err
 	}
 	config, err := decodeBuildConfig(step.Config)
 	if err != nil {
 		return err
+	}
+	// 定义级允许 retrieval_profile_id 留空占位，由任务创建时按数据集 schema 落实；
+	// 旧定义写死了规则时仍然就地校验。
+	return e.validateProfile(ctx, config)
+}
+
+// ValidateRuntimeStep 实现任务创建级校验：索引规则此时必须已落实。
+func (e *BuildExecutor) ValidateRuntimeStep(ctx context.Context, step model.StepDefinition) error {
+	if err := validateBuildPorts(step); err != nil {
+		return err
+	}
+	config, err := decodeBuildConfig(step.Config)
+	if err != nil {
+		return err
+	}
+	if config.RetrievalProfileID == "" {
+		return fmt.Errorf("retrieval.build 的 retrieval_profile_id 必须在创建任务时按目标数据集字段选择")
+	}
+	return e.validateProfile(ctx, config)
+}
+
+func (e *BuildExecutor) validateProfile(ctx context.Context, config buildConfig) error {
+	if config.RetrievalProfileID == "" {
+		return nil
 	}
 	if _, err := uuid.Parse(config.RetrievalProfileID); err != nil {
 		return fmt.Errorf("retrieval_profile_id 必须是 UUID")
 	}
 	if _, err := e.service.GetProfile(ctx, config.RetrievalProfileID); err != nil {
 		return fmt.Errorf("RetrievalProfile 不存在: %w", err)
+	}
+	return nil
+}
+
+func validateBuildPorts(step model.StepDefinition) error {
+	if len(step.Inputs) != 1 || strings.TrimSpace(step.Inputs["dataset"]) == "" {
+		return fmt.Errorf("retrieval.build 必须且只能声明 dataset 输入")
+	}
+	if len(step.Outputs) != 1 || step.Outputs["snapshot"] != model.ResourceRetrievalSnapshot {
+		return fmt.Errorf("retrieval.build 必须且只能声明 snapshot: retrieval_snapshot 输出")
 	}
 	return nil
 }
@@ -67,6 +98,9 @@ func (e *BuildExecutor) Execute(ctx context.Context, run orchestrator.StepRunCon
 	config, err := decodeBuildConfig(run.Config)
 	if err != nil {
 		return orchestrator.StepResult{}, err
+	}
+	if config.RetrievalProfileID == "" {
+		return orchestrator.StepResult{}, fmt.Errorf("retrieval.build 的 retrieval_profile_id 未在任务创建时落实")
 	}
 	snapshot, err := e.service.BuildSnapshot(ctx, BuildInput{DatasetID: input.ResourceID,
 		RetrievalProfileID: config.RetrievalProfileID, SourceSeq: boundary.ThroughSeq,
@@ -108,7 +142,7 @@ func (e *BuildExecutor) Resume(ctx context.Context, run orchestrator.StepRunCont
 func decodeBuildConfig(raw json.RawMessage) (buildConfig, error) {
 	var config buildConfig
 	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return config, fmt.Errorf("retrieval.build config 必须包含 retrieval_profile_id")
+		return config, nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -120,8 +154,5 @@ func decodeBuildConfig(raw json.RawMessage) (buildConfig, error) {
 		return config, fmt.Errorf("retrieval.build config 只能包含一个 JSON object")
 	}
 	config.RetrievalProfileID = strings.TrimSpace(config.RetrievalProfileID)
-	if config.RetrievalProfileID == "" {
-		return config, fmt.Errorf("retrieval_profile_id 不能为空")
-	}
 	return config, nil
 }

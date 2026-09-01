@@ -56,6 +56,12 @@ type StepExecutor interface {
 	Resume(ctx context.Context, run StepRunContext, checkpoint json.RawMessage) (StepResult, error)
 }
 
+// RuntimeStepValidator 是可选扩展：任务创建（运行前）级别的步骤校验。
+// 未实现时回落到 ValidateDefinition，用于「定义级允许占位、任务级必须落实」的配置。
+type RuntimeStepValidator interface {
+	ValidateRuntimeStep(ctx context.Context, def model.StepDefinition) error
+}
+
 // Registry 按 Kind 唯一注册 Executor。human.review 是 Orchestrator 内建 Gate，
 // 不允许伪装成普通 Worker Executor。
 type Registry struct {
@@ -95,6 +101,15 @@ func (r *Registry) Lookup(kind model.StepKind) (StepExecutor, error) {
 }
 
 func (r *Registry) ValidateDefinition(ctx context.Context, definition model.TaskDefinition) error {
+	return r.validate(ctx, definition, false)
+}
+
+// ValidateRuntimeDefinition 在任务创建时校验合并任务级配置后的有效定义。
+func (r *Registry) ValidateRuntimeDefinition(ctx context.Context, definition model.TaskDefinition) error {
+	return r.validate(ctx, definition, true)
+}
+
+func (r *Registry) validate(ctx context.Context, definition model.TaskDefinition, runtime bool) error {
 	for _, step := range definition.Steps {
 		if step.Kind == model.StepKindHumanReview {
 			continue
@@ -103,8 +118,14 @@ func (r *Registry) ValidateDefinition(ctx context.Context, definition model.Task
 		if err != nil {
 			return fmt.Errorf("步骤 %s: %w", step.ID, err)
 		}
+		validate := executor.ValidateDefinition
+		if runtime {
+			if runtimeValidator, ok := executor.(RuntimeStepValidator); ok {
+				validate = runtimeValidator.ValidateRuntimeStep
+			}
+		}
 		// 同 Kind 可以重复出现；每个步骤的 config 仍需分别校验。
-		if err := executor.ValidateDefinition(ctx, step); err != nil {
+		if err := validate(ctx, step); err != nil {
 			return fmt.Errorf("步骤 %s 的 Executor 配置非法: %w", step.ID, err)
 		}
 	}

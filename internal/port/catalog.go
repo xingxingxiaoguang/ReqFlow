@@ -15,7 +15,7 @@ type V2CatalogRepo interface {
 	ListDatasetBatches(ctx context.Context, datasetID string, limit int) ([]model.DatasetBatch, error)
 	SetAppendDatasetStatus(ctx context.Context, datasetID, fromStatus, toStatus string) error
 	ListAssetSets(ctx context.Context, workspaceID string, limit int) ([]model.AssetSet, error)
-	ListExtractionProfiles(ctx context.Context, workspaceID string, limit int) ([]model.ExtractionProfile, error)
+	ListExtractionProfiles(ctx context.Context, workspaceID, targetSchemaID string, limit int) ([]model.ExtractionProfile, error)
 	ArchiveOrchestratorTask(ctx context.Context, taskID string) error
 	RestoreOrchestratorTask(ctx context.Context, taskID string) error
 	ListArchivedOrchestratorTasks(ctx context.Context, workspaceID string, limit int) ([]model.Task, error)

@@ -33,21 +33,52 @@ type extractConfig struct {
 }
 
 func (e *Executor) ValidateDefinition(ctx context.Context, step model.StepDefinition) error {
-	if len(step.Inputs) != 1 || strings.TrimSpace(step.Inputs["documents"]) == "" {
-		return fmt.Errorf("document.extract 必须且只能声明 documents 输入")
-	}
-	if len(step.Outputs) != 1 || step.Outputs["drafts"] != model.ResourceRecordDrafts {
-		return fmt.Errorf("document.extract 必须且只能声明 drafts: record_drafts 输出")
+	if err := validateExtractPorts(step); err != nil {
+		return err
 	}
 	config, err := decodeExtractConfig(step.Config)
 	if err != nil {
 		return err
+	}
+	// 定义级允许 extraction_profile_id 留空占位，由任务创建时按数据集 schema 落实；
+	// 旧定义写死了规则时仍然就地校验。
+	return e.validateProfile(ctx, config)
+}
+
+// ValidateRuntimeStep 实现任务创建级校验：抽取规则此时必须已落实。
+func (e *Executor) ValidateRuntimeStep(ctx context.Context, step model.StepDefinition) error {
+	if err := validateExtractPorts(step); err != nil {
+		return err
+	}
+	config, err := decodeExtractConfig(step.Config)
+	if err != nil {
+		return err
+	}
+	if config.ExtractionProfileID == "" {
+		return fmt.Errorf("document.extract 的 extraction_profile_id 必须在创建任务时按目标数据集字段选择")
+	}
+	return e.validateProfile(ctx, config)
+}
+
+func (e *Executor) validateProfile(ctx context.Context, config extractConfig) error {
+	if config.ExtractionProfileID == "" {
+		return nil
 	}
 	if _, err := uuid.Parse(config.ExtractionProfileID); err != nil {
 		return fmt.Errorf("extraction_profile_id 必须是 UUID")
 	}
 	if _, err := e.extractions.GetProfile(ctx, config.ExtractionProfileID); err != nil {
 		return fmt.Errorf("ExtractionProfile 不存在: %w", err)
+	}
+	return nil
+}
+
+func validateExtractPorts(step model.StepDefinition) error {
+	if len(step.Inputs) != 1 || strings.TrimSpace(step.Inputs["documents"]) == "" {
+		return fmt.Errorf("document.extract 必须且只能声明 documents 输入")
+	}
+	if len(step.Outputs) != 1 || step.Outputs["drafts"] != model.ResourceRecordDrafts {
+		return fmt.Errorf("document.extract 必须且只能声明 drafts: record_drafts 输出")
 	}
 	return nil
 }
@@ -65,6 +96,9 @@ func (e *Executor) run(ctx context.Context, run orchestrator.StepRunContext,
 	config, err := decodeExtractConfig(run.Config)
 	if err != nil {
 		return orchestrator.StepResult{}, err
+	}
+	if config.ExtractionProfileID == "" {
+		return orchestrator.StepResult{}, fmt.Errorf("document.extract 的 extraction_profile_id 未在任务创建时落实")
 	}
 	manifest, err := e.extractions.Extract(ctx, ExtractInput{ParsedDocumentSetID: input.ResourceID,
 		ExtractionProfileID: config.ExtractionProfileID, SourceStepRunID: run.StepRunID,
@@ -120,7 +154,7 @@ func (e *Executor) Resume(ctx context.Context, run orchestrator.StepRunContext,
 func decodeExtractConfig(raw json.RawMessage) (extractConfig, error) {
 	var config extractConfig
 	if len(bytes.TrimSpace(raw)) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
-		return config, fmt.Errorf("document.extract config 必须包含 extraction_profile_id")
+		return config, nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -132,8 +166,5 @@ func decodeExtractConfig(raw json.RawMessage) (extractConfig, error) {
 		return config, fmt.Errorf("document.extract config 只能包含一个 JSON object")
 	}
 	config.ExtractionProfileID = strings.TrimSpace(config.ExtractionProfileID)
-	if config.ExtractionProfileID == "" {
-		return config, fmt.Errorf("extraction_profile_id 不能为空")
-	}
 	return config, nil
 }

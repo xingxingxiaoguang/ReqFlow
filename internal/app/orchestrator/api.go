@@ -104,6 +104,9 @@ type CreateExecutionInput struct {
 	DefinitionID string                 `json:"definition_id"`
 	Title        string                 `json:"title,omitempty"`
 	Bindings     []ResourceBindingInput `json:"bindings"`
+	// StepConfigs 提供任务级步骤配置覆盖（step_id → config 浅合并），用于把抽取/检索
+	// 规则在创建任务时按数据集 schema 落实；仅限声明了运行期可配置的步骤。
+	StepConfigs map[string]json.RawMessage `json:"step_configs,omitempty"`
 }
 
 func (s *DefinitionService) CreateExecution(ctx context.Context, input CreateExecutionInput) (*TaskView, error) {
@@ -126,7 +129,8 @@ func createTaskInput(input CreateExecutionInput) CreateTaskInput {
 			aliases[binding.PortName] = binding.ResourceAlias
 		}
 	}
-	return CreateTaskInput{DefinitionID: input.DefinitionID, Title: input.Title, Bindings: bindings, Aliases: aliases}
+	return CreateTaskInput{DefinitionID: input.DefinitionID, Title: input.Title, Bindings: bindings, Aliases: aliases,
+		StepConfigs: input.StepConfigs}
 }
 
 type ResourceView struct {

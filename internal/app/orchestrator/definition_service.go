@@ -57,6 +57,7 @@ type CreateTaskInput struct {
 	Title          string
 	Bindings       []model.TaskResourceBinding
 	Aliases        map[string]string // port_name -> Dataset Alias；解析后不进入任务快照
+	StepConfigs    map[string]json.RawMessage
 	BatchID        string
 	BatchOrdinal   int
 	BatchSize      int
@@ -83,7 +84,10 @@ func (s *DefinitionService) prepareTask(ctx context.Context, in CreateTaskInput)
 	if definition.Status != model.TaskDefinitionActive {
 		return port.TaskExecutionCreate{}, fmt.Errorf("任务定义 %s 当前状态 %s 不可创建任务", definition.Key, definition.Status)
 	}
-	if err := s.registry.ValidateDefinition(ctx, *definition); err != nil {
+	if err := applyStepConfigOverrides(definition, in.StepConfigs); err != nil {
+		return port.TaskExecutionCreate{}, err
+	}
+	if err := s.registry.ValidateRuntimeDefinition(ctx, *definition); err != nil {
 		return port.TaskExecutionCreate{}, err
 	}
 	if err := validateInputBindings(*definition, in.Bindings, in.Aliases); err != nil {
@@ -128,6 +132,54 @@ func (s *DefinitionService) prepareTask(ctx context.Context, in CreateTaskInput)
 		bindings[i].Direction = model.ResourceInput
 	}
 	return port.TaskExecutionCreate{Task: task, Bindings: bindings, Steps: steps}, nil
+}
+
+// runtimeConfigurableKinds 的步骤允许在创建任务时浅合并覆盖 config：抽取/检索规则
+// 本身为数据集字段服务，在任务创建时按目标数据集的 schema 落实。其余步骤的 config
+// 属于流程定义本身，不接受任务级改写。
+var runtimeConfigurableKinds = map[model.StepKind]bool{
+	model.StepKindDocumentExtract: true,
+	model.StepKindRetrievalBuild:  true,
+}
+
+func applyStepConfigOverrides(definition *model.TaskDefinition, overrides map[string]json.RawMessage) error {
+	if len(overrides) == 0 {
+		return nil
+	}
+	byID := make(map[string]*model.StepDefinition, len(definition.Steps))
+	for i := range definition.Steps {
+		byID[definition.Steps[i].ID] = &definition.Steps[i]
+	}
+	for stepID, patch := range overrides {
+		step, ok := byID[strings.TrimSpace(stepID)]
+		if !ok {
+			return fmt.Errorf("step_configs 指定了不存在的步骤 %s", stepID)
+		}
+		if !runtimeConfigurableKinds[step.Kind] {
+			return fmt.Errorf("步骤 %s（%s）不支持任务级配置覆盖", stepID, step.Kind)
+		}
+		base := map[string]any{}
+		if len(step.Config) > 0 {
+			if err := json.Unmarshal(step.Config, &base); err != nil {
+				return fmt.Errorf("步骤 %s 的定义 config 非法: %w", stepID, err)
+			}
+		}
+		override := map[string]any{}
+		if len(patch) > 0 {
+			if err := json.Unmarshal(patch, &override); err != nil {
+				return fmt.Errorf("步骤 %s 的任务级 config 非法: %w", stepID, err)
+			}
+		}
+		for key, value := range override {
+			base[key] = value
+		}
+		merged, err := json.Marshal(base)
+		if err != nil {
+			return fmt.Errorf("合并步骤 %s 的任务级 config 失败: %w", stepID, err)
+		}
+		step.Config = merged
+	}
+	return nil
 }
 
 func validateInputBindings(def model.TaskDefinition, bindings []model.TaskResourceBinding, aliases map[string]string) error {

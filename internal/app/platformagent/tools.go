@@ -75,11 +75,10 @@ const platformGuideText = `ReqFlow 是无代码 AI 数据管线平台：流程�
 - 任务（Task）：从已发布流程派生的一次执行实例。状态流转 pending → running →（awaiting 停在人工门 / pausing / paused）→ succeeded / failed。
 - 数据集（Dataset）：由 data.publish 步骤产出的结构化资产，带 schema 字段定义；语义与混合检索依赖数据集处于激活状态的检索快照。
 
-## 建立流程（流程设计页）
-1. 把业务 SOP 拆成步骤：每步声明 id、name、kind、depends_on，依赖关系必须构成无环 DAG。
-2. 可用步骤类型：source.parse、document.extract、data.transform、data.validate、data.publish、data.query_derive、retrieval.build、knowledge.analyze、data.analysis_publish、artifact.render、graph.build、human.review（人工确认门：花钱前、写库前、终稿前必须由人确认）。
-3. 端口衔接规则：步骤 inputs 只能引用 $task.<输入端口名> 或依赖祖先步骤的 $step.<step_id>.<输出端口名>；相连端口的 resource_type 必须一致；流程输出端口通过 output_bindings 绑定到 $step.<step_id>.<输出端口名>。
-4. 先保存为 draft，再发布为 active；发布时平台会执行 DAG、端口衔接与执行器配置的完整校验，未通过则不能发布。
+## 固定流程（v1 已收敛，无需自建）
+1. 平台内置两个固定流程：数据清洗入库（解析 → 结构化抽取 → 确定性清洗 → 校验 → 人工审核 → 原子发布）与建立检索索引（对数据集固定边界构建混合检索快照，含 human.review 人工确认门）。
+2. 抽取规则、索引规则不写在流程里：创建任务时按目标数据集的字段结构（schema）选择，注入本次任务的执行快照。
+3. 流程设计/流程管理界面在 v1 暂不开放；用户从「任务管理 → 发起业务任务」选择固定流程发起即可。
 
 ## 创建与运行任务（任务页）
 1. 只能从 active 流程创建任务。
@@ -93,12 +92,13 @@ const platformGuideText = `ReqFlow 是无代码 AI 数据管线平台：流程�
 
 ## Agent 能力边界
 - 本 Agent 是只读顾问：只能查询流程、任务、数据集与执行检索，没有创建、修改、运行、发布类工具。
-- 用户要求创建流程/任务、运行任务或建立索引时，按对应章节把操作整理成一步步的页面操作指引，等用户在页面上完成后，再代为查询结果与状态。`
+- 用户想清洗数据或建立索引时，指引其从「任务管理 → 发起业务任务」选择对应固定流程：准备文件集/选定数据集，再按数据集字段选择抽取或索引规则。
+- 用户提出自定义流程诉求时，说明 v1 已收敛为固定流程，可记录需求反馈给平台管理员。`
 
 type platformGuideTool struct{ platformTool }
 
 func (*platformGuideTool) Spec() port.ToolSpec {
-	return port.ToolSpec{Name: "platform_guide", Description: "获取 ReqFlow 平台使用规则说明：核心对象模型、建立流程、创建与运行任务、数据集与索引规则，以及本 Agent 的能力边界。指导用户搭建流程或使用平台前先调用本工具。",
+	return port.ToolSpec{Name: "platform_guide", Description: "获取 ReqFlow 平台使用规则说明：核心对象模型、两个固定任务流程、创建与运行任务、数据集与索引规则，以及本 Agent 的能力边界。指导用户使用平台前先调用本工具。",
 		Parameters: json.RawMessage(`{"type":"object","additionalProperties":false}`)}
 }
 

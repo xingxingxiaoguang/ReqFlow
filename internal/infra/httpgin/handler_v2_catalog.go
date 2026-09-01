@@ -11,7 +11,7 @@ import (
 func catalogQuery(c *gin.Context) (appcatalog.Query, error) {
 	limit, err := v2CatalogLimit(c)
 	return appcatalog.Query{WorkspaceID: c.Query("workspace_id"), Status: c.Query("status"),
-		Purpose: c.Query("purpose"), Limit: limit}, err
+		Purpose: c.Query("purpose"), TargetSchemaID: c.Query("target_schema_id"), Limit: limit}, err
 }
 
 func (h *handlers) v2ListTaskDefinitions(c *gin.Context) {

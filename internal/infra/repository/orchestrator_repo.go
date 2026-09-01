@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -33,6 +34,19 @@ func (r *PipelineRepo) GetTaskDefinition(ctx context.Context, id string) (*model
 		return nil, err
 	}
 	return row.toModel()
+}
+
+func (r *PipelineRepo) GetTaskDefinitionByKey(ctx context.Context, workspaceID, key string) (*model.TaskDefinition, bool, error) {
+	var row taskDefinitionV2Row
+	err := r.db.WithContext(ctx).Where("workspace_id = ? AND key = ?", workspaceID, key).First(&row).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	definition, err := row.toModel()
+	return definition, true, err
 }
 
 func (r *PipelineRepo) SetTaskDefinitionStatus(ctx context.Context, id, fromStatus, toStatus string) error {
