@@ -68,11 +68,11 @@ ReqFlow 的答案：**用定制化 Task 流程 + AI agent 任务专属工具，�
 
 #### 平台数字大脑
 
-`/agent` 是产品默认首页。它复用同一套 pi 式 loop，但服务于跨模块的平台操作，而不是某个 Task 的单步骤分析：会话完整落库，可刷新恢复、停止当前回答并继续提问；默认提供 8 个可独立启停的平台工具——流程查询/创建、任务查询/创建/运行、数据查询/索引和纯文本 Skill 创建。
+`/agent` 是产品默认首页。它复用同一套 pi 式 loop，但服务于跨模块的平台操作，而不是某个 Task 的单步骤分析：会话完整落库，可刷新恢复、停止当前回答并继续提问；默认提供 4 个可独立启停的只读平台工具——平台使用规则（platform_guide）、流程查询、任务查询和数据查询/检索。
 
-Skill 是工作区级纯文本提示词模块，不包含脚本、附件或依赖。聊天框输入 `/` 会列出已激活 Skill；选定后完整提示词只注入本轮，同时继承系统安全边界与当前工具权限。设置模块可创建、停用和激活 Skill，系统内置 `/create-skill`，仅在用户确认后通过 `create_skill` 工具落库。
+Skill 是工作区级纯文本提示词模块，不包含脚本、附件或依赖。聊天框输入 `/` 会列出已激活 Skill；选定后完整提示词只注入本轮，同时继承系统安全边界与当前工具权限。设置模块可创建、停用和激活 Skill。
 
-数字大脑只有在用户明确要求创建、运行或建立索引时才执行写动作，且写动作仍只调用正式应用用例：创建流程经过 DAG/端口/Executor 校验，创建与运行任务经过 Orchestrator 状态机，索引必须创建并启动 `retrieval.build` 任务。它不能直接写 Dataset Item、伪造资源 ID 或绕过人工 Gate 发布业务数据。
+数字大脑是只读使用顾问：依据 `platform_guide` 返回的平台使用规则，指导用户在页面上搭建流程、创建与运行任务、建立数据索引，并基于平台真实数据做查询与分析。它没有创建、修改、运行或发布类工具，不直接写 Dataset Item、伪造资源 ID 或绕过人工 Gate；写动作一律由用户在页面完成，Agent 负责事前指引与事后核实。
 
 **提示词零固定模板，按任务类型动态装配**（三处同源，不漂移）：
 
@@ -160,7 +160,7 @@ AI 驱动的任务是长程的，必然被打断（开会、下班、服务重�
 | Task 生命周期管理 | 从 active Definition 派生执行实例，创建时冻结定义快照、资源绑定和读取边界；支持启动、暂停、继续、人工审核、失败重试和终态回放 |
 | 持久化 Orchestrator | Executor Registry + ready-set Scheduler + 可配置固定协程池 + PostgreSQL Worker/lease/checkpoint/fencing；单实例默认同时执行 6 个 StepRun，StepRun 是执行事实源，SSE 只负责通知 UI |
 | AI agent loop 引擎 | pi 式极简 loop：自然终止、迭代安全阀、length 截断整批拒绝；双协议适配器（OpenAI 兼容 + Anthropic）；会话全量可序列化 = 暂停检查点与换模型续跑的统一载体 |
-| ReqFlow 数字大脑 | 默认首页的持久化 Agent 会话；SSE 增量、停止/续聊、Markdown 回答与工具轨迹；8 个可配置平台工具，以及可由斜杠命令激活的纯文本 Skill |
+| ReqFlow 数字大脑 | 默认首页的持久化 Agent 会话；SSE 增量、停止/续聊、Markdown 回答与工具轨迹；平台使用规则 + 流程/任务/数据查询等只读平台工具，以及可由斜杠命令激活的纯文本 Skill |
 | 任务专属工具与提示词装配 | 过程工具四件套（分批读取 / 正则检索 / 草稿写入 / 问人）按任务类型 profile 注入；Output / Details 拆分；人工交互阻塞式（SSE 弹窗 + HTTP 应答，刷新可恢复）；提示词从 profile + schema + 工具集三源动态装配 |
 | 不可变数据管线 | Asset/Schema/Profile/DatasetBatch/Manifest 均以不可变资源衔接；Dataset 只追加，`commit_seq` 和 provenance 保证增量读取与追溯 |
 | 混合检索 | OpenSearch BM25 + pgvector Vector + 查询级权重、阈值、召回数和加权 RRF；可选 SiliconFlow rerank 并控制 top N |

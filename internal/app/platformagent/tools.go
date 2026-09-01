@@ -7,10 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"sort"
 	"strings"
-
-	"github.com/google/uuid"
 
 	baseagent "reqflow/internal/app/agent"
 	appcatalog "reqflow/internal/app/catalog"
@@ -20,13 +17,11 @@ import (
 	"reqflow/internal/port"
 )
 
-func buildTools(deps Dependencies, configRepo port.AgentConfigRepo, workspaceID string,
-	settings map[string]bool) []baseagent.Tool {
-	base := platformTool{deps: deps, configRepo: configRepo, workspaceID: workspaceID}
+func buildTools(deps Dependencies, workspaceID string, settings map[string]bool) []baseagent.Tool {
+	base := platformTool{deps: deps, workspaceID: workspaceID}
 	all := []baseagent.Tool{
-		&listWorkflowsTool{base}, &createWorkflowTool{base},
-		&listTasksTool{base}, &createTaskTool{base}, &runTaskTool{base},
-		&queryDataTool{base}, &indexDatasetTool{base}, &createSkillTool{base},
+		&platformGuideTool{base}, &listWorkflowsTool{base},
+		&listTasksTool{base}, &queryDataTool{base},
 	}
 	enabled := make([]baseagent.Tool, 0, len(all))
 	for _, tool := range all {
@@ -40,7 +35,6 @@ func buildTools(deps Dependencies, configRepo port.AgentConfigRepo, workspaceID 
 
 type platformTool struct {
 	deps        Dependencies
-	configRepo  port.AgentConfigRepo
 	workspaceID string
 }
 
@@ -70,6 +64,57 @@ func decodeStrict(raw json.RawMessage, target any) error {
 		return fmt.Errorf("参数只能包含一个 JSON object")
 	}
 	return nil
+}
+
+/* ---- 平台使用规则 ---- */
+
+const platformGuideText = `ReqFlow 是无代码 AI 数据管线平台：流程定义负责「怎么做」，任务负责「这一次执行」，数据集负责跨任务衔接。AI 负责读取、抽取和起草，审核与发布由人完成。
+
+## 核心对象
+- 流程（TaskDefinition）：可复用的步骤编排。字段含 key（小写字母开头，仅小写字母/数字/下划线）、name、input_ports / output_ports（resource_type + required + description）与 steps；status 为 draft（草稿）、active（已发布）、retired（退役）。
+- 任务（Task）：从已发布流程派生的一次执行实例。状态流转 pending → running →（awaiting 停在人工门 / pausing / paused）→ succeeded / failed。
+- 数据集（Dataset）：由 data.publish 步骤产出的结构化资产，带 schema 字段定义；语义与混合检索依赖数据集处于激活状态的检索快照。
+
+## 建立流程（流程设计页）
+1. 把业务 SOP 拆成步骤：每步声明 id、name、kind、depends_on，依赖关系必须构成无环 DAG。
+2. 可用步骤类型：source.parse、document.extract、data.transform、data.validate、data.publish、data.query_derive、retrieval.build、knowledge.analyze、data.analysis_publish、artifact.render、graph.build、human.review（人工确认门：花钱前、写库前、终稿前必须由人确认）。
+3. 端口衔接规则：步骤 inputs 只能引用 $task.<输入端口名> 或依赖祖先步骤的 $step.<step_id>.<输出端口名>；相连端口的 resource_type 必须一致；流程输出端口通过 output_bindings 绑定到 $step.<step_id>.<输出端口名>。
+4. 先保存为 draft，再发布为 active；发布时平台会执行 DAG、端口衔接与执行器配置的完整校验，未通过则不能发布。
+
+## 创建与运行任务（任务页）
+1. 只能从 active 流程创建任务。
+2. 为每个 required 输入端口绑定同 resource_type 的真实平台资源（resource_id 或 resource_alias）。
+3. 任务创建后是 pending，需要在任务页手动启动；awaiting 表示任务停在 human.review 人工门，人工确认后才会继续。
+
+## 数据集与索引（数据管理页）
+1. 数据集只能由流程的 data.publish 步骤产出，不能绕过流程直接写数据。
+2. 建立检索索引分两步：先在数据集 schema 字段上创建索引规则（retrieval profile），再运行包含 retrieval.build 步骤的流程任务，生成并激活检索快照。
+3. 所有查询与检索都发生在激活快照上；数据集没有 active snapshot 时无法语义检索。
+
+## Agent 能力边界
+- 本 Agent 是只读顾问：只能查询流程、任务、数据集与执行检索，没有创建、修改、运行、发布类工具。
+- 用户要求创建流程/任务、运行任务或建立索引时，按对应章节把操作整理成一步步的页面操作指引，等用户在页面上完成后，再代为查询结果与状态。`
+
+type platformGuideTool struct{ platformTool }
+
+func (*platformGuideTool) Spec() port.ToolSpec {
+	return port.ToolSpec{Name: "platform_guide", Description: "获取 ReqFlow 平台使用规则说明：核心对象模型、建立流程、创建与运行任务、数据集与索引规则，以及本 Agent 的能力边界。指导用户搭建流程或使用平台前先调用本工具。",
+		Parameters: json.RawMessage(`{"type":"object","additionalProperties":false}`)}
+}
+
+func (*platformGuideTool) Execute(_ context.Context, _ port.ToolCall, _ func(string)) baseagent.ToolOutput {
+	return baseagent.ToolOutput{Output: platformGuideText, Details: "已取得平台使用规则"}
+}
+
+func (*platformGuideTool) PromptSnippet() string {
+	return "platform_guide：获取平台使用规则，用于指导用户搭建流程、运行任务和管理数据集"
+}
+
+func (*platformGuideTool) PromptGuidelines() []string {
+	return []string{
+		"指导用户创建流程、任务或建立索引前，先调用 platform_guide 取得平台规则，再按规则分步指引",
+		"指引中的步骤类型、端口引用和状态名必须与 platform_guide 返回的规则一致",
+	}
 }
 
 /* ---- 流程工具 ---- */
@@ -126,53 +171,7 @@ func (*listWorkflowsTool) PromptSnippet() string {
 	return "list_workflows：查询草稿或已发布流程，以及输入端口和步骤概况"
 }
 func (*listWorkflowsTool) PromptGuidelines() []string {
-	return []string{"创建任务前先用 list_workflows 获取真实 definition_id 和必填输入端口"}
-}
-
-type createWorkflowTool struct{ platformTool }
-
-func (*createWorkflowTool) Spec() port.ToolSpec {
-	return port.ToolSpec{Name: "create_workflow", Description: "创建一个经过 DAG、端口衔接和执行器配置校验的 ReqFlow 流程。",
-		Parameters: json.RawMessage(`{
-  "type":"object",
-  "properties":{
-    "key":{"type":"string","pattern":"^[a-z][a-z0-9_]*$"},
-    "name":{"type":"string"},
-    "description":{"type":"string"},
-    "status":{"type":"string","enum":["draft","active"]},
-    "input_ports":{"type":"object","additionalProperties":{"type":"object","properties":{"resource_type":{"type":"string"},"required":{"type":"boolean"},"description":{"type":"string"}},"required":["resource_type"],"additionalProperties":false}},
-    "output_ports":{"type":"object","additionalProperties":{"type":"object","properties":{"resource_type":{"type":"string"},"required":{"type":"boolean"},"description":{"type":"string"}},"required":["resource_type"],"additionalProperties":false}},
-    "output_bindings":{"type":"object","additionalProperties":{"type":"string"}},
-    "steps":{"type":"array","minItems":1,"items":{"type":"object","properties":{"id":{"type":"string"},"name":{"type":"string"},"kind":{"type":"string"},"depends_on":{"type":"array","items":{"type":"string"}},"inputs":{"type":"object","additionalProperties":{"type":"string"}},"outputs":{"type":"object","additionalProperties":{"type":"string"}},"config":{"type":"object"}},"required":["id","name","kind"],"additionalProperties":false}}
-  },
-  "required":["key","name","status","input_ports","steps"],
-  "additionalProperties":false
-}`)}
-}
-
-func (t *createWorkflowTool) Execute(ctx context.Context, call port.ToolCall, _ func(string)) baseagent.ToolOutput {
-	var input apporchestrator.CreateDefinitionInput
-	if err := decodeStrict(call.Arguments, &input); err != nil {
-		return toolError(err)
-	}
-	input.WorkspaceID = t.workspaceID
-	definition, err := t.deps.Definitions.Register(ctx, input)
-	if err != nil {
-		return toolError(err)
-	}
-	return toolJSON(map[string]any{"workflow": definition},
-		fmt.Sprintf("已创建流程「%s」（%s）", definition.Name, definition.Status))
-}
-
-func (*createWorkflowTool) PromptSnippet() string {
-	return "create_workflow：创建带步骤依赖、资源端口和内嵌规则配置的流程"
-}
-func (*createWorkflowTool) PromptGuidelines() []string {
-	return []string{
-		"只有用户明确要求创建流程时才调用；想法讨论不要落库",
-		"步骤输入只能引用 $task.<port> 或依赖祖先的 $step.<step>.<port>；发布态 active 会执行完整执行器校验",
-		"不确定某个 profile/schema/resource ID 时先查询，不得猜测 UUID",
-	}
+	return []string{"设计流程指引前先用 list_workflows 了解平台已有流程，避免给出重复建议"}
 }
 
 /* ---- 任务工具 ---- */
@@ -203,69 +202,7 @@ func (t *listTasksTool) Execute(ctx context.Context, call port.ToolCall, _ func(
 
 func (*listTasksTool) PromptSnippet() string { return "list_tasks：查询任务列表和执行状态" }
 func (*listTasksTool) PromptGuidelines() []string {
-	return []string{"运行、追问或判断任务结果前先取得真实 task_id 和最新状态"}
-}
-
-type createTaskTool struct{ platformTool }
-
-func (*createTaskTool) Spec() port.ToolSpec {
-	return port.ToolSpec{Name: "create_task", Description: "从已发布流程创建任务，并把流程输入端口绑定到具体平台资源。",
-		Parameters: json.RawMessage(`{"type":"object","properties":{"definition_id":{"type":"string"},"title":{"type":"string"},"bindings":{"type":"array","items":{"type":"object","properties":{"port_name":{"type":"string"},"resource_type":{"type":"string"},"resource_id":{"type":"string"},"resource_alias":{"type":"string"},"boundary":{"type":"object"}},"required":["port_name","resource_type"],"anyOf":[{"required":["resource_id"]},{"required":["resource_alias"]}],"additionalProperties":false}}},"required":["definition_id","bindings"],"additionalProperties":false}`)}
-}
-
-func (t *createTaskTool) Execute(ctx context.Context, call port.ToolCall, _ func(string)) baseagent.ToolOutput {
-	var input apporchestrator.CreateExecutionInput
-	if err := decodeStrict(call.Arguments, &input); err != nil {
-		return toolError(err)
-	}
-	task, err := t.deps.Definitions.CreateExecution(ctx, input)
-	if err != nil {
-		return toolError(err)
-	}
-	return toolJSON(map[string]any{"task": task, "started": false},
-		fmt.Sprintf("已创建任务「%s」，尚未运行", task.Title))
-}
-
-func (*createTaskTool) PromptSnippet() string {
-	return "create_task：从已发布流程和资源绑定创建任务"
-}
-func (*createTaskTool) PromptGuidelines() []string {
-	return []string{
-		"先查流程输入端口，再为每个 required 端口提供相同 resource_type 的真实资源",
-		"创建任务不会自动运行；用户要求立即执行时随后调用 run_task",
-	}
-}
-
-type runTaskTool struct{ platformTool }
-
-func (*runTaskTool) Spec() port.ToolSpec {
-	return port.ToolSpec{Name: "run_task", Description: "启动一个 pending 状态的 ReqFlow 任务，并返回启动后的完整任务快照。",
-		Parameters: json.RawMessage(`{"type":"object","properties":{"task_id":{"type":"string"}},"required":["task_id"],"additionalProperties":false}`)}
-}
-
-func (t *runTaskTool) Execute(ctx context.Context, call port.ToolCall, _ func(string)) baseagent.ToolOutput {
-	var args struct {
-		TaskID string `json:"task_id"`
-	}
-	if err := decodeStrict(call.Arguments, &args); err != nil {
-		return toolError(err)
-	}
-	if err := t.deps.Runtime.Start(ctx, strings.TrimSpace(args.TaskID)); err != nil {
-		return toolError(err)
-	}
-	snapshot, err := t.deps.Runtime.Snapshot(ctx, strings.TrimSpace(args.TaskID))
-	if err != nil {
-		return toolError(err)
-	}
-	return toolJSON(map[string]any{"task": snapshot},
-		fmt.Sprintf("已启动任务「%s」", snapshot.Task.Title))
-}
-
-func (*runTaskTool) PromptSnippet() string {
-	return "run_task：启动任务并读取启动后的步骤快照"
-}
-func (*runTaskTool) PromptGuidelines() []string {
-	return []string{"只有用户明确要求执行时才启动任务；已运行或终态任务不要重复启动"}
+	return []string{"回答任务进展或判断下一步建议前，先取得真实 task_id 和最新状态"}
 }
 
 /* ---- 数据工具 ---- */
@@ -318,7 +255,7 @@ func (t *queryDataTool) Execute(ctx context.Context, call port.ToolCall, _ func(
 			return toolError(err)
 		}
 		if len(snapshots) == 0 {
-			return toolError(fmt.Errorf("数据集 %s 没有激活索引，可先调用 index_dataset", args.DatasetID))
+			return toolError(fmt.Errorf("数据集 %s 没有激活索引，可按平台使用规则指导用户建立索引", args.DatasetID))
 		}
 		args.SnapshotID = snapshots[0].ID
 	}
@@ -360,190 +297,6 @@ func (*queryDataTool) PromptGuidelines() []string {
 	}
 }
 
-type indexDatasetTool struct{ platformTool }
-
-func (*indexDatasetTool) Spec() port.ToolSpec {
-	return port.ToolSpec{Name: "index_dataset", Description: "为数据集选择匹配的索引规则，创建并启动 retrieval.build 任务；需要时就地创建最小索引流程。",
-		Parameters: json.RawMessage(`{"type":"object","properties":{"dataset_id":{"type":"string"},"retrieval_profile_id":{"type":"string"},"definition_id":{"type":"string"},"title":{"type":"string"}},"required":["dataset_id"],"additionalProperties":false}`)}
-}
-
-type indexCandidate struct {
-	DefinitionID string
-	PortName     string
-	ProfileID    string
-}
-
-func (t *indexDatasetTool) Execute(ctx context.Context, call port.ToolCall, _ func(string)) baseagent.ToolOutput {
-	var args struct {
-		DatasetID    string `json:"dataset_id"`
-		ProfileID    string `json:"retrieval_profile_id"`
-		DefinitionID string `json:"definition_id"`
-		Title        string `json:"title"`
-	}
-	if err := decodeStrict(call.Arguments, &args); err != nil {
-		return toolError(err)
-	}
-	args.DatasetID, args.ProfileID, args.DefinitionID = strings.TrimSpace(args.DatasetID),
-		strings.TrimSpace(args.ProfileID), strings.TrimSpace(args.DefinitionID)
-	datasets, err := t.deps.Catalog.ListDatasets(ctx, appcatalog.Query{
-		WorkspaceID: t.workspaceID, Status: model.DatasetStatusActive, Limit: 200,
-	})
-	if err != nil {
-		return toolError(err)
-	}
-	var dataset *appcatalog.DatasetView
-	for i := range datasets {
-		if datasets[i].ID == args.DatasetID {
-			dataset = &datasets[i]
-			break
-		}
-	}
-	if dataset == nil {
-		return toolError(fmt.Errorf("活动数据集不存在: %s", args.DatasetID))
-	}
-	profiles, err := t.deps.Retrieval.ListProfileViews(ctx, t.workspaceID, dataset.SchemaID, 100)
-	if err != nil {
-		return toolError(err)
-	}
-	profileIDs := make(map[string]bool, len(profiles))
-	for _, profile := range profiles {
-		profileIDs[profile.ID] = true
-	}
-	if args.ProfileID != "" && !profileIDs[args.ProfileID] {
-		return toolError(fmt.Errorf("索引规则 %s 不属于数据集 schema；可选规则: %s", args.ProfileID, profileChoices(profiles)))
-	}
-
-	definitions, err := t.deps.Catalog.ListDefinitions(ctx, appcatalog.Query{
-		WorkspaceID: t.workspaceID, Status: model.TaskDefinitionActive, Limit: 200,
-	})
-	if err != nil {
-		return toolError(err)
-	}
-	candidates := indexCandidates(definitions, profileIDs)
-	var selected *indexCandidate
-	for i := range candidates {
-		candidate := &candidates[i]
-		if args.DefinitionID != "" && candidate.DefinitionID != args.DefinitionID {
-			continue
-		}
-		if args.ProfileID != "" && candidate.ProfileID != args.ProfileID {
-			continue
-		}
-		selected = candidate
-		break
-	}
-	if args.DefinitionID != "" && selected == nil {
-		return toolError(fmt.Errorf("流程 %s 不是该数据集可用的单输入索引流程", args.DefinitionID))
-	}
-
-	createdDefinition := false
-	if selected == nil {
-		profileID := args.ProfileID
-		if profileID == "" {
-			if len(profiles) == 0 {
-				return toolError(fmt.Errorf("数据集「%s」尚无索引规则，请先在数据管理的 schema 字段上创建索引规则", dataset.Name))
-			}
-			if len(profiles) > 1 {
-				return toolError(fmt.Errorf("数据集有多个索引规则，请指定 retrieval_profile_id：%s", profileChoices(profiles)))
-			}
-			profileID = profiles[0].ID
-		}
-		definition, createErr := t.createIndexDefinition(ctx, dataset, profileID)
-		if createErr != nil {
-			return toolError(createErr)
-		}
-		createdDefinition = true
-		selected = &indexCandidate{DefinitionID: definition.ID, PortName: "dataset", ProfileID: profileID}
-	}
-
-	title := strings.TrimSpace(args.Title)
-	if title == "" {
-		title = "为「" + dataset.Name + "」建立检索索引"
-	}
-	task, err := t.deps.Definitions.CreateExecution(ctx, apporchestrator.CreateExecutionInput{
-		DefinitionID: selected.DefinitionID, Title: title,
-		Bindings: []apporchestrator.ResourceBindingInput{{PortName: selected.PortName,
-			ResourceType: string(model.ResourceDatasetBoundary), ResourceID: dataset.ID}},
-	})
-	if err != nil {
-		return toolError(err)
-	}
-	if err := t.deps.Runtime.Start(ctx, task.ID); err != nil {
-		return toolError(fmt.Errorf("索引任务已创建但启动失败（task_id=%s）: %w", task.ID, err))
-	}
-	snapshot, err := t.deps.Runtime.Snapshot(ctx, task.ID)
-	if err != nil {
-		return toolError(err)
-	}
-	return toolJSON(map[string]any{"task": snapshot, "workflow_created": createdDefinition,
-		"retrieval_profile_id": selected.ProfileID}, fmt.Sprintf("已为「%s」启动索引任务", dataset.Name))
-}
-
-func (t *indexDatasetTool) createIndexDefinition(ctx context.Context, dataset *appcatalog.DatasetView,
-	profileID string) (*apporchestrator.DefinitionView, error) {
-	key := "index_dataset_" + strings.ReplaceAll(uuid.NewString()[:8], "-", "")
-	config, _ := json.Marshal(map[string]string{"retrieval_profile_id": profileID})
-	return t.deps.Definitions.Register(ctx, apporchestrator.CreateDefinitionInput{
-		WorkspaceID: t.workspaceID, Key: key, Name: "为「" + dataset.Name + "」建立检索索引",
-		Description: "由 ReqFlow Agent 按需创建的单步骤索引流程", Status: model.TaskDefinitionActive,
-		InputPorts: map[string]apporchestrator.PortInput{"dataset": {
-			ResourceType: string(model.ResourceDatasetBoundary), Required: true, Description: "待建立索引的数据集边界",
-		}},
-		OutputPorts: map[string]apporchestrator.PortInput{"snapshot": {
-			ResourceType: string(model.ResourceRetrievalSnapshot), Description: "激活后的检索快照",
-		}},
-		OutputBindings: map[string]string{"snapshot": "$step.build_index.snapshot"},
-		Steps: []apporchestrator.StepDefinitionInput{{ID: "build_index", Name: "建立检索索引",
-			Kind: string(model.StepKindRetrievalBuild), Inputs: map[string]string{"dataset": "$task.dataset"},
-			Outputs: map[string]string{"snapshot": string(model.ResourceRetrievalSnapshot)}, Config: config}},
-	})
-}
-
-func (*indexDatasetTool) PromptSnippet() string {
-	return "index_dataset：选择索引规则，为数据集创建并启动索引任务，必要时就地创建流程"
-}
-func (*indexDatasetTool) PromptGuidelines() []string {
-	return []string{
-		"建立索引前先用 query_data 确认真实 dataset_id 以及是否已有 active snapshot",
-		"多个索引规则时把工具返回的选择交给用户；只有一个规则时可直接执行",
-		"索引永远经由 retrieval.build 流程任务运行，不绕过编排器直接写快照",
-	}
-}
-
-/* ---- Skill 工具 ---- */
-
-type createSkillTool struct{ platformTool }
-
-func (*createSkillTool) Spec() port.ToolSpec {
-	return port.ToolSpec{Name: "create_skill", Description: "创建一个纯文本提示词 Skill；不支持脚本、附件、文件或依赖。",
-		Parameters: json.RawMessage(`{"type":"object","properties":{"slug":{"type":"string","pattern":"^[a-z][a-z0-9-]{0,47}$"},"title":{"type":"string","minLength":1,"maxLength":80},"description":{"type":"string","maxLength":500},"prompt":{"type":"string","minLength":1,"maxLength":30000},"enabled":{"type":"boolean"}},"required":["slug","title","prompt"],"additionalProperties":false}`)}
-}
-
-func (t *createSkillTool) Execute(ctx context.Context, call port.ToolCall, _ func(string)) baseagent.ToolOutput {
-	var input CreateSkillInput
-	if err := decodeStrict(call.Arguments, &input); err != nil {
-		return toolError(err)
-	}
-	skill, err := createAgentSkill(ctx, t.configRepo, t.workspaceID, input)
-	if err != nil {
-		return toolError(err)
-	}
-	return toolJSON(map[string]any{"skill": skillView(*skill)},
-		fmt.Sprintf("已创建 Skill /%s（%s）", skill.Slug, skill.Title))
-}
-
-func (*createSkillTool) PromptSnippet() string {
-	return "create_skill：创建可由 /slug 激活的纯文本工作方法"
-}
-
-func (*createSkillTool) PromptGuidelines() []string {
-	return []string{
-		"只有用户明确确认创建 Skill 时才调用；讨论和预览阶段不要落库",
-		"Skill 只能包含提示词，不得声称会保存或执行脚本、附件、依赖包和外部文件",
-		"slug 使用易读的小写字母、数字和连字符，创建后向用户报告 /slug",
-	}
-}
-
 func filterDatasets(items []appcatalog.DatasetView, id string) []appcatalog.DatasetView {
 	out := make([]appcatalog.DatasetView, 0, 1)
 	for _, item := range items {
@@ -552,47 +305,4 @@ func filterDatasets(items []appcatalog.DatasetView, id string) []appcatalog.Data
 		}
 	}
 	return out
-}
-
-func profileChoices(profiles []appretrieval.ProfileView) string {
-	choices := make([]string, len(profiles))
-	for i, profile := range profiles {
-		choices[i] = fmt.Sprintf("%s(%s)", profile.Name, profile.ID)
-	}
-	sort.Strings(choices)
-	return strings.Join(choices, "、")
-}
-
-func indexCandidates(definitions []model.TaskDefinition, allowedProfiles map[string]bool) []indexCandidate {
-	var candidates []indexCandidate
-	for _, definition := range definitions {
-		for _, step := range definition.Steps {
-			if step.Kind != model.StepKindRetrievalBuild {
-				continue
-			}
-			ref := strings.TrimPrefix(step.Inputs["dataset"], "$task.")
-			input, ok := definition.InputPorts[ref]
-			if !ok || step.Inputs["dataset"] != "$task."+ref || input.ResourceType != model.ResourceDatasetBoundary {
-				continue
-			}
-			usable := true
-			for name, portDefinition := range definition.InputPorts {
-				if portDefinition.Required && name != ref {
-					usable = false
-				}
-			}
-			if !usable {
-				continue
-			}
-			var config struct {
-				ProfileID string `json:"retrieval_profile_id"`
-			}
-			if json.Unmarshal(step.Config, &config) != nil || !allowedProfiles[config.ProfileID] {
-				continue
-			}
-			candidates = append(candidates, indexCandidate{DefinitionID: definition.ID,
-				PortName: ref, ProfileID: config.ProfileID})
-		}
-	}
-	return candidates
 }

@@ -28,27 +28,10 @@ type toolDefinition struct {
 }
 
 var agentToolDefinitions = []toolDefinition{
+	{Name: "platform_guide", Label: "平台使用规则", Group: "平台指南", Description: "获取平台使用规则说明，指导用户搭建流程、运行任务和管理数据集。"},
 	{Name: "list_workflows", Label: "查询流程", Group: "流程工具", Description: "查询草稿或已发布流程，以及输入端口和步骤概况。"},
-	{Name: "create_workflow", Label: "创建流程", Group: "流程工具", Description: "创建经过依赖、端口和执行器校验的流程。"},
 	{Name: "list_tasks", Label: "查询任务", Group: "任务工具", Description: "查询业务任务及当前执行状态。"},
-	{Name: "create_task", Label: "创建任务", Group: "任务工具", Description: "从已发布流程和资源绑定创建任务。"},
-	{Name: "run_task", Label: "运行任务", Group: "任务工具", Description: "启动待执行任务并读取运行快照。"},
 	{Name: "query_data", Label: "查询数据", Group: "数据工具", Description: "发现数据集和索引，或执行关键词、语义与混合检索。"},
-	{Name: "index_dataset", Label: "建立索引", Group: "数据工具", Description: "为数据集选择索引规则并启动索引任务。"},
-	{Name: "create_skill", Label: "创建 Skill", Group: "Skill 工具", Description: "创建一个可通过斜杠命令复用的纯文本 Skill。"},
-}
-
-var builtinCreateSkill = model.AgentSkill{
-	Slug:        "create-skill",
-	Title:       "创建 Skill",
-	Description: "把稳定的工作方法整理为可复用的纯文本 Skill",
-	Prompt: `你正在帮助用户设计 ReqFlow 数字大脑的纯文本 Skill。
-
-先理解并补齐 Skill 的目标、适用场景、输入信息、处理步骤、输出格式与边界。把提示词写成可直接执行、结构清晰的工作说明。当前平台只支持纯文本提示词，不支持脚本、附件、依赖包或外部文件，因此不要设计任何脚本执行步骤。
-
-先向用户展示建议的 slug、标题、简介和完整提示词。只有用户明确确认创建时，才调用 create_skill 工具落库；不要把讨论中的草稿直接保存。创建完成后报告斜杠命令 /slug，并说明可在 Agent 设置中停用。`,
-	Enabled: true,
-	Builtin: true,
 }
 
 type ToolConfigView struct {
@@ -91,17 +74,8 @@ func normalizeWorkspaceID(workspaceID string) string {
 	return defaultWorkspaceID
 }
 
-func (s *Service) ensureBuiltinSkills(ctx context.Context, workspaceID string) error {
-	skill := builtinCreateSkill
-	skill.WorkspaceID = normalizeWorkspaceID(workspaceID)
-	return s.configRepo.EnsureBuiltinAgentSkill(ctx, &skill)
-}
-
 func (s *Service) GetConfig(ctx context.Context, workspaceID string) (*ConfigView, error) {
 	workspaceID = normalizeWorkspaceID(workspaceID)
-	if err := s.ensureBuiltinSkills(ctx, workspaceID); err != nil {
-		return nil, err
-	}
 	settings, err := s.configRepo.ListAgentToolSettings(ctx, workspaceID)
 	if err != nil {
 		return nil, err

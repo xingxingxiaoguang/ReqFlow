@@ -20,21 +20,17 @@ const { Text, Title } = Typography
 const { TextArea } = Input
 
 const quickPrompts = [
-  { icon: <BranchesOutlined />, label: '设计一个流程', prompt: '帮我根据目标设计并创建一个新的业务流程。先查询现有流程避免重复，再告诉我还需要哪些信息。' },
+  { icon: <BranchesOutlined />, label: '设计一个流程', prompt: '我想把一个重复的业务环节搬上平台。请先了解我的业务 SOP，再按平台使用规则给我一步步的流程搭建指引。' },
   { icon: <UnorderedListOutlined />, label: '查看运行任务', prompt: '查询当前正在运行和等待处理的任务，按优先级告诉我需要关注什么。' },
   { icon: <SearchOutlined />, label: '查询平台数据', prompt: '先列出平台里可查询的数据集和索引，帮助我选择要分析的数据。' },
-  { icon: <DatabaseOutlined />, label: '建立数据索引', prompt: '查询还没有可用检索索引的数据集，并帮助我为合适的数据集建立索引。' },
+  { icon: <DatabaseOutlined />, label: '建立数据索引', prompt: '查询还没有可用检索索引的数据集，并按平台使用规则指导我一步步为它建立索引。' },
 ]
 
-const toolMeta: Record<string, { label: string; group: string; path: string }> = {
+const toolMeta: Record<string, { label: string; group: string; path?: string }> = {
+  platform_guide: { label: '平台使用规则', group: '平台指南' },
   list_workflows: { label: '查询流程', group: '流程工具', path: '/definitions' },
-  create_workflow: { label: '创建流程', group: '流程工具', path: '/definitions' },
   list_tasks: { label: '查询任务', group: '任务工具', path: '/tasks' },
-  create_task: { label: '创建任务', group: '任务工具', path: '/tasks' },
-  run_task: { label: '运行任务', group: '任务工具', path: '/tasks' },
   query_data: { label: '查询数据', group: '数据工具', path: '/datasets' },
-  index_dataset: { label: '建立索引', group: '数据工具', path: '/datasets' },
-  create_skill: { label: '创建 Skill', group: 'Skill 工具', path: '/agent' },
 }
 
 interface LiveTool {
@@ -569,7 +565,7 @@ function ToolResult({ message }: { message: AgentMessage }) {
   return <div className={`tool-trace ${message.is_error ? 'error' : 'done'}`}>
     <span className="tool-status">{message.is_error ? <ExclamationCircleFilled /> : <CheckCircleFilled />}</span>
     <div><Text strong>{meta.label}</Text><small>{message.details || (message.is_error ? message.result : meta.group)}</small></div>
-    {!message.is_error && <Button type="link" size="small" onClick={() => navigate(meta.path)}>查看</Button>}
+    {!message.is_error && meta.path && <Button type="link" size="small" onClick={() => navigate(meta.path!)}>查看</Button>}
   </div>
 }
 

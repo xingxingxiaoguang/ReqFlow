@@ -170,7 +170,7 @@ type finalAnswerLLM struct {
 func (l *finalAnswerLLM) Stream(_ context.Context, cc *port.Context, emit func(port.AssistantEvent)) (*port.Message, error) {
 	wantTools := l.toolCount
 	if wantTools == 0 {
-		wantTools = 8
+		wantTools = 4
 	}
 	if len(cc.Tools) != wantTools {
 		return nil, fmt.Errorf("工具数量 = %d", len(cc.Tools))
@@ -206,46 +206,8 @@ func (l *blockingLLM) Complete(ctx context.Context, cc *port.Context) (*port.Mes
 func (*blockingLLM) Ping(context.Context) error { return nil }
 
 type fakePlatform struct {
-	datasets            []appcatalog.DatasetView
-	profiles            []appretrieval.ProfileView
-	definitions         []model.TaskDefinition
-	registered          *apporchestrator.CreateDefinitionInput
-	created             *apporchestrator.CreateExecutionInput
-	startedTaskID       string
-	createdDefinition   apporchestrator.DefinitionView
-	createdTask         apporchestrator.TaskView
-	createdTaskSnapshot apporchestrator.TaskSnapshot
-}
-
-func (f *fakePlatform) Register(_ context.Context, input apporchestrator.CreateDefinitionInput) (*apporchestrator.DefinitionView, error) {
-	f.registered = &input
-	view := f.createdDefinition
-	if view.ID == "" {
-		view = apporchestrator.DefinitionView{ID: "definition-1", Name: input.Name, Status: input.Status}
-	}
-	return &view, nil
-}
-
-func (f *fakePlatform) CreateExecution(_ context.Context, input apporchestrator.CreateExecutionInput) (*apporchestrator.TaskView, error) {
-	f.created = &input
-	view := f.createdTask
-	if view.ID == "" {
-		view = apporchestrator.TaskView{ID: "task-1", Title: input.Title, Status: model.TaskStatusPending}
-	}
-	return &view, nil
-}
-
-func (f *fakePlatform) Start(_ context.Context, id string) error {
-	f.startedTaskID = id
-	return nil
-}
-
-func (f *fakePlatform) Snapshot(_ context.Context, id string) (*apporchestrator.TaskSnapshot, error) {
-	view := f.createdTaskSnapshot
-	if view.Task.ID == "" {
-		view.Task = apporchestrator.TaskView{ID: id, Title: "索引任务", Status: model.TaskStatusRunning}
-	}
-	return &view, nil
+	datasets    []appcatalog.DatasetView
+	definitions []model.TaskDefinition
 }
 
 func (*fakePlatform) ListViews(context.Context, apporchestrator.TaskQuery) ([]apporchestrator.TaskView, error) {
@@ -260,10 +222,6 @@ func (f *fakePlatform) ListDatasets(context.Context, appcatalog.Query) ([]appcat
 	return f.datasets, nil
 }
 
-func (f *fakePlatform) ListProfileViews(context.Context, string, string, int) ([]appretrieval.ProfileView, error) {
-	return f.profiles, nil
-}
-
 func (*fakePlatform) ListSnapshotViews(context.Context, string, string, string, int) ([]appretrieval.SnapshotView, error) {
 	return []appretrieval.SnapshotView{}, nil
 }
@@ -273,11 +231,10 @@ func (*fakePlatform) SearchAPI(context.Context, appretrieval.SearchAPIRequest) (
 }
 
 func testDeps(platform *fakePlatform) Dependencies {
-	return Dependencies{Definitions: platform, Runtime: platform, Tasks: platform,
-		Catalog: platform, Retrieval: platform}
+	return Dependencies{Tasks: platform, Catalog: platform, Retrieval: platform}
 }
 
-func TestSessionCanResumeWithEightPlatformTools(t *testing.T) {
+func TestSessionCanResumeWithReadOnlyPlatformTools(t *testing.T) {
 	repo := newMemorySessionRepo()
 	configRepo := newMemoryConfigRepo()
 	platform := &fakePlatform{}
@@ -366,33 +323,9 @@ func TestDetachedRunSurvivesClientCancellationUntilExplicitStop(t *testing.T) {
 	}
 }
 
-func TestIndexDatasetCreatesWorkflowTaskAndStartsIt(t *testing.T) {
-	platform := &fakePlatform{
-		datasets: []appcatalog.DatasetView{{ID: "dataset-1", Name: "需求数据", SchemaID: "schema-1", Status: model.DatasetStatusActive}},
-		profiles: []appretrieval.ProfileView{{ID: "profile-1", Name: "需求混合索引", DatasetSchemaID: "schema-1"}},
-	}
-	tool := &indexDatasetTool{platformTool{deps: testDeps(platform), workspaceID: "default"}}
-	output := tool.Execute(context.Background(), port.ToolCall{ID: "call-1", Name: "index_dataset",
-		Arguments: json.RawMessage(`{"dataset_id":"dataset-1"}`)}, nil)
-	if output.IsError {
-		t.Fatalf("index_dataset: %s", output.Output)
-	}
-	if platform.registered == nil || len(platform.registered.Steps) != 1 ||
-		platform.registered.Steps[0].Kind != string(model.StepKindRetrievalBuild) {
-		t.Fatalf("没有创建最小 retrieval.build 流程: %+v", platform.registered)
-	}
-	if platform.created == nil || len(platform.created.Bindings) != 1 ||
-		platform.created.Bindings[0].ResourceType != string(model.ResourceDatasetBoundary) {
-		t.Fatalf("索引任务数据绑定非法: %+v", platform.created)
-	}
-	if platform.startedTaskID != "task-1" {
-		t.Fatalf("索引任务未启动: %q", platform.startedTaskID)
-	}
-}
-
 func TestSlashSkillInjectsPromptAndDisabledToolIsRemoved(t *testing.T) {
 	repo, configRepo := newMemorySessionRepo(), newMemoryConfigRepo()
-	llm := &finalAnswerLLM{wantPrompt: "必须输出三条精炼结论", toolCount: 7}
+	llm := &finalAnswerLLM{wantPrompt: "必须输出三条精炼结论", toolCount: 3}
 	service, err := NewService(repo, configRepo, llm, testDeps(&fakePlatform{}), Options{})
 	if err != nil {
 		t.Fatalf("NewService: %v", err)
@@ -403,7 +336,7 @@ func TestSlashSkillInjectsPromptAndDisabledToolIsRemoved(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateSkill: %v", err)
 	}
-	if err := service.SetToolEnabled(context.Background(), "", "run_task", false); err != nil {
+	if err := service.SetToolEnabled(context.Background(), "", "list_tasks", false); err != nil {
 		t.Fatalf("SetToolEnabled: %v", err)
 	}
 	session, err := service.CreateSession(context.Background(), "", "")
@@ -417,7 +350,7 @@ func TestSlashSkillInjectsPromptAndDisabledToolIsRemoved(t *testing.T) {
 		t.Fatalf("SetSkillEnabled: %v", err)
 	}
 	if _, err := service.RunMessage(context.Background(), session.ID, "/three-points 再总结", nil); err == nil ||
-		!strings.Contains(err.Error(), "不存在或已停用") {
+		!strings.Contains(err.Error(), "没有可用的 Skill") {
 		t.Fatalf("停用 Skill 后错误 = %v", err)
 	}
 }

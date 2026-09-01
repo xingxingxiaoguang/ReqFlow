@@ -310,8 +310,7 @@ func main() {
 		os.Exit(1)
 	}
 	v2Agent, err := appplatformagent.NewService(agentSessionRepo, agentConfigRepo, llmClient, appplatformagent.Dependencies{
-		Definitions: v2Definitions, Runtime: v2Runtime, Tasks: v2TaskQueries,
-		Catalog: v2Catalog, Retrieval: v2Retrieval,
+		Tasks: v2TaskQueries, Catalog: v2Catalog, Retrieval: v2Retrieval,
 	}, appplatformagent.Options{MaxIterations: cfg.LLM.AgentMaxIterations})
 	if err != nil {
 		logger.Error("ReqFlow Agent 初始化失败", "err", err)

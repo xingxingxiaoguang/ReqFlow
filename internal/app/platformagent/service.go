@@ -26,16 +26,6 @@ const (
 
 var ErrSessionRunning = port.ErrAgentSessionRunning
 
-type DefinitionAPI interface {
-	Register(context.Context, apporchestrator.CreateDefinitionInput) (*apporchestrator.DefinitionView, error)
-	CreateExecution(context.Context, apporchestrator.CreateExecutionInput) (*apporchestrator.TaskView, error)
-}
-
-type RuntimeAPI interface {
-	Start(context.Context, string) error
-	Snapshot(context.Context, string) (*apporchestrator.TaskSnapshot, error)
-}
-
 type TaskQueryAPI interface {
 	ListViews(context.Context, apporchestrator.TaskQuery) ([]apporchestrator.TaskView, error)
 }
@@ -46,17 +36,14 @@ type CatalogAPI interface {
 }
 
 type RetrievalAPI interface {
-	ListProfileViews(context.Context, string, string, int) ([]appretrieval.ProfileView, error)
 	ListSnapshotViews(context.Context, string, string, string, int) ([]appretrieval.SnapshotView, error)
 	SearchAPI(context.Context, appretrieval.SearchAPIRequest) (*appretrieval.SearchResponse, error)
 }
 
 type Dependencies struct {
-	Definitions DefinitionAPI
-	Runtime     RuntimeAPI
-	Tasks       TaskQueryAPI
-	Catalog     CatalogAPI
-	Retrieval   RetrievalAPI
+	Tasks     TaskQueryAPI
+	Catalog   CatalogAPI
+	Retrieval RetrievalAPI
 }
 
 type Options struct{ MaxIterations int }
@@ -73,8 +60,8 @@ type Service struct {
 
 func NewService(repo port.AgentSessionRepo, configRepo port.AgentConfigRepo, llm port.LLMClient,
 	deps Dependencies, opts Options) (*Service, error) {
-	if repo == nil || configRepo == nil || llm == nil || deps.Definitions == nil || deps.Runtime == nil ||
-		deps.Tasks == nil || deps.Catalog == nil || deps.Retrieval == nil {
+	if repo == nil || configRepo == nil || llm == nil || deps.Tasks == nil ||
+		deps.Catalog == nil || deps.Retrieval == nil {
 		return nil, fmt.Errorf("platform agent 依赖不完整")
 	}
 	if opts.MaxIterations <= 0 {
@@ -104,9 +91,6 @@ func (s *Service) Recover(ctx context.Context) error { return s.repo.RecoverAgen
 
 func (s *Service) CreateSession(ctx context.Context, workspaceID, title string) (*SessionView, error) {
 	workspaceID = normalizeWorkspaceID(workspaceID)
-	if err := s.ensureBuiltinSkills(ctx, workspaceID); err != nil {
-		return nil, err
-	}
 	title = cleanTitle(title)
 	cc := port.Context{Messages: []port.Message{}}
 	raw, _ := json.Marshal(cc)
@@ -184,9 +168,6 @@ func (s *Service) RunMessage(ctx context.Context, id, text string, emit func(Str
 	if err != nil {
 		return nil, err
 	}
-	if err := s.ensureBuiltinSkills(runCtx, session.WorkspaceID); err != nil {
-		return nil, err
-	}
 	settings, err := s.configRepo.ListAgentToolSettings(runCtx, session.WorkspaceID)
 	if err != nil {
 		return nil, err
@@ -199,7 +180,7 @@ func (s *Service) RunMessage(ctx context.Context, id, text string, emit func(Str
 	if err != nil {
 		return nil, err
 	}
-	tools := buildTools(s.deps, s.configRepo, session.WorkspaceID, enabledToolSettings(settings))
+	tools := buildTools(s.deps, session.WorkspaceID, enabledToolSettings(settings))
 	if err := s.repo.BeginAgentSession(runCtx, id); err != nil {
 		return nil, err
 	}
