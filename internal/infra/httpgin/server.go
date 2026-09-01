@@ -16,23 +16,25 @@ import (
 
 // Services 组装点注入的全部业务用例（cmd 负责构造）。
 type Services struct {
-	PlatformConfigs *appplatformconfig.Service
-	V2Definitions   *apporchestrator.DefinitionService
-	V2TaskBatches   *apporchestrator.TaskBatchService
-	V2Runtime       *apporchestrator.RuntimeService
-	V2TaskQueries   *apporchestrator.TaskQueryService
-	V2Datasets      *apppipeline.DatasetService
-	V2QueryDatasets *apppipeline.QueryDatasetService
-	V2Assets        *apppipeline.AssetService
-	V2Extractions   *appextraction.Service
-	V2Cleaning      *apppipeline.CleaningService
-	V2Review        *apppipeline.ReviewService
-	V2Retrieval     *appretrieval.Service
-	V2Analysis      *appanalysis.Service
-	V2Artifacts     *appanalysis.ArtifactService
-	V2Catalog       *appcatalog.Service
-	V2Agent         *appplatformagent.Service
-	Workflows       *appworkflow.DraftService
+	PlatformConfigs      *appplatformconfig.Service
+	V2Definitions        *apporchestrator.DefinitionService
+	V2TaskBatches        *apporchestrator.TaskBatchService
+	V2Runtime            *apporchestrator.RuntimeService
+	V2TaskQueries        *apporchestrator.TaskQueryService
+	V2Datasets           *apppipeline.DatasetService
+	V2QueryDatasets      *apppipeline.QueryDatasetService
+	V2Assets             *apppipeline.AssetService
+	V2Extractions        *appextraction.Service
+	V2Cleaning           *apppipeline.CleaningService
+	V2Review             *apppipeline.ReviewService
+	V2Retrieval          *appretrieval.Service
+	V2Analysis           *appanalysis.Service
+	V2Artifacts          *appanalysis.ArtifactService
+	V2Catalog            *appcatalog.Service
+	V2Agent              *appplatformagent.Service
+	Workflows            *appworkflow.DraftService
+	WorkflowPreviews     *appworkflow.PreviewService
+	WorkflowPublications *appworkflow.PublicationService
 
 	MaxFileMB int64 // 上传大小上限
 }
@@ -53,6 +55,20 @@ func New(svc Services) *gin.Engine {
 		api.GET("/workflows/:id", h.getWorkflow)
 		api.POST("/workflows/:id/commands", h.executeWorkflowCommand)
 		api.POST("/workflows/:id/validate", h.validateWorkflow)
+		if svc.WorkflowPreviews != nil {
+			api.POST("/workflows/:id/previews", h.createWorkflowPreview)
+			api.POST("/workflows/:id/acceptance-cases/:case_id/run", h.runWorkflowAcceptance)
+		}
+		if svc.WorkflowPublications != nil {
+			api.POST("/workflows/:id/publish", h.publishWorkflow)
+			api.GET("/workflows/:id/revisions", h.listWorkflowRevisions)
+		}
+	}
+	if svc.WorkflowPreviews != nil {
+		api.GET("/workflow-previews/:id", h.getWorkflowPreview)
+	}
+	if svc.WorkflowPublications != nil {
+		api.GET("/workflow-revisions/:id", h.getWorkflowRevision)
 	}
 
 	v2 := api.Group("/v2")

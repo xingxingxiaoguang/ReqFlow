@@ -29,6 +29,68 @@ type InsertBetweenCommand struct {
 	SideInputs map[string]string `json:"side_inputs,omitempty"`
 }
 
+type CreateFromBlankCommand struct {
+	Node       domain.WorkflowNode `json:"node"`
+	InputPort  string              `json:"input_port"`
+	OutputPort string              `json:"output_port"`
+	SideInputs map[string]string   `json:"side_inputs,omitempty"`
+}
+
+func (e *DraftEditor) CreateFromBlank(draft domain.WorkflowDraft, command CreateFromBlankCommand) (domain.WorkflowDraft, error) {
+	next, err := cloneDraft(draft)
+	if err != nil {
+		return draft, err
+	}
+	if len(next.Nodes) != 0 || len(next.Connections) != 0 {
+		return draft, fmt.Errorf("只有空白草稿才能创建首个节点")
+	}
+	if err := ensureNewNode(next, command.Node); err != nil {
+		return draft, err
+	}
+	capability, exists := e.catalog.Lookup(command.Node.Capability)
+	if !exists {
+		return draft, fmt.Errorf("首节点 Capability 未注册")
+	}
+	input, ok := findDefinitionPort(capability.Inputs, command.InputPort)
+	if !ok || input.Role != domain.PortPrimary {
+		return draft, fmt.Errorf("首节点主输入端口不存在")
+	}
+	output, ok := findDefinitionPort(capability.Outputs, command.OutputPort)
+	if !ok || output.Role != domain.PortPrimary {
+		return draft, fmt.Errorf("首节点主输出端口不存在")
+	}
+	inputType, err := e.sourceType(next, domain.Endpoint{Kind: domain.EndpointWorkflowInput, Port: command.InputPort})
+	if err != nil || inputType != input.ResourceType {
+		return draft, fmt.Errorf("首节点主输入与流程输入类型不兼容")
+	}
+	outputType, err := e.targetType(next, domain.Endpoint{Kind: domain.EndpointWorkflowOutput, Port: command.OutputPort})
+	if err != nil || outputType != output.ResourceType {
+		return draft, fmt.Errorf("首节点主输出与流程输出类型不兼容")
+	}
+	if err := domain.ValidateCapabilityConfig(capability, command.Node.Config); err != nil {
+		return draft, err
+	}
+	connections := []domain.Connection{{
+		From: domain.Endpoint{Kind: domain.EndpointWorkflowInput, Port: command.InputPort},
+		To:   domain.Endpoint{Kind: domain.EndpointNodeInput, NodeID: command.Node.ID, Port: input.Name},
+	}, {
+		From: domain.Endpoint{Kind: domain.EndpointNodeOutput, NodeID: command.Node.ID, Port: output.Name},
+		To:   domain.Endpoint{Kind: domain.EndpointWorkflowOutput, Port: command.OutputPort},
+	}}
+	connections, err = e.bindRequiredSideInputs(next, connections, command.Node.ID, capability, command.SideInputs)
+	if err != nil {
+		return draft, err
+	}
+	next.Nodes = []domain.WorkflowNode{command.Node}
+	next.Connections = connections
+	invalidateAcceptance(&next)
+	next.Revision++
+	if err := validateEditResult(next, e.catalog, command.Node.ID); err != nil {
+		return draft, err
+	}
+	return next, nil
+}
+
 func (e *DraftEditor) InsertBetween(draft domain.WorkflowDraft, command InsertBetweenCommand) (domain.WorkflowDraft, error) {
 	next, err := cloneDraft(draft)
 	if err != nil {

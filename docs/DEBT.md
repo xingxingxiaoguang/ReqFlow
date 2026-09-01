@@ -11,6 +11,7 @@
 |------|-----|------|----------|--------|
 | WF-1 | 新 Workflow 受控规则 DSL 已在 `internal/domain/workflow` 成为设计事实源，但旧 `record_cleaning.go` 仍维护私有 JSON DTO | Phase 5 接入执行器前存在合同镜像漂移风险；当前新 Draft 尚未调用旧执行路径 | 新 Capability Executor 直接消费 Workflow DSL，并把旧清洗实现改为执行纯函数或随 Phase 6 旧模型删除 | 高（Phase 5 销账） |
 | WF-2 | 开发期 Command Service 使用固定 local actor，尚未接入认证与 workspace 上下文 | HTTP 可用但不能证明多主体/跨 workspace 授权边界 | 接入服务端认证上下文和 workspace-scoped Repository 查询；请求体永不覆盖 actor | 高（Phase 6 前销账） |
+| WF-3 | 当前 PreviewService 生成的是结构化 temporary manifest，尚未驱动真实 Capability dry-run | 验收现在证明 Draft 结构与边界可运行，不证明真实解析/抽取/清洗输出 | Phase 5 接入 `ResolvedNode + RuleBundle + temporary binding` 执行器，副作用节点统一 dry-run | 高（Phase 5 销账） |
 
 ## 已销账记录（Legacy 切割，2026-09-01）
 

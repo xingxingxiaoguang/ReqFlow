@@ -298,6 +298,16 @@ func main() {
 		logger.Error("Workflow Draft 服务初始化失败", "err", err)
 		os.Exit(1)
 	}
+	workflowPreviews, err := appworkflow.NewPreviewService(workflowRepo, workflowCatalog)
+	if err != nil {
+		logger.Error("Workflow Preview 服务初始化失败", "err", err)
+		os.Exit(1)
+	}
+	workflowPublications, err := appworkflow.NewPublicationService(workflowRepo, workflowCatalog)
+	if err != nil {
+		logger.Error("Workflow Publication 服务初始化失败", "err", err)
+		os.Exit(1)
+	}
 	v2Review, err := apppipeline.NewReviewService(pipelineRepo, v2Runtime)
 	if err != nil {
 		logger.Error("V2 Review Pipeline 初始化失败", "err", err)
@@ -332,7 +342,8 @@ func main() {
 		V2Assets: v2Assets, V2Extractions: v2Extractions, V2Cleaning: v2Cleaning, V2Review: v2Review,
 		V2Retrieval: v2Retrieval, V2Analysis: v2Analysis, V2Artifacts: v2Artifacts,
 		V2Catalog: v2Catalog, V2Agent: v2Agent,
-		Workflows: workflowService,
+		Workflows:        workflowService,
+		WorkflowPreviews: workflowPreviews, WorkflowPublications: workflowPublications,
 		MaxFileMB: int64(cfg.Parser.MaxFileMB),
 	})
 	mountStatic(engine)

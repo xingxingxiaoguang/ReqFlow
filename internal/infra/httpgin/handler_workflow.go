@@ -74,6 +74,77 @@ func (h *handlers) validateWorkflow(c *gin.Context) {
 	ok(c, result)
 }
 
+func (h *handlers) createWorkflowPreview(c *gin.Context) {
+	var request appworkflow.CreatePreviewRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		fail(c, http.StatusUnprocessableEntity, "预览参数非法")
+		return
+	}
+	preview, err := h.svc.WorkflowPreviews.Create(c.Request.Context(), c.Param("id"), request)
+	if err != nil {
+		workflowError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": preview})
+}
+
+func (h *handlers) getWorkflowPreview(c *gin.Context) {
+	preview, err := h.svc.WorkflowPreviews.Get(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		workflowError(c, err)
+		return
+	}
+	ok(c, preview)
+}
+
+func (h *handlers) runWorkflowAcceptance(c *gin.Context) {
+	var request struct {
+		PreviewID string `json:"preview_id"`
+	}
+	if err := c.ShouldBindJSON(&request); err != nil || request.PreviewID == "" {
+		fail(c, http.StatusUnprocessableEntity, "验收必须提供 preview_id")
+		return
+	}
+	result, err := h.svc.WorkflowPreviews.RunAcceptance(c.Request.Context(), c.Param("id"), c.Param("case_id"), request.PreviewID)
+	if err != nil {
+		workflowError(c, err)
+		return
+	}
+	ok(c, result)
+}
+
+func (h *handlers) publishWorkflow(c *gin.Context) {
+	var request appworkflow.PublishRequest
+	if err := c.ShouldBindJSON(&request); err != nil {
+		fail(c, http.StatusUnprocessableEntity, "发布参数非法")
+		return
+	}
+	revision, err := h.svc.WorkflowPublications.Publish(c.Request.Context(), c.Param("id"), request)
+	if err != nil {
+		workflowError(c, err)
+		return
+	}
+	c.JSON(http.StatusCreated, gin.H{"success": true, "data": revision})
+}
+
+func (h *handlers) listWorkflowRevisions(c *gin.Context) {
+	revisions, err := h.svc.WorkflowPublications.ListRevisions(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		workflowError(c, err)
+		return
+	}
+	ok(c, gin.H{"revisions": revisions})
+}
+
+func (h *handlers) getWorkflowRevision(c *gin.Context) {
+	revision, err := h.svc.WorkflowPublications.GetRevision(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		workflowError(c, err)
+		return
+	}
+	ok(c, revision)
+}
+
 func workflowError(c *gin.Context, err error) {
 	c.JSON(appworkflow.ErrorStatus(err), gin.H{"success": false, "error": gin.H{
 		"code": appworkflow.ErrorCode(err), "message": err.Error(),

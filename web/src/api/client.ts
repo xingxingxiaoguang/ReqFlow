@@ -2,7 +2,7 @@
 export interface ApiResponse<T> {
   success: boolean
   data?: T
-  error?: string
+  error?: string | { message?: string; code?: string }
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
@@ -16,7 +16,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   })
   const body = (await resp.json().catch(() => null)) as ApiResponse<T> | null
   if (!resp.ok || !body?.success) {
-    throw new Error(body?.error || `请求失败（HTTP ${resp.status}）`)
+    const error = typeof body?.error === 'string' ? body.error : body?.error?.message
+    throw new Error(error || `请求失败（HTTP ${resp.status}）`)
   }
   return body.data as T
 }

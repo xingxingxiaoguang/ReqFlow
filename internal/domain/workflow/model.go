@@ -318,6 +318,7 @@ type ResolvedNode struct {
 type WorkflowRevision struct {
 	ID              string           `json:"id"`
 	WorkflowID      string           `json:"workflow_id"`
+	RevisionNo      int64            `json:"revision_no"`
 	WorkspaceID     string           `json:"workspace_id"`
 	Key             string           `json:"key"`
 	Name            string           `json:"name"`
@@ -331,4 +332,25 @@ type WorkflowRevision struct {
 	ContentHash     string           `json:"content_hash"`
 	PublishedBy     string           `json:"published_by"`
 	PublishedAt     time.Time        `json:"published_at"`
+}
+
+type PreviewStatus string
+
+const (
+	PreviewPassed PreviewStatus = "passed"
+	PreviewFailed PreviewStatus = "failed"
+)
+
+type WorkflowPreview struct {
+	ID             string            `json:"id"`
+	WorkflowID     string            `json:"workflow_id"`
+	DraftRevision  int64             `json:"draft_revision"`
+	Status         PreviewStatus     `json:"status"`
+	Input          json.RawMessage   `json:"input"`
+	OutputManifest json.RawMessage   `json:"output_manifest"`
+	Issues         []ValidationIssue `json:"issues,omitempty"`
+	StartedBy      string            `json:"started_by"`
+	StartedAt      time.Time         `json:"started_at"`
+	FinishedAt     time.Time         `json:"finished_at,omitempty"`
+	Temporary      bool              `json:"temporary"`
 }

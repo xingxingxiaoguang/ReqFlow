@@ -47,6 +47,34 @@ type workflowCommandEventRow struct {
 	CreatedAt      time.Time `gorm:"column:created_at"`
 }
 
+type workflowRevisionRow struct {
+	ID          string    `gorm:"column:id;primaryKey"`
+	WorkflowID  string    `gorm:"column:workflow_id"`
+	RevisionNo  int64     `gorm:"column:revision_no"`
+	Content     string    `gorm:"column:content;type:jsonb"`
+	ContentHash string    `gorm:"column:content_hash"`
+	PublishedBy string    `gorm:"column:published_by"`
+	PublishedAt time.Time `gorm:"column:published_at"`
+}
+
+func (workflowRevisionRow) TableName() string { return "workflow_revisions" }
+
+type workflowPreviewRow struct {
+	ID             string    `gorm:"column:id;primaryKey"`
+	WorkflowID     string    `gorm:"column:workflow_id"`
+	DraftRevision  int64     `gorm:"column:draft_revision"`
+	Status         string    `gorm:"column:status"`
+	InputManifest  string    `gorm:"column:input_manifest;type:jsonb"`
+	OutputManifest string    `gorm:"column:output_manifest;type:jsonb"`
+	Issues         string    `gorm:"column:issues;type:jsonb"`
+	StartedBy      string    `gorm:"column:started_by"`
+	StartedAt      time.Time `gorm:"column:started_at"`
+	FinishedAt     time.Time `gorm:"column:finished_at"`
+	Temporary      bool      `gorm:"column:temporary"`
+}
+
+func (workflowPreviewRow) TableName() string { return "workflow_previews" }
+
 func (workflowCommandEventRow) TableName() string { return "workflow_command_events" }
 
 type WorkflowRepo struct{ db *gorm.DB }
@@ -172,4 +200,146 @@ func stringValue(value *string) string {
 		return ""
 	}
 	return *value
+}
+
+func (r *WorkflowRepo) CreatePreview(ctx context.Context, preview domain.WorkflowPreview) error {
+	input := jsonOrEmpty(preview.Input)
+	output := jsonOrEmpty(preview.OutputManifest)
+	issues, err := json.Marshal(preview.Issues)
+	if err != nil {
+		return err
+	}
+	return r.db.WithContext(ctx).Create(&workflowPreviewRow{ID: preview.ID, WorkflowID: preview.WorkflowID,
+		DraftRevision: preview.DraftRevision, Status: string(preview.Status), InputManifest: string(input),
+		OutputManifest: string(output), Issues: string(issues), StartedBy: preview.StartedBy,
+		StartedAt: preview.StartedAt, FinishedAt: preview.FinishedAt, Temporary: preview.Temporary}).Error
+}
+
+func (r *WorkflowRepo) GetPreview(ctx context.Context, id string) (*domain.WorkflowPreview, error) {
+	var row workflowPreviewRow
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&row).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, port.ErrPreviewNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	var issues []domain.ValidationIssue
+	if err := json.Unmarshal([]byte(row.Issues), &issues); err != nil {
+		return nil, err
+	}
+	return &domain.WorkflowPreview{ID: row.ID, WorkflowID: row.WorkflowID, DraftRevision: row.DraftRevision,
+		Status: domain.PreviewStatus(row.Status), Input: json.RawMessage(row.InputManifest),
+		OutputManifest: json.RawMessage(row.OutputManifest), Issues: issues, StartedBy: row.StartedBy,
+		StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, Temporary: row.Temporary}, nil
+}
+
+func (r *WorkflowRepo) MarkAcceptancePassed(ctx context.Context, workflowID, caseID string,
+	draftRevision int64, previewID string, runAt time.Time) (*domain.WorkflowDraft, error) {
+	var result *domain.WorkflowDraft
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var row workflowRow
+		if err := tx.Clauses(lockForUpdate()).Where("id = ?", workflowID).First(&row).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			return port.ErrWorkflowNotFound
+		} else if err != nil {
+			return err
+		}
+		if row.DraftRevision != draftRevision {
+			return port.ErrRevisionConflict
+		}
+		var draft domain.WorkflowDraft
+		if err := json.Unmarshal([]byte(row.DraftDocument), &draft); err != nil {
+			return err
+		}
+		found := false
+		for index := range draft.AcceptanceCases {
+			if draft.AcceptanceCases[index].ID != caseID {
+				continue
+			}
+			draft.AcceptanceCases[index].LastPassed = true
+			draft.AcceptanceCases[index].LastPassedRevision = draftRevision
+			draft.AcceptanceCases[index].LastPreviewID = previewID
+			draft.AcceptanceCases[index].LastRunAt = runAt
+			found = true
+			break
+		}
+		if !found {
+			return port.ErrAcceptanceNotFound
+		}
+		document, err := json.Marshal(draft)
+		if err != nil {
+			return err
+		}
+		if err := tx.Model(&workflowRow{}).Where("id = ? AND draft_revision = ?", workflowID, draftRevision).
+			Update("draft_document", string(document)).Error; err != nil {
+			return err
+		}
+		result = &draft
+		return nil
+	})
+	return result, err
+}
+
+func (r *WorkflowRepo) PublishRevision(ctx context.Context, workflowID string, expectedRevision int64,
+	revision domain.WorkflowRevision) (*domain.WorkflowRevision, error) {
+	err := r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
+		var row workflowRow
+		if err := tx.Clauses(lockForUpdate()).Where("id = ?", workflowID).First(&row).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+			return port.ErrWorkflowNotFound
+		} else if err != nil {
+			return err
+		}
+		if row.DraftRevision != expectedRevision {
+			return port.ErrRevisionConflict
+		}
+		var nextRevision int64
+		if err := tx.Model(&workflowRevisionRow{}).Where("workflow_id = ?", workflowID).
+			Select("COALESCE(MAX(revision_no), 0) + 1").Scan(&nextRevision).Error; err != nil {
+			return err
+		}
+		revision.RevisionNo = nextRevision
+		content, err := json.Marshal(revision)
+		if err != nil {
+			return err
+		}
+		if err := tx.Create(&workflowRevisionRow{ID: revision.ID, WorkflowID: workflowID, RevisionNo: nextRevision,
+			Content: string(content), ContentHash: revision.ContentHash, PublishedBy: revision.PublishedBy,
+			PublishedAt: revision.PublishedAt}).Error; err != nil {
+			return err
+		}
+		return tx.Model(&workflowRow{}).Where("id = ? AND draft_revision = ?", workflowID, expectedRevision).
+			Update("active_revision_id", revision.ID).Error
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &revision, nil
+}
+
+func (r *WorkflowRepo) ListRevisions(ctx context.Context, workflowID string) ([]domain.WorkflowRevision, error) {
+	var rows []workflowRevisionRow
+	if err := r.db.WithContext(ctx).Where("workflow_id = ?", workflowID).Order("revision_no DESC").Find(&rows).Error; err != nil {
+		return nil, err
+	}
+	result := make([]domain.WorkflowRevision, 0, len(rows))
+	for _, row := range rows {
+		var revision domain.WorkflowRevision
+		if err := json.Unmarshal([]byte(row.Content), &revision); err != nil {
+			return nil, err
+		}
+		result = append(result, revision)
+	}
+	return result, nil
+}
+
+func (r *WorkflowRepo) GetRevision(ctx context.Context, id string) (*domain.WorkflowRevision, error) {
+	var row workflowRevisionRow
+	if err := r.db.WithContext(ctx).Where("id = ?", id).First(&row).Error; errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, port.ErrRevisionNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	var revision domain.WorkflowRevision
+	if err := json.Unmarshal([]byte(row.Content), &revision); err != nil {
+		return nil, err
+	}
+	return &revision, nil
 }

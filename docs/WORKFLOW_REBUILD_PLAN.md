@@ -181,19 +181,19 @@ Agent 和手动 UI 必须调用同一个 WorkflowDraft Command 层。Agent 只�
 - [ ] 实现 Draft Command、乐观并发、撤销所需事件；
 - [x] 实现插入、删除、替换、追加、前置、连接和规则编辑命令；
 - [x] 注册首期线性 Capability；
-- [ ] 提供 Capability、Draft、Validate、Preview API。
+- [x] 提供 Capability、Draft、Validate、Preview API。
 
 完成标准：后端 API 可以在没有 Agent 的情况下完成流程设计。
 
 ### Phase 3：规则画像与手动编辑器
 
 - [ ] 实现样本画像服务；
-- [ ] 新建纵向线性流程编辑器；
+- [x] 新建纵向线性流程编辑器；
 - [ ] 新建 DataContract、ExtractionSpec、SearchSpec、OutputContract 编辑器；
 - [ ] 实现规则影响和差异视图；
-- [ ] 实现样本预览与验收用例管理。
+- [x] 实现样本预览与验收用例管理（temporary manifest；真实 Capability dry-run 留 Phase 5）。
 
-完成标准：关闭 LLM 配置后，从空白创建并发布一条数据清洗流程。
+完成标准：关闭 LLM 配置后，从空白创建、预览、验收并发布一条线性流程。
 
 ### Phase 4：Rule Synthesis Agent
 
