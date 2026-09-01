@@ -45,4 +45,20 @@ func TestCleaningExecutorsValidateStablePortContracts(t *testing.T) {
 	if err := publish.ValidateDefinition(context.Background(), publishDef); err == nil {
 		t.Fatal("data.publish must consume only the pinned ApprovedRecordSet")
 	}
+	delete(publishDef.Inputs, "dataset")
+
+	// 可选 dataset 输出：发布后数据集边界，供 retrieval.build 接在发布之后。
+	publishDef.Outputs["dataset"] = model.ResourceDatasetBoundary
+	if err := publish.ValidateDefinition(context.Background(), publishDef); err != nil {
+		t.Fatalf("data.publish should accept optional dataset boundary output: %v", err)
+	}
+	publishDef.Outputs["dataset"] = model.ResourceRetrievalSnapshot
+	if err := publish.ValidateDefinition(context.Background(), publishDef); err == nil {
+		t.Fatal("data.publish must reject unexpected second output type")
+	}
+	publishDef.Outputs["dataset"] = model.ResourceDatasetBoundary
+	publishDef.Outputs["snapshot"] = model.ResourceRetrievalSnapshot
+	if err := publish.ValidateDefinition(context.Background(), publishDef); err == nil {
+		t.Fatal("data.publish must reject more than two outputs")
+	}
 }

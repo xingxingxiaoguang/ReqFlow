@@ -37,8 +37,11 @@ type StepRunContext struct {
 	ExecutionKey   string
 	Inputs         map[string]model.ResourceRef
 	Config         json.RawMessage
-	Checkpoint     CheckpointWriter
-	Progress       ProgressReporter
+	// Outputs 是定义声明的输出端口（端口名 → 资源类型）。执行器据此决定可选端口
+	// 是否产出——validateOutputs 要求执行结果与声明严格一致。
+	Outputs    map[string]model.ResourceType
+	Checkpoint CheckpointWriter
+	Progress   ProgressReporter
 }
 
 type StepResult struct {

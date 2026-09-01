@@ -82,7 +82,8 @@ export const WORKFLOW_BLOCKS: WorkflowBlock[] = [
     id: 'data_publish', kind: 'data.publish', label: '发布数据', suggestedId: 'publish',
     description: '将审核通过的记录原子追加到目标数据集。',
     inputs: [input('approved', '审核通过记录', 'approved_records')],
-    outputs: [input('batch', '数据批次', 'dataset_batch')], defaultConfig: {},
+    outputs: [input('batch', '数据批次', 'dataset_batch'), input('dataset', '发布后数据集边界', 'dataset_boundary')],
+    defaultConfig: {},
   },
   {
     id: 'query_derive', kind: 'data.query_derive', label: '增量派生查询数据', suggestedId: 'derive',

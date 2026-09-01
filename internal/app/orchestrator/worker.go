@@ -205,7 +205,7 @@ func (w *Worker) RunOnce(ctx context.Context) error {
 		IdempotencyKey: claimed.TaskID + ":" + claimed.StepID,
 		ExecutionKey: fmt.Sprintf("%s:%s:%s:%s:%d", claimed.TaskID, claimed.StepID,
 			claimed.InputHash, claimed.ConfigHash, claimed.Attempt),
-		Inputs: inputs, Config: step.Config,
+		Inputs: inputs, Config: step.Config, Outputs: step.Outputs,
 		Checkpoint: ownedCheckpointWriter{repo: w.repo, stepRunID: claimed.ID, owner: w.opts.Owner},
 		Progress:   ownedProgressReporter{repo: w.repo, stepRunID: claimed.ID, owner: w.opts.Owner},
 	}

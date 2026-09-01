@@ -27,8 +27,14 @@ func (*DataPublishExecutor) ValidateDefinition(_ context.Context, step model.Ste
 	if len(step.Inputs) != 1 || strings.TrimSpace(step.Inputs["approved"]) == "" {
 		return fmt.Errorf("data.publish 必须且只能声明 approved 输入")
 	}
-	if len(step.Outputs) != 1 || step.Outputs["batch"] != model.ResourceDatasetBatch {
-		return fmt.Errorf("data.publish 必须且只能声明 batch: dataset_batch 输出")
+	if step.Outputs["batch"] != model.ResourceDatasetBatch {
+		return fmt.Errorf("data.publish 必须声明 batch: dataset_batch 输出")
+	}
+	// 可选第二输出 dataset: dataset_boundary（发布后的数据集上界）。有了它，
+	// retrieval.build 才能接在发布之后，索引到本任务刚提交的数据；否则清洗入库
+	// 流程只能在任务创建时对旧边界建索引，永远覆盖不了自己发布的数据。
+	if len(step.Outputs) > 2 || (len(step.Outputs) == 2 && step.Outputs["dataset"] != model.ResourceDatasetBoundary) {
+		return fmt.Errorf("data.publish 可选第二输出只能是 dataset: dataset_boundary")
 	}
 	return validateEmptyExecutorConfig("data.publish", step.Config)
 }
@@ -51,9 +57,15 @@ func (e *DataPublishExecutor) Execute(ctx context.Context, run orchestrator.Step
 	}
 	boundary, _ := json.Marshal(model.DatasetBatchBoundary{DatasetID: batch.DatasetID,
 		FromSeq: batch.FromSeq, ToSeq: batch.ToSeq})
-	return orchestrator.StepResult{Outputs: map[string]model.ResourceRef{
+	outputs := map[string]model.ResourceRef{
 		"batch": {ResourceType: model.ResourceDatasetBatch, ResourceID: batch.ID, Boundary: boundary},
-	}, Metrics: map[string]any{"status": batch.Status, "items": batch.ItemCount,
+	}
+	if _, declared := run.Outputs["dataset"]; declared {
+		datasetBoundary, _ := json.Marshal(model.DatasetBoundary{DatasetID: batch.DatasetID, ThroughSeq: batch.ToSeq})
+		outputs["dataset"] = model.ResourceRef{ResourceType: model.ResourceDatasetBoundary,
+			ResourceID: batch.DatasetID, Boundary: datasetBoundary}
+	}
+	return orchestrator.StepResult{Outputs: outputs, Metrics: map[string]any{"status": batch.Status, "items": batch.ItemCount,
 		"from_seq": batch.FromSeq, "to_seq": batch.ToSeq}}, nil
 }
 
