@@ -1,48 +1,17 @@
-// Package repository 以 GORM + pgvector 实现 port 仓储契约。
+// Package repository 以 GORM + 原生 SQL 实现 port 仓储契约。
 // 本包只依赖 port/domain 与注入的 *gorm.DB，不感知业务用例与 HTTP。
 package repository
 
 import (
 	"time"
 
-	"github.com/pgvector/pgvector-go"
+	"reqflow/internal/domain/model"
 )
 
-/* ---- 表行结构（与 migrations 对齐；向量列用 pgvector 类型） ---- */
+/* ---- 共享表行结构与行 <-> 模型转换（V2） ---- */
 
-type datasetRow struct {
-	ID            string    `gorm:"column:id;primaryKey"`
-	Type          string    `gorm:"column:type"`
-	Name          string    `gorm:"column:name"`
-	Schema        string    `gorm:"column:schema;type:jsonb"` // 字段定义真相源（DatasetSchema JSON）
-	Description   string    `gorm:"column:description"`
-	Tags          string    `gorm:"column:tags"` // JSON 数组文本
-	SourceTaskID  *string   `gorm:"column:source_task_id"`
-	Status        string    `gorm:"column:status"`
-	ItemCount     int       `gorm:"column:item_count"`
-	SchemaVersion int       `gorm:"column:schema_version"`
-	Extra         string    `gorm:"column:extra"` // JSON 文本
-	CreatedAt     time.Time `gorm:"column:created_at"`
-	UpdatedAt     time.Time `gorm:"column:updated_at"`
-}
-
-func (datasetRow) TableName() string { return "datasets" }
-
-type datasetItemRow struct {
-	ID           string           `gorm:"column:id;primaryKey"`
-	DatasetID    string           `gorm:"column:dataset_id;index"`
-	Fields       string           `gorm:"column:fields;type:jsonb"` // 字段袋（原生 JSONB）
-	ItemKey      string           `gorm:"column:item_key"`
-	Fingerprint  string           `gorm:"column:fingerprint"`
-	Metadata     string           `gorm:"column:metadata"` // JSON 文本
-	SourceTaskID *string          `gorm:"column:source_task_id"`
-	Embedding    *pgvector.Vector `gorm:"column:embedding"`
-	CreatedAt    time.Time        `gorm:"column:created_at"`
-	UpdatedAt    time.Time        `gorm:"column:updated_at"`
-}
-
-func (datasetItemRow) TableName() string { return "dataset_items" }
-
+// taskRow 任务表行（V2 列集：定义快照 + 批次派生来源 + 任务级生命周期；
+// 步骤级执行状态在 step_runs，不在本表）。
 type taskRow struct {
 	ID                 string     `gorm:"column:id;primaryKey"`
 	WorkspaceID        string     `gorm:"column:workspace_id"`
@@ -56,18 +25,6 @@ type taskRow struct {
 	SourceAssetID      *string    `gorm:"column:source_asset_id"`
 	SourceFilename     string     `gorm:"column:source_filename"`
 	Status             string     `gorm:"column:status"`
-	CurrentStep        int        `gorm:"column:current_step"`
-	Workflow           *string    `gorm:"column:workflow"`      // 工作流定义快照（JSON 文本）
-	Input              *string    `gorm:"column:input"`         // JSON 文本
-	Output             *string    `gorm:"column:output"`        // JSON 文本
-	AgentContext       *string    `gorm:"column:agent_context"` // 会话 JSON 文本（续跑载体）
-	ItemsCount         int        `gorm:"column:items_count"`
-	ImportedCount      int        `gorm:"column:imported_count"`
-	FailedCount        int        `gorm:"column:failed_count"`
-	TargetProjectID    *string    `gorm:"column:target_project_id"`
-	TargetProjectName  *string    `gorm:"column:target_project_name"`
-	OutputDatasetID    *string    `gorm:"column:output_dataset_id"`
-	InputDatasetID     *string    `gorm:"column:input_dataset_id"`
 	ErrorMessage       *string    `gorm:"column:error_message"`
 	CreatedAt          time.Time  `gorm:"column:created_at"`
 	UpdatedAt          time.Time  `gorm:"column:updated_at"`
@@ -78,62 +35,21 @@ type taskRow struct {
 
 func (taskRow) TableName() string { return "tasks" }
 
-type taskStepRow struct {
-	ID        string     `gorm:"column:id;primaryKey"`
-	TaskID    string     `gorm:"column:task_id;index"`
-	Seq       int        `gorm:"column:seq"`
-	Name      string     `gorm:"column:name"`
-	Status    string     `gorm:"column:status"`
-	Detail    string     `gorm:"column:detail"`
-	Data      *string    `gorm:"column:data"` // JSON 文本：工具轨迹/导入汇总
-	StartedAt *time.Time `gorm:"column:started_at"`
-	EndedAt   *time.Time `gorm:"column:ended_at"`
+func taskToModel(row *taskRow) model.Task {
+	return model.Task{
+		ID: row.ID, WorkspaceID: row.WorkspaceID, DefinitionID: strVal(row.DefinitionID),
+		DefinitionSnapshot: strVal(row.DefinitionSnapshot),
+		Type:               row.Type, Title: row.Title, BatchID: strVal(row.BatchID),
+		BatchOrdinal: row.BatchOrdinal, BatchSize: row.BatchSize,
+		SourceAssetID: strVal(row.SourceAssetID), SourceFilename: row.SourceFilename,
+		Status:       row.Status, ErrorMessage: strVal(row.ErrorMessage),
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		StartedAt: timeVal(row.StartedAt), FinishedAt: timeVal(row.FinishedAt),
+	}
 }
-
-func (taskStepRow) TableName() string { return "task_steps" }
-
-type taskItemRow struct {
-	ID           string    `gorm:"column:id;primaryKey"`
-	TaskID       string    `gorm:"column:task_id;index"`
-	Fields       string    `gorm:"column:fields;type:jsonb"` // 字段袋（原生 JSONB，与 dataset_items 同构）
-	Status       string    `gorm:"column:status"`
-	ErrorMessage *string   `gorm:"column:error_message"`
-	CreatedAt    time.Time `gorm:"column:created_at"`
-}
-
-func (taskItemRow) TableName() string { return "task_items" }
-
-type metadataRegistryRow struct {
-	ID        string    `gorm:"column:id;primaryKey"`
-	Kind      string    `gorm:"column:kind"`
-	Key       string    `gorm:"column:key"`
-	Version   int       `gorm:"column:version"`
-	Payload   string    `gorm:"column:payload"` // JSON 文本
-	Enabled   bool      `gorm:"column:enabled"`
-	Summary   string    `gorm:"column:summary"`
-	CreatedBy string    `gorm:"column:created_by"`
-	CreatedAt time.Time `gorm:"column:created_at"`
-}
-
-func (metadataRegistryRow) TableName() string { return "metadata_registry" }
-
-type metadataAuditRow struct {
-	ID          string    `gorm:"column:id;primaryKey"`
-	Action      string    `gorm:"column:action"`
-	Kind        string    `gorm:"column:kind"`
-	Key         string    `gorm:"column:key"`
-	FromVersion int       `gorm:"column:from_version"`
-	ToVersion   int       `gorm:"column:to_version"`
-	Summary     string    `gorm:"column:summary"`
-	Operator    string    `gorm:"column:operator"`
-	CreatedAt   time.Time `gorm:"column:created_at"`
-}
-
-func (metadataAuditRow) TableName() string { return "metadata_audit" }
 
 /* ---- 公共构造 ---- */
 
-// NewProjectRepo / NewWorkItemRepo / NewMetaRepo / NewImportRepo 见各自文件。
 // 全部依赖经构造函数注入（*gorm.DB），无全局状态。
 
 func strPtr(s string) *string {
@@ -146,6 +62,20 @@ func strPtr(s string) *string {
 func strVal(p *string) string {
 	if p == nil {
 		return ""
+	}
+	return *p
+}
+
+func timePtr(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+	return &t
+}
+
+func timeVal(p *time.Time) time.Time {
+	if p == nil {
+		return time.Time{}
 	}
 	return *p
 }

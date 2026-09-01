@@ -55,9 +55,6 @@ opensearch:
   index_prefix: reqflow
   timeout_ms: 30000
 
-match:
-  duplicate_threshold: 0.75   # 查重相似度阈值，低于视为新工作项
-
 parser:
   max_file_mb: 200
   mineru:

@@ -5,6 +5,9 @@ import (
 	"time"
 )
 
+// StepKind Executor 类型标识（Registry 注册键；无代码编排只能组合已注册 Kind）。
+type StepKind string
+
 const (
 	StepKindSourceParse      StepKind = "source.parse"
 	StepKindDocumentExtract  StepKind = "document.extract"

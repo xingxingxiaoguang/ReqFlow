@@ -168,7 +168,6 @@ type TaskView struct {
 	SourceAssetID  string    `json:"source_asset_id,omitempty"`
 	SourceFilename string    `json:"source_filename,omitempty"`
 	Status         string    `json:"status"`
-	CurrentStep    int       `json:"current_step"`
 	ErrorMessage   string    `json:"error_message,omitempty"`
 	CreatedAt      time.Time `json:"created_at"`
 	UpdatedAt      time.Time `json:"updated_at"`
@@ -310,7 +309,7 @@ func taskView(task model.Task) TaskView {
 	return TaskView{ID: task.ID, WorkspaceID: task.WorkspaceID, DefinitionID: task.DefinitionID,
 		Type: task.Type, Title: task.Title, BatchID: task.BatchID, BatchOrdinal: task.BatchOrdinal,
 		BatchSize: task.BatchSize, SourceAssetID: task.SourceAssetID, SourceFilename: task.SourceFilename,
-		Status: task.Status, CurrentStep: task.CurrentStep,
+		Status: task.Status,
 		ErrorMessage: task.ErrorMessage, CreatedAt: task.CreatedAt, UpdatedAt: task.UpdatedAt,
 		StartedAt: task.StartedAt, FinishedAt: task.FinishedAt}
 }

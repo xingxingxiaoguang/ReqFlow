@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"reflect"
-	"regexp"
 	"strconv"
 	"strings"
 
@@ -75,16 +74,6 @@ type Config struct {
 		IndexPrefix string `yaml:"index_prefix" env:"REQFLOW_OPENSEARCH_INDEX_PREFIX"`
 		TimeoutMs   int    `yaml:"timeout_ms"   env:"REQFLOW_OPENSEARCH_TIMEOUT_MS"`
 	} `yaml:"opensearch"`
-
-	Match struct {
-		DuplicateThreshold float64 `yaml:"duplicate_threshold" env:"REQFLOW_MATCH_DUPLICATE_THRESHOLD"`
-	} `yaml:"match"`
-
-	FTS struct {
-		// TSConfig PG 全文检索分词配置（表达式索引与查询两侧必须一致）。
-		// simple：按空白切词（中文不分词）；中文场景建议安装 zhparser/pg_jieba 扩展后配置。
-		TSConfig string `yaml:"ts_config" env:"REQFLOW_FTS_TS_CONFIG"`
-	} `yaml:"fts"`
 
 	Parser struct {
 		MaxFileMB int `yaml:"max_file_mb" env:"REQFLOW_PARSER_MAX_FILE_MB"`
@@ -213,9 +202,6 @@ func applyDefaults(cfg *Config) {
 	if cfg.Workspace.BlobDir == "" {
 		cfg.Workspace.BlobDir = "./data/blobs"
 	}
-	if cfg.FTS.TSConfig == "" {
-		cfg.FTS.TSConfig = "simple"
-	}
 	if cfg.Embedding.RerankModel == "" {
 		cfg.Embedding.RerankModel = "BAAI/bge-reranker-v2-m3"
 	}
@@ -254,10 +240,6 @@ func (c *Config) Validate() (errs, warns []string) {
 	}
 	if (strings.TrimSpace(c.OpenSearch.Username) == "") != (c.OpenSearch.Password == "") {
 		errs = append(errs, "opensearch.username 与 opensearch.password 必须同时配置或同时留空")
-	}
-	// fts.ts_config 会拼进索引与查询 SQL（表达式两侧），必须是合法的文本搜索配置标识
-	if !regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_.]{0,62}$`).MatchString(c.FTS.TSConfig) {
-		errs = append(errs, fmt.Sprintf("fts.ts_config = %q 非法（须为 PG 文本搜索配置标识，如 simple / zhparser）", c.FTS.TSConfig))
 	}
 	if c.LLM.APIKey == "" {
 		warns = append(warns, "llm.api_key 未配置：需求文档 LLM 分析不可用（其余功能不受影响）")

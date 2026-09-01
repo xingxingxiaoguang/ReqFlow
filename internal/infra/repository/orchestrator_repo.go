@@ -351,8 +351,8 @@ func insertTaskExecution(tx *gorm.DB, execution *port.TaskExecutionCreate, now t
 	if err := tx.Exec(`INSERT INTO tasks
 		(id, workspace_id, definition_id, definition_snapshot, type, title,
 		 batch_id, batch_ordinal, batch_size, source_asset_id, source_filename,
-		 status, current_step, created_at, updated_at)
-		VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)`,
+		 status, created_at, updated_at)
+		VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		task.ID, task.WorkspaceID, task.DefinitionID, task.DefinitionSnapshot,
 		task.Type, task.Title, strPtr(task.BatchID), task.BatchOrdinal, task.BatchSize,
 		strPtr(task.SourceAssetID), task.SourceFilename, task.Status,
@@ -507,7 +507,7 @@ func (r *PipelineRepo) StartTask(ctx context.Context, taskID string) error {
 	now := time.Now()
 	result := r.db.WithContext(ctx).Exec(`UPDATE tasks
 		SET status = ?, started_at = COALESCE(started_at, ?), finished_at = NULL,
-			error_message = NULL, updated_at = ?
+			error_message = '', updated_at = ?
 		WHERE id = ? AND definition_id IS NOT NULL AND status = ?`,
 		model.TaskStatusRunning, now, now, taskID, model.TaskStatusPending)
 	return transitionResult(result)
@@ -536,7 +536,7 @@ func (r *PipelineRepo) RequestTaskPause(ctx context.Context, taskID string) erro
 func (r *PipelineRepo) ResumeTask(ctx context.Context, taskID string) error {
 	return r.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		now := time.Now()
-		result := tx.Exec(`UPDATE tasks SET status = ?, finished_at = NULL, error_message = NULL, updated_at = ?
+		result := tx.Exec(`UPDATE tasks SET status = ?, finished_at = NULL, error_message = '', updated_at = ?
 			WHERE id = ? AND definition_id IS NOT NULL AND status = ?`,
 			model.TaskStatusRunning, now, taskID, model.TaskStatusPaused)
 		if err := transitionResult(result); err != nil {
@@ -558,7 +558,7 @@ func (r *PipelineRepo) RetryStep(ctx context.Context, taskID, stepID string) err
 		if err := transitionResult(result); err != nil {
 			return err
 		}
-		result = tx.Exec(`UPDATE tasks SET status = ?, finished_at = NULL, error_message = NULL, updated_at = ?
+		result = tx.Exec(`UPDATE tasks SET status = ?, finished_at = NULL, error_message = '', updated_at = ?
 			WHERE id = ? AND status = ?`, model.TaskStatusRunning, now, taskID, model.TaskStatusFailed)
 		return transitionResult(result)
 	})
@@ -667,7 +667,7 @@ func (r *PipelineRepo) CompleteTask(ctx context.Context, taskID string, outputs 
 				return err
 			}
 		}
-		return tx.Exec(`UPDATE tasks SET status = ?, finished_at = ?, error_message = NULL, updated_at = ? WHERE id = ?`,
+		return tx.Exec(`UPDATE tasks SET status = ?, finished_at = ?, error_message = '', updated_at = ? WHERE id = ?`,
 			model.TaskStatusSucceeded, now, now, taskID).Error
 	})
 }
@@ -693,10 +693,6 @@ func (r *PipelineRepo) ClaimStep(ctx context.Context, owner string, leaseUntil t
 			WHERE id = ? AND status = ?`, model.StepRunRunning, owner, leaseUntil, now,
 			row.ID, model.StepRunQueued)
 		if err := transitionResult(result); err != nil {
-			return err
-		}
-		if err := tx.Exec(`UPDATE tasks SET current_step = ?, updated_at = ? WHERE id = ?`,
-			row.Ordinal, now, row.TaskID).Error; err != nil {
 			return err
 		}
 		row.Status, row.Attempt, row.LeaseOwner, row.LeaseUntil = model.StepRunRunning, row.Attempt+1, owner, &leaseUntil

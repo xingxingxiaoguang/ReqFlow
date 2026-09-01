@@ -16,7 +16,6 @@ export interface V2Task {
   source_asset_id?: string
   source_filename?: string
   status: V2TaskStatus
-  current_step: number
   error_message?: string
   created_at: string
   updated_at: string

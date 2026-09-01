@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -16,6 +17,16 @@ const (
 	MaxTaskDefinitionSteps = 64
 	MaxTaskDefinitionPorts = 32
 )
+
+// fieldKeyPattern 平台标识符白名单：小写字母开头的 snake_case（≤63 字符）。
+// 流程 key、端口名、字段 key 共用同一语法——标识符会被拼进 SQL 与索引名等
+// 运行时位置，注入面在形状层统一收口。
+var fieldKeyPattern = regexp.MustCompile(`^[a-z][a-z0-9_]{0,62}$`)
+
+// IsValidIdentifier 平台标识符合法性（见 fieldKeyPattern）。
+func IsValidIdentifier(s string) bool {
+	return fieldKeyPattern.MatchString(s)
+}
 
 var validV2StepKinds = map[model.StepKind]bool{
 	model.StepKindSourceParse: true, model.StepKindDocumentExtract: true,

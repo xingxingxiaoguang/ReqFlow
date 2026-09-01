@@ -84,8 +84,8 @@ func (s *DatasetService) CreateDataset(ctx context.Context, in CreateDatasetInpu
 	dataset := &model.Dataset{
 		WorkspaceID: strings.TrimSpace(in.WorkspaceID),
 		Name:        name, Description: strings.TrimSpace(in.Description),
-		Purpose: in.Purpose, Type: string(in.Purpose),
-		SchemaID: schema.ID, Schema: string(schema.JSONSchema),
+		Purpose: in.Purpose,
+		SchemaID: schema.ID,
 		KeyFields: append([]string(nil), in.KeyFields...),
 		Status:    model.DatasetStatusActive,
 	}
@@ -209,7 +209,7 @@ func (s *DatasetService) prepareBatchItems(ctx context.Context, batchID string,
 		items = append(items, model.DatasetItem{
 			DatasetID: dataset.ID, BatchID: batch.ID,
 			Fields: string(fields), ItemKey: itemKey, Fingerprint: fingerprint,
-			Provenance: string(provenance), SourceTaskID: batch.SourceTaskID,
+			Provenance: string(provenance),
 		})
 	}
 

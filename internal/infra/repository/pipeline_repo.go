@@ -54,12 +54,11 @@ func (r *PipelineRepo) CreateAppendDataset(ctx context.Context, dataset *model.D
 		return fmt.Errorf("序列化 key_fields: %w", err)
 	}
 	return r.db.WithContext(ctx).Exec(`INSERT INTO datasets
-		(id, workspace_id, type, purpose, name, schema_id, schema, key_fields,
-		 description, tags, source_task_id, status, item_count, current_seq,
-		 schema_version, extra, created_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?::jsonb, ?::jsonb, ?, '[]', NULL, ?, 0, 0, 1, '{}', ?, ?)`,
-		dataset.ID, dataset.WorkspaceID, dataset.Type, dataset.Purpose, dataset.Name,
-		dataset.SchemaID, dataset.Schema, string(keyFields), dataset.Description,
+		(id, workspace_id, purpose, name, schema_id, key_fields,
+		 description, status, item_count, current_seq, created_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?::jsonb, ?, ?, 0, 0, ?, ?)`,
+		dataset.ID, dataset.WorkspaceID, dataset.Purpose, dataset.Name,
+		dataset.SchemaID, string(keyFields), dataset.Description,
 		dataset.Status, dataset.CreatedAt, dataset.UpdatedAt).Error
 }
 
@@ -289,7 +288,7 @@ func (r *PipelineRepo) commitDatasetBatch(ctx context.Context, batchID, payloadH
 			keys[i] = item.ItemKey
 		}
 		var conflict string
-		if err := tx.Model(&datasetItemRow{}).Select("item_key").
+		if err := tx.Model(&pipelineDatasetItemRow{}).Select("item_key").
 			Where("dataset_id = ? AND item_key IN ?", dataset.ID, keys).
 			Limit(1).Scan(&conflict).Error; err != nil {
 			return err
@@ -307,17 +306,17 @@ func (r *PipelineRepo) commitDatasetBatch(ctx context.Context, batchID, payloadH
 			item.DatasetID = dataset.ID
 			item.BatchID = batch.ID
 			item.CommitSeq = from + int64(i)
-			item.CreatedAt, item.UpdatedAt = now, now
+			item.CreatedAt = now
 			if strings.TrimSpace(item.Provenance) == "" {
 				item.Provenance = "{}"
 			}
 			if err := tx.Exec(`INSERT INTO dataset_items
-				(id, dataset_id, batch_id, fields, item_key, fingerprint, source_task_id,
-				 commit_seq, provenance, created_at, updated_at)
-				VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?, ?::jsonb, ?, ?)`,
+				(id, dataset_id, batch_id, fields, item_key, fingerprint,
+				 commit_seq, provenance, created_at)
+				VALUES (?, ?, ?, ?::jsonb, ?, ?, ?, ?::jsonb, ?)`,
 				item.ID, item.DatasetID, item.BatchID, item.Fields, item.ItemKey,
-				item.Fingerprint, nullableUUID(item.SourceTaskID), item.CommitSeq,
-				item.Provenance, item.CreatedAt, item.UpdatedAt).Error; err != nil {
+				item.Fingerprint, item.CommitSeq,
+				item.Provenance, item.CreatedAt).Error; err != nil {
 				return err
 			}
 		}
@@ -413,11 +412,9 @@ func (row pipelineSchemaRow) toModel() *model.DatasetSchemaDefinition {
 type pipelineDatasetRow struct {
 	ID          string               `gorm:"column:id;primaryKey"`
 	WorkspaceID string               `gorm:"column:workspace_id"`
-	Type        string               `gorm:"column:type"`
 	Purpose     model.DatasetPurpose `gorm:"column:purpose"`
 	Name        string               `gorm:"column:name"`
 	SchemaID    string               `gorm:"column:schema_id"`
-	Schema      string               `gorm:"column:schema;type:jsonb"`
 	KeyFields   string               `gorm:"column:key_fields;type:jsonb"`
 	Description string               `gorm:"column:description"`
 	Status      string               `gorm:"column:status"`
@@ -433,8 +430,8 @@ func (row pipelineDatasetRow) toModel() *model.Dataset {
 	var keyFields []string
 	_ = json.Unmarshal([]byte(row.KeyFields), &keyFields)
 	return &model.Dataset{
-		ID: row.ID, WorkspaceID: row.WorkspaceID, Type: row.Type, Purpose: row.Purpose,
-		Name: row.Name, SchemaID: row.SchemaID, Schema: row.Schema, KeyFields: keyFields,
+		ID: row.ID, WorkspaceID: row.WorkspaceID, Purpose: row.Purpose,
+		Name: row.Name, SchemaID: row.SchemaID, KeyFields: keyFields,
 		Description: row.Description, Status: row.Status, ItemCount: row.ItemCount,
 		CurrentSeq: row.CurrentSeq, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
 	}
@@ -471,17 +468,15 @@ func (row pipelineBatchRow) toModel() *model.DatasetBatch {
 }
 
 type pipelineDatasetItemRow struct {
-	ID           string    `gorm:"column:id;primaryKey"`
-	DatasetID    string    `gorm:"column:dataset_id"`
-	BatchID      string    `gorm:"column:batch_id"`
-	Fields       string    `gorm:"column:fields;type:jsonb"`
-	ItemKey      string    `gorm:"column:item_key"`
-	Fingerprint  string    `gorm:"column:fingerprint"`
-	CommitSeq    int64     `gorm:"column:commit_seq"`
-	Provenance   string    `gorm:"column:provenance;type:jsonb"`
-	SourceTaskID *string   `gorm:"column:source_task_id"`
-	CreatedAt    time.Time `gorm:"column:created_at"`
-	UpdatedAt    time.Time `gorm:"column:updated_at"`
+	ID          string    `gorm:"column:id;primaryKey"`
+	DatasetID   string    `gorm:"column:dataset_id"`
+	BatchID     string    `gorm:"column:batch_id"`
+	Fields      string    `gorm:"column:fields;type:jsonb"`
+	ItemKey     string    `gorm:"column:item_key"`
+	Fingerprint string    `gorm:"column:fingerprint"`
+	CommitSeq   int64     `gorm:"column:commit_seq"`
+	Provenance  string    `gorm:"column:provenance;type:jsonb"`
+	CreatedAt   time.Time `gorm:"column:created_at"`
 }
 
 type pipelineCursorRow struct {
@@ -509,8 +504,8 @@ func (row pipelineDatasetItemRow) toModel() model.DatasetItem {
 	return model.DatasetItem{
 		ID: row.ID, DatasetID: row.DatasetID, BatchID: row.BatchID,
 		Fields: row.Fields, ItemKey: row.ItemKey, Fingerprint: row.Fingerprint,
-		CommitSeq: row.CommitSeq, Provenance: row.Provenance, SourceTaskID: strVal(row.SourceTaskID),
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,
+		CommitSeq: row.CommitSeq, Provenance: row.Provenance,
+		CreatedAt: row.CreatedAt,
 	}
 }
 

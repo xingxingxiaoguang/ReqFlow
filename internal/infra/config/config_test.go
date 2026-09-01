@@ -10,7 +10,6 @@ import (
 func TestValidateRejectsPartialOpenSearchCredentials(t *testing.T) {
 	var cfg Config
 	cfg.Database.DSN = "postgres://example"
-	cfg.FTS.TSConfig = "simple"
 	cfg.OpenSearch.Username = "admin"
 
 	errs, _ := cfg.Validate()
@@ -54,7 +53,6 @@ func TestLoadAppliesWorkerDefaultsAndEnvironmentOverride(t *testing.T) {
 func TestValidateRejectsUnsafeWorkerConcurrency(t *testing.T) {
 	var cfg Config
 	cfg.Database.DSN = "postgres://example"
-	cfg.FTS.TSConfig = "simple"
 	applyDefaults(&cfg)
 	cfg.Worker.Concurrency = 129
 
