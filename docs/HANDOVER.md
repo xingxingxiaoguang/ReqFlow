@@ -3,7 +3,7 @@
 > 面向下一个接手开发的同学。本文只回答四件事：**项目现在是什么、怎么跑起来、改代码必须知道的上下文、接手后干什么**。
 > 产品定位、方向性决策与「重复人工任务 → AI 驱动 Task」的抽离范式见 [PRODUCT.md](./PRODUCT.md)；技术实现细节以本文件为准。
 
-> **2026-08-30 交接状态**：异构数据管线 V2 的阶段 A、B、C、D、E、F 已完成。当前系统以“流程定义 → 派生任务 → 运行任务”为产品主线，五种模板只是可编辑流程起点，同时支持空白编排；不保留旧数据库、旧 API、旧前端或旧任务流程兼容。完整设计和阶段验收见 [DATA_PIPELINE_V2_PLAN.md](./DATA_PIPELINE_V2_PLAN.md)。本文中标为“Legacy”的内容只用于识别待删除代码，不是后续扩展入口。
+> **2026-09-02 交付状态（v1.0.0）**：阶段 A~F 全部完成后已收敛为 v1 稳定版交付。产品主线固化为两条内置流程——**数据清洗入库**与**建立检索索引**（索引在数据集上隐式发起）；自由流程编排界面已隐藏（代码保留）。数字大脑为只读顾问，内置三个 Skill。新增**开发契约文档 [CONTRACTS.md](./CONTRACTS.md)**（架构路线、两条流程的实现契约、新流程/新工具开发规范），改代码前先读它。旧的《DATA_PIPELINE_V2_PLAN.md》已删除（全部落地，git 历史可溯）。
 
 ---
 
@@ -14,15 +14,15 @@
 - **V2 API 已闭环**：`/api/v2` 已开放 Asset/Schema/Profile/Dataset/Batch、TaskDefinition/Task、Retrieval/Analysis/Artifact/Catalog/Archive；Worker 已注册清洗、增量派生、检索构建、通用分析、分析发布、制品渲染和图谱构建 Executor。
 - **Stage C 后端已闭环**：内容寻址解析、Schema 驱动抽取、确定性转换/校验、不可变人工审核资源、幂等原子发布、完整 provenance 和 attempt fencing 已打通真实 HTTP → PostgreSQL → Worker 集成测试。
 - **输入绑定已收口**：Task API 可用 `resource_id` 或 Dataset `resource_alias` 定位输入；应用层验证资源存在性，Alias 只在创建时解析一次，`dataset_boundary` 自动固化 `through_seq`，Retrieval Snapshot 自动固化 `source_seq`。
-- **V2 前端已完成切换**：`/definitions` 负责流程目录，`/definitions/new` 负责空白/模板起点编排，`/tasks/new?definition_id=...` 负责从已发布流程派生任务，`/tasks` 负责运行目录；数据集、元数据、检索、制品和归档也均只使用 V2 API。
+- **V2 前端已完成切换**：一级路由为数字大脑 `/agent`（默认首页）、数据管理 `/datasets`、任务管理 `/tasks`、归档管理 `/archives`；流程设计器 `/definitions*` 在 v1 隐藏（路由重定向到 /tasks，页面文件保留但不可达）。数据集、检索、制品和归档均只使用 V2 API。
 - **流程与任务边界已收口**：模板仅生成可编辑 Definition 起点；发布流程只创建 `TaskDefinition`，不创建 Task；Task 只能从 active Definition 派生，创建时冻结 Definition Snapshot、Resource Binding/Boundary 和 StepRun。
 - **Stage D 已闭环**：`data.query_derive` 按 Base Dataset Boundary + PipelineCursor 增量读取，确定性展开语义单元并生成标准 Query Item；Query Batch、Dataset 位点、Outbox 和 Cursor 在同一事务提交，失败不推进 Cursor。
 - **Stage E 已闭环**：不可变 RetrievalProfile、`retrieval.build` 状态机、OpenSearch BM25、pgvector Chunk、查询级加权 RRF/召回数、SiliconFlow rerank 和 KnowledgeScope Agent 工具已经落地。
 - **检索分数语义（2026-09-01 起）**：RRF 融合分保留原始量纲（≈1/(k+rank)，衡量双路共识；不归一化——历史版本除以"理论满分"会把分数压进 0.5..1.0 窄带，阈值形同虚设），也不参与阈值过滤；**用户可见的最终分数 = rerank 分**（bge-reranker 校准相关性），`score_threshold` 只过滤 rerank 后的最终分；reranker 未配置时优雅降级为纯融合（策略回显 `rerank_enabled=false`，阈值自动归零）。前端默认 rerank 开、阈值 0.3（实测相关命中 ≈0.4..0.9、噪声 ≤0.06；0.5 会误杀"预装条件"类中等相关查询）。
 - **Stage F 已闭环**：不可变 AnalysisProfile/AnalysisResult/Artifact，通用分析、资源审核、分析发布、制品渲染和图谱 Manifest Executor 已落地；五种无代码模板由 Profile + TaskDefinition 组合，不存在业务专用 Runner。
 - **可复用底座**：LLM Provider、Agent Loop、工具调用、会话序列化、`ask_human`、SSE persist-then-publish 和前端重连机制继续复用，但要通过 V2 Executor/Orchestrator 接入。
-- **下一步**：进入上线前门禁，补业务标注检索评测集、部署 OpenSearch、执行容量/故障恢复测试，并持续删除未被 V2 路由引用的 Legacy 代码。
-- **仓库**：`/Users/xxxg/demo/ReqFlow`。操作前始终先看 `git status --short`，不要回退不属于当前任务的修改。
+- **下一步**：上线前门禁（认证授权、容量/故障恢复测试、Legacy 删除与迁移压平）。新增流程/新工具的开发规范见 [CONTRACTS.md](./CONTRACTS.md)。
+- **仓库**：`/Users/xxxg/demo/ReqFlow`（主分支由 AI 开发占用）；v1 交付分支 `release/v1.0.0`（worktree `/Users/xxxg/demo/ReqFlow-v1.0.0`），8080 常驻服务跑该分支二进制，PID 记录在 worktree `logs/reqflow-v1.0.0.pid`。操作前始终先看 `git status --short`，不要回退不属于当前任务的修改。
 
 ## 2. 怎么接手：跑起来
 
@@ -89,7 +89,14 @@ internal/domain  实体模型 + 纯领域逻辑（零三方依赖，仅标准库
 
 | 位置 | 职责与当前状态 |
 |---|---|
-| `docs/DATA_PIPELINE_V2_PLAN.md` | V2 架构、数据模型、API 草案、阶段验收和完成定义；实现取舍以此为准 |
+| `docs/CONTRACTS.md` | **v1 开发契约与规范（新代码必读）**：架构/技术路线、两条固定流程的实现契约、新流程与新工具开发清单、种子契约 |
+| `internal/app/orchestrator/builtin_definitions.go` | 两条固定流程种子（data_clean_import / retrieval_index），按 (workspace,key) 幂等 |
+| `internal/app/platformagent/tools.go` | 数字大脑 4 个只读工具（platform_guide / list_workflows / list_tasks / query_data）；query_data 默认 rerank+阈值 0.3+权重 0.4/0.6 |
+| `internal/app/platformagent/builtin_skills.go` | 三个内置 Skill 种子（platform-guide / query-analysis / create-skill），启动 upsert 刷新 |
+| `cmd/reqflow/starter_kit.go` | 交付种子：DH1 示例知识库四件套（结构/抽取规则/索引规则/空数据集），按名称幂等 |
+| `web/src/pages/v2/DatasetIndexDrawer.tsx` | 数据集索引抽屉：建索引任务、快照列表/筛选/落后提醒/删除；内嵌规则预览 |
+| `web/src/pages/v2/{RetrievalProfileDetailModal,ExtractionProfileDetailModal,SchemaDetailModal}.tsx` | 规则/结构的预览+删除弹窗（后端 409 防护文案透出） |
+| `web/src/pages/v2/datasetPurpose.ts` | 用途枚举与 `DATASET_PURPOSE_FIXED='query'`（v1 焊死为搜索与问答） |
 | `internal/domain/model/asset.go` | Asset、AssetSet、ParsedDocument、DocumentBlock，以及一次 Step 输出的 ParsedDocumentSet Manifest |
 | `internal/domain/model/dataset_pipeline.go` | DatasetSchemaDefinition、DatasetBatch、Alias、provenance、PipelineCursor，以及 ExtractionProfile/Unit/RecordDraft Manifest |
 | `internal/domain/model/resource.go` | ResourceType、Task Port、TaskResourceBinding、Dataset/Retrieval/ParsedDocuments/RecordDrafts Boundary |
@@ -132,9 +139,9 @@ internal/domain  实体模型 + 纯领域逻辑（零三方依赖，仅标准库
 | `internal/infra/database/migrations/0015_transform_validation_manifests.*.sql` | `data.transform`/`data.validate` 不可变 Manifest、记录 Diff、问题和分类结果 |
 | `internal/infra/database/migrations/0016_approved_record_sets.*.sql` | 不可变 ApprovedRecordSet、全量审核决定、最终字段与 provenance |
 | `internal/infra/repository/pipeline_integration_test.go` | PostgreSQL 真机验证 Batch、Outbox、Task 快照和资源绑定 |
-| `web/src/pages/v2/V2DefinitionNew.tsx` | 独立流程编排器：空白或模板起点、类型化数据连接、Executor 专用配置、Definition 输出与发布 |
+| `web/src/pages/v2/V2DefinitionNew.tsx` | （v1 隐藏）独立流程编排器：空白或模板起点、类型化数据连接、Executor 专用配置、Definition 输出与发布 |
 | `web/src/pages/v2/workflowBlocks.ts` | 前端可编排 Executor 目录、输入输出资源类型、默认配置与业务说明；必须与后端 Registry 合同同步 |
-| `web/src/pages/v2/V2Definitions.tsx` | 流程定义目录；展示 active Definition 并提供“创建任务”入口 |
+| `web/src/pages/v2/V2Definitions.tsx` | （v1 隐藏）流程定义目录；展示 active Definition 并提供“创建任务”入口 |
 | `web/src/pages/v2/NoCodeTaskNew.tsx` | 独立任务派生页：选择 active Definition，按端口绑定本次资源，仅创建或创建并运行 |
 | `web/src/pages/v2/V2Tasks.tsx` | V2 任务运行目录；展示来源流程、状态和运行操作 |
 | `web/src/pages/v2/SchemaFieldEditor.tsx` | Schema 可视化字段编辑器；面向非技术用户，不把 JSON 作为主界面 |
@@ -277,7 +284,9 @@ Create immutable Schema
 
 ### 4.3 API 速查
 
-V2 API 已挂在 `/api/v2`：Asset/Schema/Profile/Dataset/Batch、TaskDefinition/Task、Retrieval/Analysis/Artifact/Catalog/Archive 等产品能力均已开放。Handler 只调用对应 V2 app service，不回调 Legacy TaskManager，也不双写；完整合同以路由实现和 [V2 方案 §11](./DATA_PIPELINE_V2_PLAN.md#11-api-v2-合同) 为准。
+V2 API 已挂在 `/api/v2`：Asset/Schema/Profile/Dataset/Batch、TaskDefinition/Task、Retrieval/Analysis/Artifact/Catalog/Archive 等产品能力均已开放。Handler 只调用对应 V2 app service，不回调 Legacy TaskManager，也不双写；完整合同以路由实现（`internal/infra/httpgin/server.go`）和 [CONTRACTS.md](./CONTRACTS.md) 为准。
+
+v1 新增要点：`DELETE /api/v2/schemas|extraction-profiles|retrieval-profiles|retrieval-snapshots/:id`（引用防护 409，见 CONTRACTS §2.4）；创建 Task 支持 `step_configs`（运行期规则注入，allowlist 限 document.extract / retrieval.build）；归档查询仍返回 tasks+datasets，但前端仅消费数据集。
 
 旧 `/api/tasks` 端点已删除；任务执行只通过 `/api/v2`。
 
@@ -307,6 +316,16 @@ V2 API 已挂在 `/api/v2`：Asset/Schema/Profile/Dataset/Batch、TaskDefinition
 - MinerU 四步解析：**PUT 预签名必须裸字节不带 Content-Type**（会 SignatureDoesNotMatch）
 - 工具 Spec 的 Parameters 是 JSON Schema 字符串——手拼容易漏 `"properties":{` 的开括号，非法 JSON 会连带会话序列化与 LLM 请求一起挂；tools_test 有 `json.Valid` 校验防再犯
 
+**v1.0.0 收敛期新增（2026-09-02）**：
+- **模板/定义前端合同必须成对改**：发布步骤缺 `dataset_boundary` 输出而前端 workflowBlocks 要求它 → fork 模板报「不匹配 Executor 端口合同」。改流程合同先跑 workflowBlocks 同步检查。
+- **GORM 列名≠结构字段名**：retrieval_profiles 的 jsonb 列是 `lexical_config/vector_config/fusion_config`，裸 SQL 按 `lexical` 写会 500。查库核对 `\d 表名` 再动手。
+- **`CreateExecutionInput` 的 JSONB 归一化**：任务快照落库前会重新序列化（键序/空白规范）——单测断言快照 JSON 字面量时必须比对 canonical 形态，不能比对原始输入字符串。
+- **数字大脑工具错误要可自愈**：query_data 在「有 query 无 dataset」时报错必须携带 `name(ID)` 候选清单（唯一候选直接自动锁定）——否则模型会空参死循环重试（上线初期真实事故）。
+- **antd 5 Select/Modal 自动化测试**：下拉 option 渲染在 portal，role locator 常报 hidden；用 `evaluate` 内 `dispatchEvent(mousedown/mouseup)+click` 点 `.ant-select-item-option` 最稳。Popconfirm 确认按钮同理。
+- **Space.Compact 内嵌 `Form.Item noStyle` + `Select style={{flex:1}}`**：多按钮紧凑行的可靠写法；不要用 `calc(100% - Npx)` 手算宽度（按钮数量一变就破）。
+- **种子与共享库**：开发/交付共用一个 PG 实例时，种子必须按业务键幂等（同名跳过），否则每次重启翻倍；v1 全部种子已按此实现并有冷启动+二次启动验证。
+- **删除防护统一 409**：哨兵错误（`ErrProfileInUse`/`ErrSchemaInUse`）在 app 层定义，handler `errors.Is` 映射；错误文案必须给出「引用了多少、去哪解除」。
+
 ### 4.6 LLM 层与 pi 的传承（改 loop/协议时保持同步）
 
 port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 与过程工具均移植自 **pi**（https://github.com/earendil-works/pi，MIT License, Copyright (c) 2025 Mario Zechner，源码参考副本在 `/Users/weighingzhang/demo/pi`）。各文件头注有对应源文件映射。移植要点：
@@ -327,129 +346,33 @@ port/llm.go 消息模型、infra/llm 双适配器、app/agent loop 与过程工�
 3. 缺 finish_reason 的兼容端点按「有无工具调用」**推断**终止（pi 对声明支持 finish_reason 的端点直接报错；我们面向杂牌兼容端点从宽）
 4. 不移植：模型注册表/厂商 compat 矩阵/steering 消息队列/beforeToolCall 钩子/prepareNextTurn 换模型/并行工具执行/deferred 响应——需要时按 pi 源码对应段落补
 
-## 5. 接手后干什么（按优先级）
+## 5. 历史里程碑与当前现场
 
-### 5.1 ✅ Orchestrator V2 阶段 B 后端已完成
+### 5.1 历史里程碑（全部 ✅，细节看 git 历史与各阶段验收记录）
 
-目标：让 StepRun 从“已落库”变成“可被持久化 Worker 调度、恢复和完成”，但暂时不接具体清洗业务。
+1. **Stage B**：Executor Registry、Step 输出绑定、Scheduler、PostgreSQL Worker/lease/checkpoint/retry、任意位置 Human Gate、两阶段暂停。
+2. **Stage B+ API**：`/api/v2` 基础资源与任务读模型；SSE 直播数据库快照 diff，Broker 只做通知。
+3. **Stage C**：数据清洗纵向切片——`ParsedDocumentSet → RecordDraftSet → TransformedRecordSet → ValidationResultSet → ApprovedRecordSet → DatasetBatch` 全部一等资源，真实浏览器验收通过。
+4. **Stage D**：`data.query_derive` 增量派生 + PipelineCursor CAS 推进。
+5. **Stage E**：OpenSearch BM25 + pgvector + 加权 RRF + rerank；KnowledgeScope Agent 工具。
+6. **Stage F**：五种无代码模板、自由编排、流程/任务分离、Schema/Profile 可视化表单。
 
-已完成：
+### 5.2 v1.0.0 收敛交付（2026-09-02，当前现场）
 
-1. `internal/app/orchestrator` 已定义 `StepExecutor`、`StepRunContext`、`StepResult`、CheckpointWriter 和 ProgressReporter；Registry 按 Kind 唯一注册，`human.review` 是内建 Gate，禁止注册成 Worker Executor。
-2. 新增 `step_resource_bindings`，保存每个 StepRun 的输出端口资源。下游 `$step.<step_id>.<port>` 必须从这里解析，不能塞回 `step_runs.progress`。
-3. 扩展 `port.OrchestratorRepo`：领取 queued Step、续 lease、保存 checkpoint、完成/失败 Step、写 Step 输出、回收过期 lease。
-4. PostgreSQL 领取使用 `FOR UPDATE SKIP LOCKED`。`lease_owner + lease_until` 是并发所有权，更新必须带 owner 条件，防止过期 Worker 覆盖新 Worker 状态。
-5. Scheduler 根据 definition snapshot 和 StepRun 状态计算 ready 集合：依赖全 succeeded 才能 queued；`human.review` 进入 awaiting，不交给普通 Worker。
-6. Step 成功后在一个事务内写输出绑定并更新 StepRun；随后调度下游。所有 Step 成功后，按 `output_bindings` 固化 Task 输出端口并结束 Task。
-7. pause 通过 `pausing` 过渡态取消执行并保留有效 lease 写最后 checkpoint；resume 重新计算输入哈希后排队。Worker 崩溃由 lease 到期恢复，不使用 Legacy `TaskManager.running` 作为事实源。
+- **流程收敛**：流程设计器/目录隐藏，固定两条内置流程（`data_clean_import` 六步、`retrieval_index` 单步）由启动种子创建；抽取/索引规则不在定义里写死，经 `step_configs` 在任务创建时注入（运行级校验，allowlist 见 `definition_service.go`）。
+- **数据集为中心**：创建数据集统一用途 `query`；字段结构/抽取规则/索引规则支持预览与带防护删除；数据集「索引」抽屉提供建索引、快照筛选、落后提醒与删除。
+- **数字大脑只读化**：4 个只读工具（platform_guide/list_workflows/list_tasks/query_data），无任何写工具；三个内置 Skill（platform-guide/query-analysis/create-skill）启动 upsert；query_data 携带推荐检索参数（rerank 默认开、阈值 0.3、权重 0.4/0.6、top 8）。
+- **归档收敛**：归档页仅数据集。
+- **交付链路**：`make start` 一键启动；种子=两流程+DH1 示例知识库四件套+三 Skill，全部幂等（冷启动与二次启动已实测）；验收环境用临时库（`REQFLOW_DATABASE_DSN`/`REQFLOW_SERVER_PORT` 覆盖）做过完整业务流验收。
 
-通用 Task Detail 已使用稳定快照形状接入；V2 Task 目录查询与 Legacy 物理表按 `definition_id` 隔离，生命周期写入仍只经过 RuntimeService。
+### 5.3 常见误区（持续有效）
 
-验收：
-
-- 同一 Step 不会被两个有效 lease 同时完成。
-- Worker 进程中断后可以从 checkpoint 恢复。
-- 同一个 Kind 的两个 Step 分别执行，输出不串。
-- Human Review 可以位于任意 DAG 位置。
-- Broker 丢事件或服务重启不影响数据库里的最终状态。
-
-### 5.2 ✅ V2 基础 API 与任务读模型已完成
-
-已挂 `/api/v2` 并由 PostgreSQL + `httptest` 集成测试打通：
-
-```text
-POST /schemas
-GET  /schemas/:id
-POST /datasets
-GET  /datasets/:id
-POST /datasets/:id/batches
-POST /batches/:id/commit
-POST /task-definitions
-POST /tasks
-GET  /tasks?workspace_id=&status=&limit=
-POST /tasks/:id/start|pause|resume
-GET  /tasks/:id
-GET  /tasks/:id/events
-GET  /pipeline-cursors?pipeline_key=&source_dataset_id=&target_dataset_id=
-GET  /datasets/:id/items?after_seq=&through_seq=
-```
-
-要求：
-
-- Handler 只调用 V2 app service，不调用 Legacy TaskManager 或 DatasetAdminService。
-- Schema/Profile 没有 PUT/PATCH；当前可视化创建器通过新资源承载结构或合同变化，不做原地兼容编辑。
-- 创建 Task 时 Dataset Alias 必须解析为具体 DatasetID，并固化 through_seq。
-- SSE 使用统一 `{task_id,data}` 帧形状，但 V2 直接每秒对数据库快照做 diff；这样跨进程 Worker、Broker 丢帧和重连都不影响恢复。后续若为降延迟加 Broker，只能作为唤醒信号，不能替代数据库快照。
-- V2 页面已经独立跑通并完成切流；继续删除无路由引用的 Legacy 页面、Handler 和模型，不做新旧双写。
-
-### 5.3 ✅ 第三个里程碑：产品规格清洗纵向切片
-
-目标流程：
-
-```text
-AssetSet → source.parse → document.extract → data.transform → data.validate
-→ human.review → data.publish → DatasetBatch
-```
-
-实现重点：
-
-- `BlobStore` port + 本地文件实现，Asset 按 SHA-256 去重。
-- Parser port 返回 ParsedDocument/DocumentBlock，不再返回整篇 string。
-- 每个 Asset 独立状态和 checkpoint，单文件失败不拖垮整批。
-- 每个稳定 ExtractionUnit 运行独立 Agent loop；原文读取/检索、草稿增删改查、服务端校验和显式完成均通过受约束工具执行，非阻塞工具错误会回到模型继续纠正。
-- 草稿工具参数由目标 JSON Schema 生成；候选记录必须带 Block 引用和逐字原文证据。任务详情默认折叠的模型运行面板实时展示思考、输出、工具参数、状态和错误回执。
-- 单位、日期、枚举、布尔和 item_key 使用确定性代码处理，不让 LLM 决定最终编码。
-- 审核 UI 展示置信度、校验结果、重复/冲突和 provenance。
-- `data.publish` 直接调用现有 V2 DatasetService/Batch 仓储，不重写提交事务。
-
-完成标准：第二次任务能向同一 Dataset 追加 Batch，且所有新 Item 都能追溯到 Asset/Block。
-
-纵向切片已经完整闭环：`ParsedDocumentSet → RecordDraftSet → TransformedRecordSet → ValidationResultSet → ApprovedRecordSet → DatasetBatch` 均为一等资源。审核 API 只接收逐条 approve/edit/exclude 决定，服务端生成资源并记录修改、排除、审核人和确认依据；`data.publish` 只消费 ApprovedRecordSet，按 StepRun 幂等创建 Batch，并在同一提交事务前验证当前 attempt。
-
-前端已完成 `/tasks` Task 目录、通用详情和审核工作台。ValidationResultSet API 聚合候选原值、字段置信度、转换 Diff、问题与来源锚点；前端按不可变 Schema 渲染类型化编辑控件并提交全量决定。2026-08-30 的真实浏览器验收完成了“编辑冲突记录 + 排除重复记录 → ApprovedRecordSet → Worker 原子发布 → SSE 收敛终态”，且发布 Item 保留完整审核 provenance。
-
-### 5.4 ✅ 第四个里程碑：Query Dataset 增量处理
-
-已落地 `data.query_derive` V2 Executor：输入是任务创建时固化的 Base Dataset
-`through_seq` 与目标 Query Dataset，配置从 TaskDefinition 快照读取。每个 Base Item
-可以作为一个语义单元，也可以通过 `semantic_units_field + unit_key_field` 一对多展开；
-标准输出字段为 `semantic_unit_key/source_item_id/source_fingerprint/title/aliases/definition/keywords/facets/source_refs`。
-
-PipelineCursor 以 `(pipeline_key, source_dataset_id, target_dataset_id)` 唯一定位。
-Query Batch 提交事务使用 Cursor 期望位点做 CAS，并在同一事务中完成 Dataset Item、
-Batch、Dataset 汇总、Outbox 和 Cursor 推进。PostgreSQL + V2 Worker 集成测试已经覆盖：
-第二批不重跑第一批、目标主键冲突时 Cursor 不前移、Query Item 能追溯到 Base Item 和 Asset/Block。
-
-这条链路不依赖 Legacy TaskManager、固定四步 Workflow 或旧任务状态；旧任务流程无需兼容。
-
-### 5.5 ✅ 第五、六个里程碑：混合检索和无代码业务任务
-
-顺序固定：
-
-1. [x] PipelineCursor + 基础 Dataset 增量派生 Query Dataset。
-2. [x] RetrievalProfile 校验和 RetrievalSnapshot 构建状态机。
-3. [x] OpenSearch BM25、pgvector Chunk、加权 RRF HybridSearchService 和可选 rerank。
-4. [x] `list_knowledge_sources/search_knowledge/get_knowledge_item` Agent 工具、KnowledgeScope 和审计。
-5. [x] `knowledge.analyze`、通用资源审核、`data.analysis_publish`、`artifact.render`、`graph.build`。
-6. [x] 数据清洗入库、精准 + 语义索引、Bug 分析、产品方案生成、知识图谱构建五种无代码模板。
-7. [x] 纯 V2 前端路由、任务目录/详情、Definition、Dataset、元数据、检索、Artifact 和归档恢复。
-8. [x] 模板降级为可编辑 Definition 起点，并支持从空白手动组合 Executor、连接类型化数据端口和选择流程输出。
-9. [x] 发布流程与创建任务彻底分离；Definition 目录提供创建任务入口，Task 目录展示来源流程。
-10. [x] Schema/Profile 改为可视化表单操作，非技术用户无需直接编写 JSON。
-
-业务差异只能进入不可变 Profile、资源绑定和 TaskDefinition；不要从 Legacy `internal/app/bug/doc.go` 恢复 BugRunner，也不要在 Orchestrator 核心状态机增加业务类型分支。
-
-### 5.6 当前现场状态和常见误区
-
-- 不假设工作区干净；每次接手先看 `git status --short`，不要用 reset/checkout 回退他人修改。
-- 本机开发库已经执行到 `0018`。如果迁移变化导致本地列不一致，直接重建开发数据库，不为未上线草稿数据追加兼容迁移。
-- `0012` 最终会被压平，不要围绕旧 `datasets.schema/schema_version`、`task_steps` 或 `metadata_registry` 设计新外键和新功能。
-- `DatasetService.CommitBatch` 当前逐条 INSERT，正确性优先。真实批量压测出现瓶颈后再改成参数化批量 SQL，必须保持同一事务与 seq 顺序。
-- `resource_id` 当前是通用 UUID，没有数据库级多态外键；资源类型和存在性应由 app service 校验。
-- 本机 `config.yaml` 的 OpenSearch、embedding 和 SiliconFlow rerank 已做真实连通与混合检索验证；配置值属于本地密钥，不得写入仓库。上线环境仍必须把 OpenSearch 和 rerank 连通性纳入健康检查与部署门禁。
-- 2026-08-30 无代码自由编排真实验收：从空白发布 Definition `20d9d641-de77-4229-af95-c38efa33bfda`，派生并立即运行 Task `1236c6e2-ceb7-4a10-80dd-94e4916d4c5b`，成功产出 Retrieval Snapshot `63aae631-0884-44dc-8d2f-8b5f037f08ec`；浏览器 console 为 0 error / 0 warning。
-- 上述验收固定了产品路径：`/definitions/new` 编排并发布 → `/tasks/new?definition_id=...` 绑定资源并派生 → `/tasks`/详情运行；不要再把三个动作合并回模板页。
-- 全仓 `make test`、V2 targeted tests 和 PostgreSQL integration tests 应保持全绿。
+- 不假设工作区干净；每次接手先看 `git status --short`，不要用 reset/checkout 回退他人修改。主分支 `main` 由另一 AI 开发占用，v1 工作只在 `release/v1.0.0` worktree 进行。
+- 迁移压平（删除 Legacy 表后重写 `0001`）是上线前动作，不要围绕旧 `datasets.schema/schema_version`、`task_steps` 或 `metadata_registry` 设计新外键和新功能。
+- `DatasetService.CommitBatch` 当前逐条 INSERT，正确性优先；出现瓶颈再改参数化批量 SQL，必须保持同一事务与 seq 顺序。
+- `resource_id` 是通用 UUID，无数据库级多态外键；资源类型和存在性由 app service 校验。
+- 向量维度 `vector(1024)` 是硬约束，换 embedding 模型/维度必须设计重建作业与 Snapshot 切换。
+- 全仓 `make test` 应保持全绿；改前端合同后 `pnpm build`（含 tsc）必须过。
 
 ## 6. 运维备忘
 
@@ -457,7 +380,8 @@ Batch、Dataset 汇总、Outbox 和 Cursor 推进。PostgreSQL + V2 Worker 集�
 - **迁移执行**：启动时自动跑（`database.auto_migrate: true`），SQL 编译进二进制，`schema_migrations` 记录已执行版本。新文件放 `internal/infra/database/migrations/NNNN_*.up.sql`，必须同时提供 `.down.sql`。
 - **V2 开发期重置**：当已在本地执行的 `0012_pipeline_v2_foundation` 发生破坏性修改时，先停服，然后删除**明确的 ReqFlow 开发数据库/数据卷**并重启全量迁移。不要只删 `schema_migrations` 某行后在半旧 Schema 上重放；当前无生产数据，不做回填和兼容。
 - **迁移压平**：V2 API、Worker 和首条清洗链路切流后，删除 Legacy 表及应用代码，将最终数据库形状重写为新 `0001_v2_init`；不向未上线的历史迁移支付兼容成本。
-- **索引现状**：Legacy `dataset_items.embedding` 和 PostgreSQL FTS 仍服务当前页面；V2 Retrieval 只有表和领域形状，OpenSearch 尚未加入 Compose，不存在可运维的混合索引。换 embedding 模型/维度前先补 Retrieval 重建作业和 Snapshot 双写切换。
+- **索引现状**：OpenSearch 已入 Compose（`reqflow-opensearch`，单节点免认证，仅限内网/本机）；物理 BM25 索引按（数据集, 规则）在首次索引任务时惰性创建。换 embedding 模型/维度前先补 Retrieval 重建作业和 Snapshot 双写切换（`vector(1024)` 硬约束）。
+- **一键启动与种子**：`make start`（依赖容器 → 健康等待 → 构建 → 运行）；种子清单与幂等契约见 [CONTRACTS.md §5](./CONTRACTS.md)。验收/演示用临时库：`REQFLOW_DATABASE_DSN` + `REQFLOW_SERVER_PORT` 环境变量覆盖，用完即删。
 - **SSE 客户端**：任务详情通过落库 checkpoint 快照 + 通知恢复；`agent_runs` 是可重连的事实视图，流式 delta 只负责缩短可见延迟。
 - **日志**：stdout（text/json 可配）；启动告警集中在头几行；SSE 断开/重连可通过 HTTP events 请求的 `cost_ms` 观察。
 - **发布**：项目尚未上线。切流前只验证 `make build` 产物和干净数据库启动；不需要设计 Legacy 滚动升级或数据迁移通道。
